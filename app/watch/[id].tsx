@@ -235,6 +235,8 @@ export default function WatchScreen() {
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [playerState, setPlayerState] = useState({ isPlaying: false, current: 0, duration: 0 });
   const playerRef = useRef<any>(null);
+  const [streamError, setStreamError] = useState(false);
+  const streamTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Data ────────────────────────────────────────────────────────────────────
   const { data: episode, isLoading: loadingEp } = useEpisodeDetails(id as string);
@@ -248,11 +250,27 @@ export default function WatchScreen() {
   );
 
   // ── Resolve URL ─────────────────────────────────────────────────────────────
-  // useQueries already proxied it — just use directly
   useEffect(() => {
     if (!episode?.video_url) return;
-    console.log('VIDEO URL:', episode.video_url);
-    setResolvedUrl(episode.video_url);
+    const url = episode.video_url.trim();
+    if (!url) {
+      setStreamError(true);
+      return;
+    }
+    console.log('VIDEO URL:', url);
+    setResolvedUrl(url);
+    // Start a 12-second watchdog — if player never reports any progress, the stream is broken
+    streamTimeoutRef.current = setTimeout(() => {
+      setPlayerState(prev => {
+        if (prev.current === 0 && prev.duration === 0) {
+          setStreamError(true);
+        }
+        return prev;
+      });
+    }, 12000);
+    return () => {
+      if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
+    };
   }, [episode?.video_url]);
 
   // ── Resume toast ────────────────────────────────────────────────────────────
@@ -320,11 +338,44 @@ export default function WatchScreen() {
     );
   }
 
-  if (!resolvedUrl) {
+  // ── Error / loading guards ───────────────────────────────────────────────────
+  if (!resolvedUrl && !streamError) {
     return (
       <View style={styles.fullCenter}>
         <ActivityIndicator size="large" color={COLORS.neonCyan} />
         <Text style={styles.loadingText}>Loading stream...</Text>
+      </View>
+    );
+  }
+
+  if (streamError) {
+    return (
+      <View style={styles.fullCenter}>
+        <Ionicons name="cloud-offline-outline" size={56} color={COLORS.neonPink} />
+        <Text style={[styles.errorTitle, { marginTop: 16 }]}>Stream Unavailable</Text>
+        <Text style={styles.loadingText}>
+          This episode's video could not be loaded.{'
+'}It may be unavailable or region-locked.
+        </Text>
+        <View style={{ flexDirection: 'row', gap: 12, marginTop: 24 }}>
+          <TouchableOpacity
+            style={styles.errorBtn}
+            onPress={() => {
+              setStreamError(false);
+              setResolvedUrl(null);
+              if (episode?.video_url) {
+                setTimeout(() => setResolvedUrl(episode.video_url.trim()), 300);
+              }
+            }}
+          >
+            <Ionicons name="refresh" size={16} color={COLORS.neon} />
+            <Text style={styles.errorBtnText}>Retry</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.errorBtn} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={16} color={COLORS.neon} />
+            <Text style={styles.errorBtnText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   }
