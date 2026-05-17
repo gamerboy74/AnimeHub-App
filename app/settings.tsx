@@ -167,8 +167,8 @@ export default function SettingsScreen() {
           <View style={styles.cardBody}>
             <View style={styles.paymentCard}>
               <View style={styles.visaBox}><Text style={styles.visaText}>VISA</Text></View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardNum}>{'•••• 4242'}</Text>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.cardNum} numberOfLines={1}>{'•••• 4242'}</Text>
                 <Text style={styles.cardExpiry}>EXPIRES 12/26</Text>
               </View>
               <View style={styles.primaryPill}><Text style={styles.pillText}>PRIMARY</Text></View>
@@ -292,7 +292,7 @@ const styles = StyleSheet.create({
     padding: 24, borderRadius: RADIUS.lg,
     backgroundColor: 'rgba(25,25,29,0.4)',
     borderWidth: 1, borderColor: 'rgba(189,157,255,0.05)',
-    marginBottom: 20, overflow: 'hidden',
+    marginBottom: 20,
   },
   bentoGlow: {
     position: 'absolute', top: -40, right: -40,
@@ -311,13 +311,13 @@ const styles = StyleSheet.create({
   statLabel: { fontSize: 9, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 4 },
   statValue: { fontSize: 18, fontWeight: '700', color: COLORS.text },
 
-  bentoActions: { flexDirection: 'row', gap: 12 },
-  primaryAction: { flex: 1.5, borderRadius: 100, overflow: 'hidden' },
-  actionGradient: { paddingVertical: 14, alignItems: 'center' },
-  primaryActionText: { color: COLORS.bg, fontWeight: '800', fontSize: 14 },
+  bentoActions: { flexDirection: 'column', gap: 10 },
+  primaryAction: { borderRadius: 100, overflow: 'hidden' },
+  actionGradient: { paddingVertical: 15, paddingHorizontal: 20, alignItems: 'center' },
+  primaryActionText: { color: '#000', fontWeight: '800', fontSize: 14 },
   secondaryAction: {
-    flex: 1, paddingVertical: 14, alignItems: 'center',
-    borderRadius: 100, borderWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
+    paddingVertical: 14, alignItems: 'center',
+    borderRadius: 100, borderWidth: 1, borderColor: 'rgba(189,157,255,0.15)',
   },
   secondaryActionText: { color: COLORS.text, fontWeight: '700', fontSize: 14 },
 
