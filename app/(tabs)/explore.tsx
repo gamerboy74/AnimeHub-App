@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View, Text, TextInput, FlatList, StyleSheet, Modal,
   TouchableOpacity, ActivityIndicator, ScrollView, Image, Pressable,
@@ -7,6 +7,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useQuery } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { animeAPI, Anime, AnimeWithStats } from '../../src/lib/supabase';
 import AnimeCard from '../../src/components/ui/AnimeCard';
@@ -66,50 +67,63 @@ export default function SearchScreen() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Anime[]>([]);
   const [loading, setLoading] = useState(false);
-  const [recommendations, setRecommendations] = useState<AnimeWithStats[]>([]);
-  const [genreImages, setGenreImages] = useState<Record<string, string>>({});
   const [showFilter, setShowFilter] = useState(false);
   const [sortBy, setSortBy] = useState<'top_rated' | 'trending' | 'recent'>('top_rated');
   const debounceRef = useRef<any>(null);
 
-  const fetchExploreData = useCallback(async () => {
-    try {
-      const [topRatedRes, ...genreResults] = await Promise.all([
-        animeAPI.getTopRated(8),
-        animeAPI.getByGenre('Action', 15),
-        animeAPI.getByGenre('Sci-Fi', 15),
-        animeAPI.getByGenre('Fantasy', 15),
-        animeAPI.getByGenre('Adventure', 15),
-        animeAPI.getByGenre('Romance', 15),
-      ]);
-      setRecommendations(topRatedRes.data || []);
+  // ── Cached explore data via React Query ─────────────────────────────────────
+  // staleTime=5min means switching tabs never re-fetches within that window
+  const GENRE_IDS = ['action', 'sci-fi', 'fantasy', 'adventure', 'romance'] as const;
+  const GENRE_NAMES = ['Action', 'Sci-Fi', 'Fantasy', 'Adventure', 'Romance'];
 
-      // Build genre → random poster map
-      const genreIds = ['action', 'sci-fi', 'fantasy', 'adventure', 'romance'];
-      const imgs: Record<string, string> = {};
-      genreResults.forEach((res, i) => {
-        const list = (res.data || []).filter((a: Anime) => a.poster_url);
-        if (list.length > 0) {
-          const pick = list[Math.floor(Math.random() * list.length)];
-          imgs[genreIds[i]] = pick.poster_url;
-        }
-      });
-      setGenreImages(imgs);
-    } catch (e) {
-      console.error(e);
-    }
-  }, []);
+  const { data: topRatedData } = useQuery({
+    queryKey: ['explore', 'topRated', sortBy],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      if (sortBy === 'trending') return (await animeAPI.getTrending(8)).data || [];
+      if (sortBy === 'recent')   return (await animeAPI.getRecent(8)).data   || [];
+      return (await animeAPI.getTopRated(8)).data || [];
+    },
+  });
+
+  const { data: genreData } = useQuery({
+    queryKey: ['explore', 'genreImages'],
+    staleTime: 5 * 60 * 1000,
+    gcTime: 15 * 60 * 1000,
+    queryFn: async () => {
+      const results = await Promise.all(
+        GENRE_NAMES.map(g => animeAPI.getByGenre(g, 15))
+      );
+      return results.map(r => (r.data || []).filter((a: Anime) => a.poster_url));
+    },
+  });
+
+  // Derive random poster per genre from cached data (re-picks on mount, stable during session)
+  const genreImages = useMemo<Record<string, string>>(() => {
+    if (!genreData) return {};
+    const imgs: Record<string, string> = {};
+    genreData.forEach((list, i) => {
+      if (list.length > 0) {
+        const pick = list[Math.floor(Math.random() * list.length)];
+        imgs[GENRE_IDS[i]] = pick.poster_url;
+      }
+    });
+    return imgs;
+  }, [genreData]);
+
+  const recommendations: AnimeWithStats[] = topRatedData || [];
+
+  const applySort = (sort: 'top_rated' | 'trending' | 'recent') => {
+    setSortBy(sort);
+    setShowFilter(false);
+  };
 
   useEffect(() => {
-    fetchExploreData();
-    // Clean up debounce timer on unmount to prevent state updates on unmounted component
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [fetchExploreData]);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, []);
 
   const doSearch = useCallback(async (q: string) => {
-    if (!q.trim()) { setResults([]); return; }
+    if (!q.trim() || q.trim().length < 2) { setResults([]); return; } // min 2 chars
     setLoading(true);
     try {
       const res = await animeAPI.search(q);
@@ -124,23 +138,12 @@ export default function SearchScreen() {
   const onChangeText = (text: string) => {
     setQuery(text);
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (text.trim().length < 2) { setResults([]); return; } // clear instantly if too short
     debounceRef.current = setTimeout(() => doSearch(text), 400);
   };
 
   const onGenrePress = (genre: string) => {
     router.push(`/genre/${genre}`);
-  };
-
-  const applySort = async (sort: 'top_rated' | 'trending' | 'recent') => {
-    setSortBy(sort);
-    setShowFilter(false);
-    try {
-      let res;
-      if (sort === 'trending') res = await animeAPI.getTrending(8);
-      else if (sort === 'recent') res = await animeAPI.getRecent(8);
-      else res = await animeAPI.getTopRated(8);
-      setRecommendations(res.data || []);
-    } catch (e) { console.error(e); }
   };
 
   const renderContent = () => {

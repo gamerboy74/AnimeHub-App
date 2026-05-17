@@ -31,6 +31,8 @@ export function buildProxiedStreamUrl(rawUrl: string): string {
 export function useTrendingAnime() {
   return useQuery({
     queryKey: ['anime', 'trending'],
+    staleTime: 5 * 60 * 1000,   // 5 min — trending doesn't change per-second
+    gcTime:    10 * 60 * 1000,  // keep in memory 10 min after unmount
     queryFn: async (): Promise<AnimeWithStats[]> => {
       const { data, error } = await supabase
         .from('anime_with_stats')
@@ -46,6 +48,8 @@ export function useTrendingAnime() {
 export function useAnimeList(searchQuery?: string, genre?: string) {
   return useQuery({
     queryKey: ['anime', { search: searchQuery, genre }],
+    staleTime: 3 * 60 * 1000,
+    gcTime:    10 * 60 * 1000,
     queryFn: async (): Promise<AnimeWithStats[]> => {
       let query = supabase
         .from('anime_with_stats')
@@ -63,6 +67,8 @@ export function useAnimeList(searchQuery?: string, genre?: string) {
 export function useAnimeDetails(animeId?: string) {
   return useQuery({
     queryKey: ['anime', animeId],
+    staleTime: 10 * 60 * 1000, // anime metadata rarely changes
+    gcTime:    15 * 60 * 1000,
     queryFn: async (): Promise<AnimeWithStats | null> => {
       if (!animeId) return null;
       const { data, error } = await supabase
@@ -84,6 +90,8 @@ export function useAnimeDetails(animeId?: string) {
 export function useEpisodes(animeId?: string) {
   return useQuery({
     queryKey: ['episodes', animeId],
+    staleTime: 10 * 60 * 1000,
+    gcTime:    20 * 60 * 1000,
     queryFn: async (): Promise<Episode[]> => {
       if (!animeId) return [];
       const { data, error } = await supabase
@@ -101,6 +109,8 @@ export function useEpisodes(animeId?: string) {
 export function useEpisodeDetails(episodeId?: string) {
   return useQuery({
     queryKey: ['episode', episodeId],
+    staleTime: 10 * 60 * 1000,
+    gcTime:    20 * 60 * 1000,
     queryFn: async (): Promise<Episode | null> => {
       if (!episodeId) return null;
       const { data, error } = await supabase
@@ -109,13 +119,7 @@ export function useEpisodeDetails(episodeId?: string) {
         .eq('id', episodeId)
         .single();
       if (error) throw error;
-
       if (!data) return null;
-
-      // ── KEY CHANGE: Rewrite video_url to go through the proxy ──────────────
-      // The raw megacloud URL 403s without Referer headers.
-      // Our Vercel proxy adds the correct headers transparently.
-      // expo-video receives a normal URL and plays it fine.
       return {
         ...data,
         video_url: buildProxiedStreamUrl(data.video_url),
@@ -136,6 +140,8 @@ export function useUserHistory() {
   const userId = user?.id;
   return useQuery({
     queryKey: ['user', userId, 'history'],
+    staleTime: 30 * 1000, // history should be reasonably fresh
+    gcTime:    5 * 60 * 1000,
     queryFn: async (): Promise<UserWatchProgressDetailed[]> => {
       if (!userId) return [];
       const { data, error } = await supabase
@@ -178,6 +184,8 @@ export function useWatchProgress(episodeId?: string) {
   const userId = user?.id;
   return useQuery({
     queryKey: ['user', userId, 'progress', episodeId],
+    staleTime: 10 * 1000, // progress must be fresh — 10s
+    gcTime:    2 * 60 * 1000,
     queryFn: async () => {
       if (!userId || !episodeId) return null;
       const { data, error } = await supabase
@@ -196,6 +204,8 @@ export function useWatchProgress(episodeId?: string) {
 export function useSimilarAnime(genres: string[] = [], currentAnimeId?: string, limit: number = 6) {
   return useQuery({
     queryKey: ['anime', 'similar', currentAnimeId, genres],
+    staleTime: 5 * 60 * 1000,
+    gcTime:    10 * 60 * 1000,
     queryFn: async (): Promise<AnimeWithStats[]> => {
       if (genres.length === 0) return [];
       const { data, error } = await supabase
