@@ -7,10 +7,12 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { WebView } from 'react-native-webview';
 import * as ScreenOrientation from 'expo-screen-orientation';
+import * as NavigationBar from 'expo-navigation-bar';
 import { useKeepAwake } from 'expo-keep-awake';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   useEpisodeDetails, useAnimeDetails, useEpisodes,
   useWatchProgress, useSimilarAnime
@@ -131,6 +133,7 @@ export default function WatchScreen() {
   const router  = useRouter();
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const insets = useSafeAreaInsets(); // landscape: left/right insets for notch/cutout
 
   // UI state
   const [showSelector, setShowSelector]   = useState(false);
@@ -244,11 +247,15 @@ export default function WatchScreen() {
     } catch (_) {}
   }, [handleProgress, nextEpisode]);
 
-  // ── Orientation ───────────────────────────────────────────────────────────
+  // ── Orientation + nav bar ─────────────────────────────────────────────────
   useEffect(() => {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+    // Hide Android system navigation bar for full-bleed video
+    NavigationBar.setVisibilityAsync('hidden');
+    NavigationBar.setBehaviorAsync('overlay-swipe'); // swipe-up peeks it, then auto-hides
     return () => {
       ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+      NavigationBar.setVisibilityAsync('visible'); // restore for other screens
     };
   }, []);
 
@@ -431,7 +438,14 @@ export default function WatchScreen() {
           />
 
           {/* Top HUD */}
-          <View style={styles.topHud}>
+          <View style={[
+            styles.topHud,
+            {
+              paddingLeft: Math.max(24, insets.left),
+              paddingRight: Math.max(24, insets.right),
+              paddingTop: Math.max(20, insets.top)
+            }
+          ]}>
             <View style={styles.topHudLeft}>
               <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
                 <Ionicons name="arrow-back" size={22} color={COLORS.text} />
@@ -514,7 +528,14 @@ export default function WatchScreen() {
             activeOpacity={1}
             onPress={() => setShowSelector(false)}
           />
-          <BlurView intensity={80} style={styles.selectorSheet} tint="dark">
+          <BlurView
+            intensity={80}
+            style={[
+              styles.selectorSheet,
+              { paddingBottom: Math.max(32, insets.bottom + 16) }
+            ]}
+            tint="dark"
+          >
             <View style={styles.selectorHeader}>
               <Text style={styles.selectorTitle}>EPISODES</Text>
               <TouchableOpacity onPress={() => setShowSelector(false)}>
