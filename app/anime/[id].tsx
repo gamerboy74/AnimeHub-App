@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
-import { animeAPI, episodeAPI, reviewAPI, userAPI, AnimeWithStats, Episode, Review } from '../../src/lib/supabase';
+import { supabase, animeAPI, episodeAPI, reviewAPI, userAPI, AnimeWithStats, Episode, Review } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
 
 const { width, height } = Dimensions.get('window');
@@ -47,14 +47,24 @@ export default function AnimeDetailScreen() {
       if (epRes.data) setEpisodes(epRes.data);
       if (revRes.data) setReviews(revRes.data as any);
 
-      // Check user state
+      // Check user state with targeted queries (no full-table scan)
       if (user) {
         const [favRes, wlRes] = await Promise.all([
-          userAPI.getFavorites(user.id),
-          userAPI.getWatchlist(user.id),
+          supabase
+            .from('user_favorites')
+            .select('id')
+            .eq('user_id', user.id)
+            .eq('anime_id', animeId)
+            .maybeSingle(),
+          supabase
+            .from('user_watchlist')
+            .select('id')
+            .eq('user_id', user.id)
+            .eq('anime_id', animeId)
+            .maybeSingle(),
         ]);
-        setIsFav(favRes.data?.some((f: any) => f.anime_id === animeId) || false);
-        setInWatchlist(wlRes.data?.some((w: any) => w.anime_id === animeId) || false);
+        setIsFav(!!favRes.data);
+        setInWatchlist(!!wlRes.data);
       }
     } catch (e) {
       console.error(e);
