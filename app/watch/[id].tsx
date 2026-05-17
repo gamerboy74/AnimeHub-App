@@ -338,14 +338,45 @@ export default function WatchScreen() {
         onHttpError={(e) => {
           if (e.nativeEvent.statusCode >= 400) setPlayerError(true);
         }}
-        // Block known ad/popup domains only — allow everything else so CDN and player JS load
+        // ── Redirect guard ─────────────────────────────────────────────────
+        // Allow: the embed host + its subdomains (megaplay.buzz, cinewave2.site, etc.)
+        // Allow: media/CDN requests (m3u8, mp4, ts segments, JS, CSS, fonts)
+        // Block: any navigation to a completely unrelated domain (ads, redirects, popups)
         onShouldStartLoadWithRequest={(req) => {
-          const AD_DOMAINS = [
-            'doubleclick.net', 'googlesyndication.com', 'adnxs.com',
-            'popads.net', 'popcash.net', 'exoclick.com', 'trafficjunky.com',
+          const url = req.url;
+
+          // Always allow the original embed URL itself
+          if (url === embedUrl || url.startsWith(embedUrl)) return true;
+
+          // Extract hosts for comparison
+          let reqHost = '';
+          let embedHost = '';
+          try {
+            reqHost   = new URL(url).hostname;
+            embedHost = new URL(embedUrl).hostname;
+          } catch { return true; } // malformed URL — allow and let WebView handle it
+
+          // Allow same host and any subdomain of the embed host
+          const embedRoot = embedHost.split('.').slice(-2).join('.');
+          if (reqHost === embedHost || reqHost.endsWith('.' + embedRoot)) return true;
+
+          // Allow known video CDN / player domains that megaplay relies on
+          const ALLOWED_CDNS = [
+            'cinewave2.site', 'cinewave.site',
+            'jwplatform.com', 'jwpcdn.com',
+            'hls.js', 'cdn.jsdelivr.net',
+            'cloudflare.com', 'cloudflareinsights.com',
+            'googleapis.com', 'gstatic.com',
+            'jquery.com',
           ];
-          const blocked = AD_DOMAINS.some(d => req.url.includes(d));
-          return !blocked;
+          if (ALLOWED_CDNS.some(d => reqHost.endsWith(d))) return true;
+
+          // Allow media segments — m3u8, mp4, ts, webm (CDN delivery)
+          if (/\.(m3u8|mp4|ts|webm|aac|m4s)(\?|$)/i.test(url)) return true;
+
+          // Block everything else — ads, trackers, redirect chains
+          console.log('[WebView] BLOCKED redirect →', url);
+          return false;
         }}
       />
 
