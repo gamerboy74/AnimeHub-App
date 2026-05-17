@@ -228,7 +228,7 @@ export default function SearchScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Browse by Genre</Text>
-            <TouchableOpacity><Text style={styles.seeAllText}>SEE ALL</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowFilter(true)}><Text style={styles.seeAllText}>SEE ALL</Text></TouchableOpacity>
           </View>
           
           <View style={styles.bentoGrid}>

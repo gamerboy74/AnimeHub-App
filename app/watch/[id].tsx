@@ -32,7 +32,17 @@ function VideoPlayer({
   onStateChange: (isPlaying: boolean, current: number, duration: number) => void;
   onPlayerReady: (player: any) => void;
 }) {
-  const player = useVideoPlayer({ uri: url });
+  // Inject Referer/Origin headers for third-party CDNs (megacloud, etc.)
+  const streamHeaders = {
+    'Referer': 'https://megacloud.bloggy.click/',
+    'Origin': 'https://megacloud.bloggy.click',
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120',
+  };
+  const needsHeaders = url.includes('megacloud') || url.includes('stream/s-');
+  const source = needsHeaders
+    ? { uri: url, headers: streamHeaders }
+    : { uri: url };
+  const player = useVideoPlayer(source);
   const seekApplied = useRef(false);
   const videoReady = useRef(false);
 
@@ -273,7 +283,7 @@ export default function WatchScreen() {
         }
         return prev;
       });
-    }, 12000);
+    }, 20000); // 20s watchdog — gives slow CDNs time to buffer
     return () => {
       if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
     };
