@@ -36,6 +36,9 @@ const MIN_PROGRESS_SECONDS = 5;
 // back to React Native. It also exposes a seekTo() function so we can resume.
 const buildInjectedJS = (resumeSeconds: number) => `
   (function() {
+    // --- Kill popups at the JS layer ---
+    window.open = function() { return null; };
+
     // --- Seek helper called from RN once player is ready ---
     window.__rn_seek = function(seconds) {
       try {
@@ -328,6 +331,9 @@ export default function WatchScreen() {
         allowsInlineMediaPlayback={true}
         javaScriptEnabled={true}
         domStorageEnabled={true}
+        // Force block popups/new windows at the native layer
+        setSupportMultipleWindows={false}
+        javaScriptCanOpenWindowsAutomatically={false}
         // Inject our polling + resume script once the page loads
         injectedJavaScript={buildInjectedJS(resumeSeconds)}
         onMessage={handleWebViewMessage}
@@ -351,6 +357,12 @@ export default function WatchScreen() {
         // Block: any navigation to a completely unrelated domain (ads, redirects, popups)
         onShouldStartLoadWithRequest={(req) => {
           const url = req.url;
+
+          // Block App Store/Play Store intents immediately
+          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            console.log('[WebView] BLOCKED intent/scheme →', url);
+            return false;
+          }
 
           // Always allow the original embed URL itself
           if (url === embedUrl || url.startsWith(embedUrl)) return true;
