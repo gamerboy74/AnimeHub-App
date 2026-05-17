@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { userAPI } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
@@ -40,10 +40,19 @@ export default function LibraryScreen() {
       ]);
       
       const allProgress = progRes.data || [];
-      // Continue Watching: not completed
-      setContinueWatching(allProgress.filter(p => !p.is_completed).slice(0, 10));
-      // Completed: is completed
-      setCompleted(allProgress.filter(p => p.is_completed));
+      
+      // Keep only the most recently watched episode per anime
+      const uniqueProgress = allProgress.filter((p, index, self) => 
+        index === self.findIndex(t => t.anime_id === p.anime_id)
+      );
+
+      const isAnimeCompleted = (p: any) => 
+        p.is_completed && p.total_episodes && p.episode_number === p.total_episodes;
+
+      // Continue Watching: anime that are not completely finished
+      setContinueWatching(uniqueProgress.filter(p => !isAnimeCompleted(p)).slice(0, 15));
+      // Completed: fully finished anime
+      setCompleted(uniqueProgress.filter(p => isAnimeCompleted(p)));
       // Watchlist
       setWatchlist(wlRes.data || []);
       
@@ -55,7 +64,11 @@ export default function LibraryScreen() {
     }
   }, [user]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+    }, [fetchData])
+  );
 
   const onRefresh = () => { setRefreshing(true); fetchData(); };
 

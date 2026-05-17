@@ -17,7 +17,7 @@ import {
   useEpisodeDetails, useAnimeDetails, useEpisodes,
   useWatchProgress, useSimilarAnime
 } from '../../src/hooks/useQueries';
-import { supabase } from '../../src/lib/supabase';
+import { supabase, userAPI } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
 import { COLORS } from '../../src/constants/theme';
 
@@ -38,6 +38,14 @@ const buildInjectedJS = (resumeSeconds: number) => `
   (function() {
     // --- Kill popups at the JS layer ---
     window.open = function() { return null; };
+
+    // --- Escape cross-origin iframe jail ---
+    // If this page is just a wrapper for another iframe, redirect to the iframe
+    var iframe = document.querySelector('iframe');
+    if (iframe && iframe.src && (iframe.src.includes('megaplay') || iframe.src.includes('cinewave'))) {
+      window.location.replace(iframe.src);
+      return; // The script will run again on the new page
+    }
 
     // --- Seek helper called from RN once player is ready ---
     window.__rn_seek = function(seconds) {
@@ -218,13 +226,16 @@ export default function WatchScreen() {
     if (now - lastSavedRef.current < 10_000) return; // throttle
     lastSavedRef.current = now;
 
-    await supabase.from('user_watch_progress').upsert({
-      user_id:          user.id,
-      episode_id:       episode.id,
-      progress_seconds: current,
-      is_completed:     duration > 0 && current > duration * 0.9,
-      last_watched:     new Date().toISOString(),
-    }, { onConflict: 'user_id,episode_id' });
+    const { error } = await userAPI.upsertProgress(
+      user.id, 
+      episode.id, 
+      current, 
+      duration > 0 && current > duration * 0.9
+    );
+
+    if (error) {
+      console.error('[Watch] Progress Save Error:', error.message);
+    }
   }, [user, episode]);
 
   // ── WebView message handler ───────────────────────────────────────────────
@@ -391,6 +402,7 @@ export default function WatchScreen() {
 
           // Allow known video CDN / player domains that megaplay relies on
           const ALLOWED_CDNS = [
+            'megaplay.buzz', 'megacloud.tv',
             'cinewave2.site', 'cinewave.site',
             'jwplatform.com', 'jwpcdn.com',
             'hls.js', 'cdn.jsdelivr.net',
