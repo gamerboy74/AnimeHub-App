@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   View, Text, TouchableOpacity, ActivityIndicator,
-  StatusBar, StyleSheet, Image, ScrollView,
+  StatusBar, StyleSheet, Image, ScrollView, FlatList,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { WebView } from 'react-native-webview';
@@ -163,6 +163,8 @@ export default function WatchScreen() {
   const nextEpisode = episodes?.find(
     e => e.episode_number === (episode?.episode_number ?? 0) + 1
   );
+
+  const activeIndex = episodes ? episodes.findIndex(ep => ep.id === id) : -1;
 
   // ── Prefetch next 3 episodes ──────────────────────────────────────────────
   useEffect(() => {
@@ -554,14 +556,17 @@ export default function WatchScreen() {
                 <Ionicons name="close" size={24} color={COLORS.textSub} />
               </TouchableOpacity>
             </View>
-            <ScrollView
+            <FlatList
               horizontal
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.selectorList}
-            >
-              {episodes?.map(ep => (
+              data={episodes}
+              keyExtractor={ep => ep.id}
+              initialScrollIndex={activeIndex >= 0 ? activeIndex : 0}
+              // Item width = 180, gap = 16 => 196
+              getItemLayout={(data, index) => ({ length: 196, offset: 196 * index, index })}
+              renderItem={({ item: ep }) => (
                 <TouchableOpacity
-                  key={ep.id}
                   style={[styles.selectorItem, ep.id === id && styles.activeItem]}
                   onPress={() => {
                     setShowSelector(false);
@@ -583,8 +588,8 @@ export default function WatchScreen() {
                     </View>
                   )}
                 </TouchableOpacity>
-              ))}
-            </ScrollView>
+              )}
+            />
           </BlurView>
         </View>
       )}
