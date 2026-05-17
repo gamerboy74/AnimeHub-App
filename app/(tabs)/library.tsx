@@ -175,7 +175,11 @@ export default function LibraryScreen() {
                         </View>
                         <View style={styles.progressLabels}>
                           <Text style={styles.progressLabel}>EP {item.episode_number.toString().padStart(2, '0')} / {item.total_episodes || '??'}</Text>
-                          <Text style={styles.progressLabel}>{item.episode_duration ? `${Math.max(0, item.episode_duration - Math.floor(item.progress_seconds / 60))}M LEFT` : 'IN PROGRESS'}</Text>
+                          <Text style={styles.progressLabel}>
+                            {item.episode_duration 
+                              ? `${Math.max(0, item.episode_duration - Math.floor(item.progress_seconds / 60))}M LEFT` 
+                              : `${Math.floor(item.progress_seconds / 60)}M WATCHED`}
+                          </Text>
                         </View>
                       </View>
                       <View style={styles.playIconBox}>

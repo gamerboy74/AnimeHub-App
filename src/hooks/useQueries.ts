@@ -189,7 +189,7 @@ export function useWatchProgress(episodeId?: string) {
     queryFn: async () => {
       if (!userId || !episodeId) return null;
       const { data, error } = await supabase
-        .from('user_watch_progress')
+        .from('user_progress')
         .select('progress_seconds, is_completed')
         .eq('user_id', userId)
         .eq('episode_id', episodeId)
