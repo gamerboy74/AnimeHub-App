@@ -68,12 +68,14 @@ function VideoPlayer({
   }, [player]);
 
   return (
-    <VideoView
-      player={player}
-      style={StyleSheet.absoluteFill}
-      contentFit="contain"
-      nativeControls={false}
-    />
+    <View style={{ flex: 1 }}>
+      <VideoView
+        player={player}
+        style={StyleSheet.absoluteFill}
+        contentFit="contain"
+        nativeControls={false}
+      />
+    </View>
   );
 }
 
@@ -106,36 +108,36 @@ function PlaybackControls({
 
   return (
     <View style={controlStyles.container}>
-      {/* Skip back */}
-      <TouchableOpacity
-        onPress={() => handleSeekRelative(-10)}
-        style={controlStyles.sideBtn}
-        accessibilityLabel="Skip back 10 seconds"
-      >
-        <Ionicons name="play-back" size={22} color={COLORS.text} />
-        <Text style={controlStyles.skipLabel}>10</Text>
-      </TouchableOpacity>
+      {/* Center row: skip-back | play/pause | skip-forward */}
+      <View style={controlStyles.btnRow}>
+        <TouchableOpacity
+          onPress={() => handleSeekRelative(-10)}
+          style={controlStyles.sideBtn}
+          accessibilityLabel="Skip back 10 seconds"
+        >
+          <Ionicons name="play-back" size={24} color={COLORS.text} />
+          <Text style={controlStyles.skipLabel}>-10s</Text>
+        </TouchableOpacity>
 
-      {/* Play / Pause */}
-      <TouchableOpacity
-        onPress={handleTogglePlay}
-        style={controlStyles.playBtn}
-        accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
-      >
-        <Ionicons name={isPlaying ? 'pause' : 'play'} size={30} color={COLORS.bg} />
-      </TouchableOpacity>
+        <TouchableOpacity
+          onPress={handleTogglePlay}
+          style={controlStyles.playBtn}
+          accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
+        >
+          <Ionicons name={isPlaying ? 'pause' : 'play'} size={32} color='#000' />
+        </TouchableOpacity>
 
-      {/* Skip forward */}
-      <TouchableOpacity
-        onPress={() => handleSeekRelative(10)}
-        style={controlStyles.sideBtn}
-        accessibilityLabel="Skip forward 10 seconds"
-      >
-        <Ionicons name="play-forward" size={22} color={COLORS.text} />
-        <Text style={controlStyles.skipLabel}>10</Text>
-      </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => handleSeekRelative(10)}
+          style={controlStyles.sideBtn}
+          accessibilityLabel="Skip forward 10 seconds"
+        >
+          <Ionicons name="play-forward" size={24} color={COLORS.text} />
+          <Text style={controlStyles.skipLabel}>+10s</Text>
+        </TouchableOpacity>
+      </View>
 
-      {/* Seek bar */}
+      {/* Seek bar row */}
       <View style={controlStyles.seekRow}>
         <Text style={controlStyles.timeText}>{formatTime(currentSeconds)}</Text>
         <View style={controlStyles.seekTrack}>
@@ -151,35 +153,39 @@ function PlaybackControls({
 const controlStyles = StyleSheet.create({
   container: {
     position: 'absolute',
-    bottom: 80,
-    left: 32,
-    right: 32,
+    bottom: 48,
+    left: 24,
+    right: 24,
     alignItems: 'center',
-    gap: 12,
+    gap: 16,
+  },
+  btnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 40,
+    width: '100%',
   },
   sideBtn: {
-    position: 'absolute',
-    bottom: 52,
     alignItems: 'center',
+    gap: 4,
   },
   skipLabel: {
-    fontSize: 9,
+    fontSize: 10,
     color: COLORS.text,
-    fontWeight: '800',
-    marginTop: 2,
+    fontWeight: '700',
   },
   playBtn: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     backgroundColor: COLORS.neon,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: COLORS.neon,
-    shadowOpacity: 0.6,
-    shadowRadius: 12,
-    elevation: 10,
-    marginBottom: 8,
+    shadowOpacity: 0.7,
+    shadowRadius: 16,
+    elevation: 12,
   },
   seekRow: {
     flexDirection: 'row',
@@ -188,10 +194,10 @@ const controlStyles = StyleSheet.create({
     width: '100%',
   },
   timeText: {
-    fontSize: 11,
+    fontSize: 12,
     color: COLORS.text,
     fontWeight: '700',
-    minWidth: 40,
+    minWidth: 44,
     textAlign: 'center',
   },
   seekTrack: {
@@ -353,11 +359,10 @@ export default function WatchScreen() {
       <View style={styles.fullCenter}>
         <Ionicons name="cloud-offline-outline" size={56} color={COLORS.neonPink} />
         <Text style={[styles.errorTitle, { marginTop: 16 }]}>Stream Unavailable</Text>
-        <Text style={styles.loadingText}>
-          This episode's video could not be loaded.{'
-'}It may be unavailable or region-locked.
+        <Text style={[styles.loadingText, { textAlign: 'center', paddingHorizontal: 32 }]}>
+          {'This episode\u2019s video could not be loaded.\nIt may be unavailable or region-locked.'}
         </Text>
-        <View style={{ flexDirection: 'row', gap: 12, marginTop: 24 }}>
+        <View style={styles.errorBtnRow}>
           <TouchableOpacity
             style={styles.errorBtn}
             onPress={() => {
@@ -368,12 +373,12 @@ export default function WatchScreen() {
               }
             }}
           >
-            <Ionicons name="refresh" size={16} color={COLORS.neon} />
+            <Ionicons name="refresh" size={16} color='#000' />
             <Text style={styles.errorBtnText}>Retry</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.errorBtn} onPress={() => router.back()}>
+          <TouchableOpacity style={[styles.errorBtn, styles.errorBtnSecondary]} onPress={() => router.back()}>
             <Ionicons name="arrow-back" size={16} color={COLORS.neon} />
-            <Text style={styles.errorBtnText}>Go Back</Text>
+            <Text style={[styles.errorBtnText, { color: COLORS.neon }]}>Go Back</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -528,7 +533,27 @@ const styles = StyleSheet.create({
   fullCenter: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', gap: 12 },
   loadingText: { color: COLORS.textSub, fontSize: 13, fontWeight: '600', marginTop: 8 },
   errorTitle: { color: COLORS.text, fontSize: 20, fontWeight: '900', marginTop: 12 },
-  errorBtn: { marginTop: 16, paddingHorizontal: 28, paddingVertical: 10, backgroundColor: COLORS.neon, borderRadius: 24 },
+  errorBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 28,
+    paddingVertical: 12,
+    backgroundColor: COLORS.neon,
+    borderRadius: 24,
+  },
+  errorBtnSecondary: {
+    backgroundColor: 'transparent',
+    borderWidth: 1.5,
+    borderColor: COLORS.neon,
+  },
+  errorBtnRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   errorBtnText: { color: '#000', fontWeight: '800', fontSize: 13 },
 
   overlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'space-between', padding: 32 },
