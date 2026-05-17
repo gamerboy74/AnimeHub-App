@@ -67,12 +67,32 @@ export default function SearchScreen() {
   const [results, setResults] = useState<Anime[]>([]);
   const [loading, setLoading] = useState(false);
   const [recommendations, setRecommendations] = useState<AnimeWithStats[]>([]);
+  const [genreImages, setGenreImages] = useState<Record<string, string>>({});
   const debounceRef = useRef<any>(null);
 
   const fetchExploreData = useCallback(async () => {
     try {
-      const res = await animeAPI.getTopRated(8);
-      setRecommendations(res.data || []);
+      const [topRatedRes, ...genreResults] = await Promise.all([
+        animeAPI.getTopRated(8),
+        animeAPI.getByGenre('Action', 15),
+        animeAPI.getByGenre('Sci-Fi', 15),
+        animeAPI.getByGenre('Fantasy', 15),
+        animeAPI.getByGenre('Shonen', 15),
+        animeAPI.getByGenre('Romance', 15),
+      ]);
+      setRecommendations(topRatedRes.data || []);
+
+      // Build genre → random poster map
+      const genreIds = ['action', 'sci-fi', 'fantasy', 'shonen', 'romance'];
+      const imgs: Record<string, string> = {};
+      genreResults.forEach((res, i) => {
+        const list = (res.data || []).filter((a: Anime) => a.poster_url);
+        if (list.length > 0) {
+          const pick = list[Math.floor(Math.random() * list.length)];
+          imgs[genreIds[i]] = pick.poster_url;
+        }
+      });
+      setGenreImages(imgs);
     } catch (e) {
       console.error(e);
     }
@@ -203,7 +223,7 @@ export default function SearchScreen() {
               style={[styles.bentoTile, styles.bentoTileWide]} 
               onPress={() => onGenrePress('Action')}
             >
-              <Image source={{ uri: BENTO_GENRES[0].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+              <Image source={{ uri: genreImages['action'] ?? BENTO_GENRES[0].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
               <LinearGradient colors={['transparent', 'rgba(8,8,16,0.9)']} style={StyleSheet.absoluteFill} />
               <View style={styles.bentoContent}>
                 <Text style={[styles.bentoGenreName, { color: BENTO_GENRES[0].color }]}>ACTION</Text>
@@ -214,7 +234,7 @@ export default function SearchScreen() {
             <View style={styles.bentoRow}>
               {/* Sci-Fi - Square */}
               <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Sci-Fi')}>
-                <Image source={{ uri: BENTO_GENRES[1].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                <Image source={{ uri: genreImages['sci-fi'] ?? BENTO_GENRES[1].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
                 <LinearGradient colors={['transparent', 'rgba(0,245,255,0.4)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
                   <Text style={[styles.bentoGenreName, { color: BENTO_GENRES[1].color }]}>SCI-FI</Text>
@@ -223,7 +243,7 @@ export default function SearchScreen() {
 
               {/* Fantasy - Square */}
               <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Fantasy')}>
-                <Image source={{ uri: BENTO_GENRES[2].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                <Image source={{ uri: genreImages['fantasy'] ?? BENTO_GENRES[2].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
                 <LinearGradient colors={['transparent', 'rgba(191,95,255,0.4)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
                   <Text style={[styles.bentoGenreName, { color: BENTO_GENRES[2].color }]}>FANTASY</Text>
@@ -234,16 +254,16 @@ export default function SearchScreen() {
             <View style={[styles.bentoRow, { marginTop: SPACING.md }]}>
               {/* Shonen - Square */}
               <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Shonen')}>
-                <Image source={{ uri: BENTO_GENRES[3].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                <Image source={{ uri: genreImages['shonen'] ?? BENTO_GENRES[3].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
                 <LinearGradient colors={['rgba(0,0,0,0.3)', 'rgba(8,8,16,0.8)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
                   <Text style={[styles.bentoGenreName, { color: '#FFF' }]}>SHONEN</Text>
                 </View>
               </TouchableOpacity>
 
-              {/* Romance - Square (mocking bento variety) */}
+              {/* Romance - Square */}
               <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Romance')}>
-                <Image source={{ uri: BENTO_GENRES[4].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                <Image source={{ uri: genreImages['romance'] ?? BENTO_GENRES[4].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
                 <LinearGradient colors={['transparent', 'rgba(255,45,120,0.4)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
                   <Text style={[styles.bentoGenreName, { color: BENTO_GENRES[4].color }]}>ROMANCE</Text>
