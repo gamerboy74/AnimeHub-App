@@ -138,14 +138,14 @@ export default function LibraryScreen() {
               }}
               scrollEventThrottle={16}
             >
-              {continueWatching.map((item) => {
+              {continueWatching.map((item, idx) => {
                 const progress = item.episode_duration > 0
                   ? (item.progress_seconds / (item.episode_duration * 60)) * 100
                   : item.progress_percentage || 0;
                 
                 return (
                   <TouchableOpacity 
-                    key={item.id} 
+                    key={item.id || item.episode_id || `cw-${idx}`} 
                     style={styles.continueCard}
                     onPress={() => router.push(`/anime/${item.anime_id}`)}
                   >
@@ -217,9 +217,9 @@ export default function LibraryScreen() {
             <View style={styles.grid}>
               {getTabData().map((anime, idx) => (
                 <TouchableOpacity 
-                  key={anime?.id || idx} 
+                  key={anime?.id || anime?.anime_id || `grid-${idx}`} 
                   style={styles.gridItem}
-                  onPress={() => router.push(`/anime/${anime.id}`)}
+                  onPress={() => router.push(`/anime/${anime?.id || anime?.anime_id}`)}
                 >
                   <View style={styles.posterBox}>
                     <Image 
