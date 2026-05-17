@@ -36,7 +36,7 @@ const BENTO_GENRES = [
   },
   { 
     id: 'shonen', 
-    name: 'Shonen', 
+    name: 'Adventure', 
     sub: '', 
     color: '#FFF', 
     img: 'https://images.unsplash.com/photo-1578632738981-43306915c0e7?q=80&w=300&auto=format&fit=crop' 
@@ -77,7 +77,7 @@ export default function SearchScreen() {
         animeAPI.getByGenre('Action', 15),
         animeAPI.getByGenre('Sci-Fi', 15),
         animeAPI.getByGenre('Fantasy', 15),
-        animeAPI.getByGenre('Shonen', 15),
+        animeAPI.getByGenre('Adventure', 15),
         animeAPI.getByGenre('Romance', 15),
       ]);
       setRecommendations(topRatedRes.data || []);
@@ -224,7 +224,8 @@ export default function SearchScreen() {
               onPress={() => onGenrePress('Action')}
             >
               <Image source={{ uri: genreImages['action'] ?? BENTO_GENRES[0].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-              <LinearGradient colors={['transparent', 'rgba(8,8,16,0.9)']} style={StyleSheet.absoluteFill} />
+              <View style={styles.bentoDim} />
+              <LinearGradient colors={['transparent', 'rgba(255,115,70,0.5)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
               <View style={styles.bentoContent}>
                 <Text style={[styles.bentoGenreName, { color: BENTO_GENRES[0].color }]}>ACTION</Text>
                 <Text style={styles.bentoSubText}>{BENTO_GENRES[0].sub}</Text>
@@ -235,7 +236,8 @@ export default function SearchScreen() {
               {/* Sci-Fi - Square */}
               <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Sci-Fi')}>
                 <Image source={{ uri: genreImages['sci-fi'] ?? BENTO_GENRES[1].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-                <LinearGradient colors={['transparent', 'rgba(0,245,255,0.4)']} style={StyleSheet.absoluteFill} />
+                <View style={styles.bentoDim} />
+                <LinearGradient colors={['transparent', 'rgba(0,245,255,0.5)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
                   <Text style={[styles.bentoGenreName, { color: BENTO_GENRES[1].color }]}>SCI-FI</Text>
                 </View>
@@ -244,7 +246,8 @@ export default function SearchScreen() {
               {/* Fantasy - Square */}
               <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Fantasy')}>
                 <Image source={{ uri: genreImages['fantasy'] ?? BENTO_GENRES[2].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-                <LinearGradient colors={['transparent', 'rgba(191,95,255,0.4)']} style={StyleSheet.absoluteFill} />
+                <View style={styles.bentoDim} />
+                <LinearGradient colors={['transparent', 'rgba(191,95,255,0.5)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
                   <Text style={[styles.bentoGenreName, { color: BENTO_GENRES[2].color }]}>FANTASY</Text>
                 </View>
@@ -252,19 +255,21 @@ export default function SearchScreen() {
             </View>
 
             <View style={[styles.bentoRow, { marginTop: SPACING.md }]}>
-              {/* Shonen - Square */}
-              <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Shonen')}>
+              {/* Adventure - Square */}
+              <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Adventure')}>
                 <Image source={{ uri: genreImages['shonen'] ?? BENTO_GENRES[3].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-                <LinearGradient colors={['rgba(0,0,0,0.3)', 'rgba(8,8,16,0.8)']} style={StyleSheet.absoluteFill} />
+                <View style={styles.bentoDim} />
+                <LinearGradient colors={['transparent', 'rgba(255,255,255,0.15)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
-                  <Text style={[styles.bentoGenreName, { color: '#FFF' }]}>SHONEN</Text>
+                  <Text style={[styles.bentoGenreName, { color: '#FFF' }]}>ADVENTURE</Text>
                 </View>
               </TouchableOpacity>
 
               {/* Romance - Square */}
               <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Romance')}>
                 <Image source={{ uri: genreImages['romance'] ?? BENTO_GENRES[4].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-                <LinearGradient colors={['transparent', 'rgba(255,45,120,0.4)']} style={StyleSheet.absoluteFill} />
+                <View style={styles.bentoDim} />
+                <LinearGradient colors={['transparent', 'rgba(255,45,120,0.5)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
                   <Text style={[styles.bentoGenreName, { color: BENTO_GENRES[4].color }]}>ROMANCE</Text>
                 </View>
@@ -370,10 +375,19 @@ const styles = StyleSheet.create({
   bentoTileWide: { height: 160 },
   bentoTileSq: { flex: 1, height: 160, borderRadius: RADIUS.lg, overflow: 'hidden' },
   bentoRow: { flexDirection: 'row', gap: SPACING.md },
+  bentoDim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.42)',
+  },
   bentoContent: { position: 'absolute', bottom: SPACING.md, left: SPACING.md },
   bentoContentSq: { position: 'absolute', bottom: SPACING.md, left: SPACING.md },
-  bentoGenreName: { fontSize: 18, fontWeight: '900', letterSpacing: 1 },
-  bentoSubText: { color: COLORS.textSub, fontSize: 11, marginTop: 2, fontWeight: '500' },
+  bentoGenreName: {
+    fontSize: 18, fontWeight: '900', letterSpacing: 1,
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 6,
+  },
+  bentoSubText: { color: 'rgba(255,255,255,0.75)', fontSize: 11, marginTop: 2, fontWeight: '500' },
 
   recommendationsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.md, justifyContent: 'space-between' },
   
