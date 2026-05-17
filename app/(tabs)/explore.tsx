@@ -35,10 +35,10 @@ const BENTO_GENRES = [
     img: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?q=80&w=300&auto=format&fit=crop' 
   },
   { 
-    id: 'shonen', 
+    id: 'adventure', 
     name: 'Adventure', 
-    sub: '', 
-    color: '#FFF', 
+    sub: 'Epic journeys await', 
+    color: '#FFB830', 
     img: 'https://images.unsplash.com/photo-1578632738981-43306915c0e7?q=80&w=300&auto=format&fit=crop' 
   },
   { 
@@ -228,7 +228,7 @@ export default function SearchScreen() {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Browse by Genre</Text>
-            <TouchableOpacity onPress={() => setShowFilter(true)}><Text style={styles.seeAllText}>SEE ALL</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push('/genre')}><Text style={styles.seeAllText}>SEE ALL →</Text></TouchableOpacity>
           </View>
           
           <View style={styles.bentoGrid}>
@@ -271,11 +271,11 @@ export default function SearchScreen() {
             <View style={[styles.bentoRow, { marginTop: SPACING.md }]}>
               {/* Adventure - Square */}
               <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Adventure')}>
-                <Image source={{ uri: genreImages['shonen'] ?? BENTO_GENRES[3].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                <Image source={{ uri: genreImages['adventure'] ?? BENTO_GENRES[3].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
                 <View style={styles.bentoDim} />
-                <LinearGradient colors={['transparent', 'rgba(255,255,255,0.15)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
+                <LinearGradient colors={['transparent', 'rgba(255,184,48,0.5)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
-                  <Text style={[styles.bentoGenreName, { color: '#FFF' }]}>ADVENTURE</Text>
+                  <Text style={[styles.bentoGenreName, { color: BENTO_GENRES[3].color }]}>ADVENTURE</Text>
                 </View>
               </TouchableOpacity>
 
