@@ -140,9 +140,10 @@ export default function WatchScreen() {
   const [playerError,  setPlayerError]    = useState(false);
   const [playerState,  setPlayerState]    = useState({ isPlaying: false, current: 0, duration: 0 });
 
-  const webviewRef  = useRef<any>(null);
-  const nearEndFired = useRef(false);
-  const lastSavedRef = useRef(0); // timestamp of last Supabase progress write
+  const webviewRef        = useRef<any>(null);
+  const nearEndFired      = useRef(false);
+  const lastSavedRef      = useRef(0);    // timestamp of last Supabase write
+  const spinnerTimeoutRef = useRef<any>(null); // auto-dismiss loading spinner
 
   // ── Data ──────────────────────────────────────────────────────────────────
   const { data: episode,  isLoading: loadingEp }   = useEpisodeDetails(id as string);
@@ -157,21 +158,32 @@ export default function WatchScreen() {
     e => e.episode_number === (episode?.episode_number ?? 0) + 1
   );
 
-  // ── Prefetch next episode ─────────────────────────────────────────────────
+  // ── Prefetch next 3 episodes ──────────────────────────────────────────────
   useEffect(() => {
-    if (!nextEpisode?.id || !user?.id) return;
-    queryClient.prefetchQuery({
-      queryKey: ['episode', nextEpisode.id],
-      queryFn: async () => {
-        const { data } = await supabase
-          .from('episodes')
-          .select('*')
-          .eq('id', nextEpisode.id)
-          .single();
-        return data;
-      },
+    if (!episodes || !episode) return;
+    const currentNum = episode.episode_number ?? 0;
+
+    // Grab next 3 episodes by episode_number
+    const upcoming = episodes
+      .filter(e => e.episode_number > currentNum)
+      .sort((a, b) => a.episode_number - b.episode_number)
+      .slice(0, 3);
+
+    upcoming.forEach(ep => {
+      queryClient.prefetchQuery({
+        queryKey: ['episode', ep.id],
+        staleTime: 10 * 60 * 1000,
+        queryFn: async () => {
+          const { data } = await supabase
+            .from('episodes')
+            .select('*')
+            .eq('id', ep.id)
+            .single();
+          return data;
+        },
+      });
     });
-  }, [nextEpisode?.id]);
+  }, [episodes, episode?.id]);
 
   // ── Resume toast ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -242,12 +254,19 @@ export default function WatchScreen() {
 
   useKeepAwake();
 
-  // ── Reset near-end flag when episode changes ──────────────────────────────
+  // ── Reset state + spinner when episode changes ────────────────────────────
   useEffect(() => {
     nearEndFired.current = false;
+    lastSavedRef.current  = 0;
     setShowNextUp(false);
     setPlayerReady(false);
     setPlayerError(false);
+
+    // Auto-dismiss spinner after 8s — some embeds never fire player_ready
+    if (spinnerTimeoutRef.current) clearTimeout(spinnerTimeoutRef.current);
+    spinnerTimeoutRef.current = setTimeout(() => setPlayerReady(true), 8000);
+
+    return () => { if (spinnerTimeoutRef.current) clearTimeout(spinnerTimeoutRef.current); };
   }, [id]);
 
   // ── Guards ────────────────────────────────────────────────────────────────
@@ -305,6 +324,11 @@ export default function WatchScreen() {
         // Inject our polling + resume script once the page loads
         injectedJavaScript={buildInjectedJS(resumeSeconds)}
         onMessage={handleWebViewMessage}
+        // Page HTML loaded — cancel the 8s fallback timer and show the player immediately
+        onLoadEnd={() => {
+          if (spinnerTimeoutRef.current) clearTimeout(spinnerTimeoutRef.current);
+          setPlayerReady(true);
+        }}
         // Spoof desktop user-agent so embeds don't redirect to mobile-only pages
         applicationNameForUserAgent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
         // Kill any cookie / auth walls
