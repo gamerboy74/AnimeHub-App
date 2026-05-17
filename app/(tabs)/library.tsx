@@ -160,7 +160,7 @@ export default function LibraryScreen() {
                   <TouchableOpacity 
                     key={item.id || item.episode_id || `cw-${idx}`} 
                     style={styles.continueCard}
-                    onPress={() => router.push(`/anime/${item.anime_id}`)}
+                    onPress={() => router.push(`/watch/${item.episode_id}`)}
                   >
                     <View style={styles.continueThumbBox}>
                       <Image 
