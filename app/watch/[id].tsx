@@ -142,6 +142,7 @@ export default function WatchScreen() {
 
   const webviewRef  = useRef<any>(null);
   const nearEndFired = useRef(false);
+  const lastSavedRef = useRef(0); // timestamp of last Supabase progress write
 
   // ── Data ──────────────────────────────────────────────────────────────────
   const { data: episode,  isLoading: loadingEp }   = useEpisodeDetails(id as string);
@@ -181,9 +182,13 @@ export default function WatchScreen() {
     }
   }, [resumeSeconds]);
 
-  // ── Progress sync to Supabase ─────────────────────────────────────────────
+  // ── Progress sync to Supabase (throttled to 1 write per 10s) ────────────────
   const handleProgress = useCallback(async (current: number, duration: number) => {
     if (!user || !episode || current < MIN_PROGRESS_SECONDS) return;
+
+    const now = Date.now();
+    if (now - lastSavedRef.current < 10_000) return; // throttle
+    lastSavedRef.current = now;
 
     await supabase.from('user_watch_progress').upsert({
       user_id:          user.id,
@@ -309,11 +314,14 @@ export default function WatchScreen() {
         onHttpError={(e) => {
           if (e.nativeEvent.statusCode >= 400) setPlayerError(true);
         }}
-        // Prevent the embed page from navigating away (ads, pop-ups, etc.)
+        // Block known ad/popup domains only — allow everything else so CDN and player JS load
         onShouldStartLoadWithRequest={(req) => {
-          // Only allow the original embed domain + its CDN subdomains
-          const allowed = req.url.startsWith(embedUrl) || req.url === embedUrl;
-          return allowed;
+          const AD_DOMAINS = [
+            'doubleclick.net', 'googlesyndication.com', 'adnxs.com',
+            'popads.net', 'popcash.net', 'exoclick.com', 'trafficjunky.com',
+          ];
+          const blocked = AD_DOMAINS.some(d => req.url.includes(d));
+          return !blocked;
         }}
       />
 

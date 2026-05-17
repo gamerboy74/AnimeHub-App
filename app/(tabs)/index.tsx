@@ -151,6 +151,7 @@ export default function HomeScreen() {
         subtitle="TRENDING"
         data={trending}
         router={router}
+        seeAllRoute="/(tabs)/explore"
       />
 
       {/* Top Rated */}
@@ -160,6 +161,7 @@ export default function HomeScreen() {
         data={topRated}
         router={router}
         showStats
+        seeAllRoute="/(tabs)/explore"
       />
 
       {/* Recently Added */}
@@ -168,12 +170,13 @@ export default function HomeScreen() {
         subtitle="RECENT"
         data={recent}
         router={router}
+        seeAllRoute="/(tabs)/explore"
       />
     </ScrollView>
   );
 }
 
-function AnimeRow({ title, subtitle, data, router, showStats = false }: any) {
+function AnimeRow({ title, subtitle, data, router, showStats = false, seeAllRoute }: any) {
   if (!data?.length) return null;
   return (
     <View style={styles.section}>
@@ -182,7 +185,7 @@ function AnimeRow({ title, subtitle, data, router, showStats = false }: any) {
           <Text style={styles.sectionLabel}>{title}</Text>
           <Text style={styles.sectionSub}>{subtitle}</Text>
         </View>
-        <TouchableOpacity>
+        <TouchableOpacity onPress={() => seeAllRoute && router.push(seeAllRoute)}>
           <Text style={styles.seeAll}>SEE ALL →</Text>
         </TouchableOpacity>
       </View>
