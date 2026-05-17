@@ -175,7 +175,7 @@ export const userAPI = {
       progress_seconds: progressSeconds,
       is_completed: isCompleted,
       last_watched: new Date().toISOString(),
-    }),
+    }, { onConflict: 'user_id,episode_id' }),
 
   getNotifications: (userId: string) =>
     supabase.from('notifications').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
