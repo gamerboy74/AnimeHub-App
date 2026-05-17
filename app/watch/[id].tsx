@@ -2,10 +2,10 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   View, Text, TouchableOpacity, ActivityIndicator,
-  StatusBar, StyleSheet, Image, ScrollView, Pressable,
+  StatusBar, StyleSheet, Image, ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useVideoPlayer, VideoView } from 'expo-video';
+import { WebView } from 'react-native-webview';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useKeepAwake } from 'expo-keep-awake';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,363 +19,233 @@ import { supabase } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
 import { COLORS } from '../../src/constants/theme';
 
-// ─── INNER PLAYER ─────────────────────────────────────────────────────────────
-// Separate component so useVideoPlayer is only called ONCE with a real URL.
-// Exposes playback state up via callbacks so the overlay can render controls.
-function VideoPlayer({
-  url, savedProgressSeconds, onProgress, onNearEnd, onStateChange, onPlayerReady,
-}: {
-  url: string;
-  savedProgressSeconds?: number;
-  onProgress: (current: number, duration: number) => void;
-  onNearEnd: () => void;
-  onStateChange: (isPlaying: boolean, current: number, duration: number) => void;
-  onPlayerReady: (player: any) => void;
-}) {
-  // Inject Referer/Origin headers for third-party CDNs (megacloud, etc.)
-  const streamHeaders = {
-    'Referer': 'https://megacloud.bloggy.click/',
-    'Origin': 'https://megacloud.bloggy.click',
-    'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120',
-  };
-  const needsHeaders = url.includes('megacloud') || url.includes('stream/s-');
-  const source = needsHeaders
-    ? { uri: url, headers: streamHeaders }
-    : { uri: url };
-  const player = useVideoPlayer(source);
-  const seekApplied = useRef(false);
-  const videoReady = useRef(false);
+// ─── CONSTANTS ─────────────────────────────────────────────────────────────────
+// How often (ms) the injected JS polls the player for current time
+const POLL_INTERVAL_MS = 5000;
 
-  useEffect(() => {
-    onPlayerReady(player);
-    player.play();
-  }, []);
+// How many seconds from the end triggers the "Up Next" card
+const NEAR_END_THRESHOLD_FALLBACK = 60;
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const current = Math.floor(player.currentTime);
-      const duration = Math.floor(player.duration);
+// Minimum seconds watched before we bother saving progress
+const MIN_PROGRESS_SECONDS = 5;
 
-      // Apply resume seek once we know the video has loaded (duration > 0)
-      if (duration > 0 && !seekApplied.current && savedProgressSeconds && savedProgressSeconds > 5) {
-        seekApplied.current = true;
-        try { player.currentTime = savedProgressSeconds; } catch (_) {}
+// ─── INJECTED JAVASCRIPT ───────────────────────────────────────────────────────
+// This runs inside the WebView. It polls JWPlayer for state and posts messages
+// back to React Native. It also exposes a seekTo() function so we can resume.
+const buildInjectedJS = (resumeSeconds: number) => `
+  (function() {
+    // --- Seek helper called from RN once player is ready ---
+    window.__rn_seek = function(seconds) {
+      try {
+        var p = jwplayer();
+        if (p && typeof p.seek === 'function' && seconds > 5) {
+          p.seek(seconds);
+        }
+      } catch(e) {}
+    };
+
+    // --- Wait for JWPlayer to be available ---
+    var attempts = 0;
+    var resumeApplied = false;
+    var pollInterval = null;
+
+    function startPolling() {
+      pollInterval = setInterval(function() {
+        try {
+          var p = jwplayer();
+          if (!p || typeof p.getPosition !== 'function') return;
+
+          var current  = Math.floor(p.getPosition());
+          var duration = Math.floor(p.getDuration());
+          var state    = p.getState(); // 'playing' | 'paused' | 'idle' | 'buffering'
+
+          // Apply resume once we know duration > 0
+          if (!resumeApplied && duration > 5 && ${resumeSeconds} > 5) {
+            resumeApplied = true;
+            p.seek(${resumeSeconds});
+          }
+
+          // Post state to React Native
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type:     'progress',
+            current:  current,
+            duration: duration,
+            playing:  state === 'playing',
+          }));
+        } catch(e) {
+          // JWPlayer not ready yet — silently retry
+        }
+      }, ${POLL_INTERVAL_MS});
+    }
+
+    // Poll for JWPlayer availability (some embeds lazy-load it)
+    var readyCheck = setInterval(function() {
+      attempts++;
+      try {
+        var p = jwplayer();
+        if (p && typeof p.getPosition === 'function') {
+          clearInterval(readyCheck);
+          startPolling();
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'player_ready' }));
+        }
+      } catch(e) {}
+
+      // Give up after 15s — not a JWPlayer embed
+      if (attempts > 30) {
+        clearInterval(readyCheck);
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'player_not_found' }));
       }
+    }, 500);
 
-      if (player.playing || current > 0) {
-        videoReady.current = true;
-      }
+    // Also catch HTML5 video directly (fallback if no JWPlayer)
+    document.addEventListener('DOMContentLoaded', function() {
+      var videos = document.querySelectorAll('video');
+      if (videos.length === 0) return;
+      var vid = videos[0];
 
-      // Sync progress every 5 s
-      onProgress(current, duration);
-      onStateChange(player.playing, current, duration);
+      // Resume for plain HTML5 video
+      vid.addEventListener('loadedmetadata', function() {
+        if (!resumeApplied && ${resumeSeconds} > 5) {
+          resumeApplied = true;
+          vid.currentTime = ${resumeSeconds};
+        }
+      });
 
-      // Dynamic "up next" threshold: 10% of duration or 60 s, whichever is smaller
-      const nearEndThreshold = duration > 0 ? Math.min(60, duration * 0.1) : 60;
-      if (duration > 0 && duration - current < nearEndThreshold) onNearEnd();
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [player]);
-
-  return (
-    <View style={{ flex: 1 }}>
-      <VideoView
-        player={player}
-        style={StyleSheet.absoluteFill}
-        contentFit="contain"
-        nativeControls={false}
-      />
-    </View>
-  );
-}
-
-// ─── PLAYBACK CONTROLS OVERLAY ────────────────────────────────────────────────
-function PlaybackControls({
-  player,
-  isPlaying,
-  currentSeconds,
-  durationSeconds,
-}: {
-  player: any;
-  isPlaying: boolean;
-  currentSeconds: number;
-  durationSeconds: number;
-}) {
-  const progressPct = durationSeconds > 0 ? (currentSeconds / durationSeconds) * 100 : 0;
-
-  const handleSeekRelative = (delta: number) => {
-    try {
-      const next = Math.max(0, Math.min(durationSeconds, currentSeconds + delta));
-      player.currentTime = next;
-    } catch (_) {}
-  };
-
-  const handleTogglePlay = () => {
-    try {
-      if (isPlaying) { player.pause(); } else { player.play(); }
-    } catch (_) {}
-  };
-
-  return (
-    <View style={controlStyles.container}>
-      {/* Center row: skip-back | play/pause | skip-forward */}
-      <View style={controlStyles.btnRow}>
-        <TouchableOpacity
-          onPress={() => handleSeekRelative(-10)}
-          style={controlStyles.sideBtn}
-          accessibilityLabel="Skip back 10 seconds"
-        >
-          <Ionicons name="play-back" size={24} color={COLORS.text} />
-          <Text style={controlStyles.skipLabel}>-10s</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={handleTogglePlay}
-          style={controlStyles.playBtn}
-          accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
-        >
-          <Ionicons name={isPlaying ? 'pause' : 'play'} size={32} color='#000' />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={() => handleSeekRelative(10)}
-          style={controlStyles.sideBtn}
-          accessibilityLabel="Skip forward 10 seconds"
-        >
-          <Ionicons name="play-forward" size={24} color={COLORS.text} />
-          <Text style={controlStyles.skipLabel}>+10s</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Seek bar row */}
-      <View style={controlStyles.seekRow}>
-        <Text style={controlStyles.timeText}>{formatTime(currentSeconds)}</Text>
-        <View style={controlStyles.seekTrack}>
-          <View style={[controlStyles.seekFill, { width: `${progressPct}%` }]} />
-          <View style={[controlStyles.seekThumb, { left: `${progressPct}%` }]} />
-        </View>
-        <Text style={controlStyles.timeText}>{formatTime(durationSeconds)}</Text>
-      </View>
-    </View>
-  );
-}
-
-const controlStyles = StyleSheet.create({
-  container: {
-    position: 'absolute',
-    bottom: 48,
-    left: 24,
-    right: 24,
-    alignItems: 'center',
-    gap: 16,
-  },
-  btnRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 40,
-    width: '100%',
-  },
-  sideBtn: {
-    alignItems: 'center',
-    gap: 4,
-  },
-  skipLabel: {
-    fontSize: 10,
-    color: COLORS.text,
-    fontWeight: '700',
-  },
-  playBtn: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: COLORS.neon,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: COLORS.neon,
-    shadowOpacity: 0.7,
-    shadowRadius: 16,
-    elevation: 12,
-  },
-  seekRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    width: '100%',
-  },
-  timeText: {
-    fontSize: 12,
-    color: COLORS.text,
-    fontWeight: '700',
-    minWidth: 44,
-    textAlign: 'center',
-  },
-  seekTrack: {
-    flex: 1,
-    height: 4,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 2,
-    position: 'relative',
-  },
-  seekFill: {
-    height: '100%',
-    backgroundColor: COLORS.neon,
-    borderRadius: 2,
-  },
-  seekThumb: {
-    position: 'absolute',
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#fff',
-    top: -5,
-    marginLeft: -7,
-    shadowColor: '#000',
-    shadowOpacity: 0.4,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-});
+      setInterval(function() {
+        if (isNaN(vid.duration)) return;
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type:     'progress',
+          current:  Math.floor(vid.currentTime),
+          duration: Math.floor(vid.duration),
+          playing:  !vid.paused,
+        }));
+      }, ${POLL_INTERVAL_MS});
+    });
+  })();
+  true; // required by react-native-webview
+`;
 
 // ─── MAIN SCREEN ──────────────────────────────────────────────────────────────
 export default function WatchScreen() {
   const { id } = useLocalSearchParams();
-  const router = useRouter();
+  const router  = useRouter();
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const [controlsVisible, setControlsVisible] = useState(true);
-  const [showSelector, setShowSelector] = useState(false);
-  const [showNextUp, setShowNextUp] = useState(false);
-  const [resumeToast, setResumeToast] = useState(false);
-  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
-  const [playerState, setPlayerState] = useState({ isPlaying: false, current: 0, duration: 0 });
-  const playerRef = useRef<any>(null);
-  const [streamError, setStreamError] = useState(false);
-  const streamTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // UI state
+  const [showSelector, setShowSelector]   = useState(false);
+  const [showNextUp,   setShowNextUp]     = useState(false);
+  const [resumeToast,  setResumeToast]    = useState(false);
+  const [playerReady,  setPlayerReady]    = useState(false);
+  const [playerError,  setPlayerError]    = useState(false);
+  const [playerState,  setPlayerState]    = useState({ isPlaying: false, current: 0, duration: 0 });
 
-  // ── Data ────────────────────────────────────────────────────────────────────
-  const { data: episode, isLoading: loadingEp } = useEpisodeDetails(id as string);
-  const { data: anime, isLoading: loadingAnime } = useAnimeDetails(episode?.anime_id);
-  const { data: episodes } = useEpisodes(episode?.anime_id);
-  const { data: savedProgress } = useWatchProgress(id as string);
-  const { data: similarAnime } = useSimilarAnime(anime?.genres, anime?.id);
+  const webviewRef  = useRef<any>(null);
+  const nearEndFired = useRef(false);
+
+  // ── Data ──────────────────────────────────────────────────────────────────
+  const { data: episode,  isLoading: loadingEp }   = useEpisodeDetails(id as string);
+  const { data: anime,    isLoading: loadingAnime } = useAnimeDetails(episode?.anime_id);
+  const { data: episodes }                          = useEpisodes(episode?.anime_id);
+  const { data: savedProgress }                     = useWatchProgress(id as string);
+  const { data: similarAnime }                      = useSimilarAnime(anime?.genres, anime?.id);
+
+  const resumeSeconds = savedProgress?.progress_seconds ?? 0;
 
   const nextEpisode = episodes?.find(
-    e => e.episode_number === (episode?.episode_number || 0) + 1
+    e => e.episode_number === (episode?.episode_number ?? 0) + 1
   );
 
-  // ── Resolve URL ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!episode?.video_url) return;
-    const raw = episode.video_url.trim();
-
-    const resolveStreamUrl = async (url: string): Promise<string> => {
-      // If it already looks like a direct media file, return as-is
-      if (url.endsWith('.m3u8') || url.endsWith('.mp4') || url.includes('.m3u8?')) {
-        return url;
-      }
-
-      // Otherwise hit the endpoint and extract the real URL
-      try {
-        const res = await fetch(url, {
-          headers: {
-            'Referer': 'https://megacloud.bloggy.click/',
-            'Origin': 'https://megacloud.bloggy.click',
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120',
-          }
-        });
-
-        // Try JSON first — megacloud often returns { sources: [{ file: "..." }] }
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          const json = await res.json();
-          const file =
-            json?.sources?.[0]?.file ||
-            json?.source?.[0]?.file ||
-            json?.data?.sources?.[0]?.file ||
-            json?.link ||
-            json?.url;
-          if (file) return file;
-        }
-
-        // Fallback: scrape the raw text for an m3u8/mp4 URL
-        const text = await res.text();
-        const m3u8Match = text.match(/https?:\/\/[^\s"']+\.m3u8[^\s"']*/);
-        const mp4Match  = text.match(/https?:\/\/[^\s"']+\.mp4[^\s"']*/);
-        if (m3u8Match) return m3u8Match[0];
-        if (mp4Match)  return mp4Match[0];
-
-        throw new Error('No stream URL found in response');
-      } catch (e) {
-        console.error('Stream resolution failed:', e);
-        throw e;
-      }
-    };
-
-    resolveStreamUrl(raw)
-      .then(direct => {
-        console.log('RESOLVED STREAM URL:', direct);
-        setResolvedUrl(direct);
-      })
-      .catch(() => setStreamError(true));
-
-    // watchdog stays
-    streamTimeoutRef.current = setTimeout(() => {
-      setPlayerState(prev => {
-        if (prev.current === 0 && prev.duration === 0) setStreamError(true);
-        return prev;
-      });
-    }, 20000);
-
-    return () => { if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current); };
-  }, [episode?.video_url]);
-
-  // ── Resume toast ────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (resolvedUrl && savedProgress?.progress_seconds) {
-      setResumeToast(true);
-      setTimeout(() => setResumeToast(false), 3000);
-    }
-  }, [resolvedUrl]);
-
-  // ── Prefetch next episode ───────────────────────────────────────────────────
+  // ── Prefetch next episode ─────────────────────────────────────────────────
   useEffect(() => {
     if (!nextEpisode?.id || !user?.id) return;
     queryClient.prefetchQuery({
       queryKey: ['episode', nextEpisode.id],
       queryFn: async () => {
-        const { data } = await supabase.from('episodes').select('*').eq('id', nextEpisode.id).single();
+        const { data } = await supabase
+          .from('episodes')
+          .select('*')
+          .eq('id', nextEpisode.id)
+          .single();
         return data;
-      }
+      },
     });
   }, [nextEpisode?.id]);
 
-  // ── Progress sync callback ──────────────────────────────────────────────────
+  // ── Resume toast ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (resumeSeconds > 5) {
+      setResumeToast(true);
+      const t = setTimeout(() => setResumeToast(false), 3500);
+      return () => clearTimeout(t);
+    }
+  }, [resumeSeconds]);
+
+  // ── Progress sync to Supabase ─────────────────────────────────────────────
   const handleProgress = useCallback(async (current: number, duration: number) => {
-    if (!user || !episode || current < 5) return;
+    if (!user || !episode || current < MIN_PROGRESS_SECONDS) return;
+
     await supabase.from('user_watch_progress').upsert({
-      user_id: user.id,
-      episode_id: episode.id,
+      user_id:          user.id,
+      episode_id:       episode.id,
       progress_seconds: current,
-      is_completed: duration > 0 && current > duration * 0.9,
-      last_watched: new Date().toISOString(),
+      is_completed:     duration > 0 && current > duration * 0.9,
+      last_watched:     new Date().toISOString(),
     }, { onConflict: 'user_id,episode_id' });
   }, [user, episode]);
 
-  const handleNearEnd = useCallback(() => {
-    if (nextEpisode) setShowNextUp(true);
-  }, [nextEpisode]);
+  // ── WebView message handler ───────────────────────────────────────────────
+  const handleWebViewMessage = useCallback((event: any) => {
+    try {
+      const msg = JSON.parse(event.nativeEvent.data);
 
-  // ── Orientation ─────────────────────────────────────────────────────────────
+      if (msg.type === 'player_ready') {
+        setPlayerReady(true);
+        setPlayerError(false);
+      }
+
+      if (msg.type === 'player_not_found') {
+        // Not JWPlayer — HTML5 fallback is still running, no action needed
+        setPlayerReady(true);
+      }
+
+      if (msg.type === 'progress') {
+        const { current, duration, playing } = msg;
+
+        setPlayerState({ isPlaying: playing, current, duration });
+        handleProgress(current, duration);
+
+        // Near-end detection — fire once per episode
+        if (!nearEndFired.current && duration > 0) {
+          const threshold = Math.min(NEAR_END_THRESHOLD_FALLBACK, duration * 0.1);
+          if (duration - current < threshold && nextEpisode) {
+            nearEndFired.current = true;
+            setShowNextUp(true);
+          }
+        }
+      }
+    } catch (_) {}
+  }, [handleProgress, nextEpisode]);
+
+  // ── Orientation ───────────────────────────────────────────────────────────
   useEffect(() => {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-    return () => { ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP); };
+    return () => {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+    };
   }, []);
 
   useKeepAwake();
 
-  // ── Loading ─────────────────────────────────────────────────────────────────
+  // ── Reset near-end flag when episode changes ──────────────────────────────
+  useEffect(() => {
+    nearEndFired.current = false;
+    setShowNextUp(false);
+    setPlayerReady(false);
+    setPlayerError(false);
+  }, [id]);
+
+  // ── Guards ────────────────────────────────────────────────────────────────
   if (loadingEp || loadingAnime) {
     return (
       <View style={styles.fullCenter}>
@@ -396,144 +266,191 @@ export default function WatchScreen() {
     );
   }
 
-  // ── Error / loading guards ───────────────────────────────────────────────────
-  if (!resolvedUrl && !streamError) {
-    return (
-      <View style={styles.fullCenter}>
-        <ActivityIndicator size="large" color={COLORS.neonCyan} />
-        <Text style={styles.loadingText}>Loading stream...</Text>
-      </View>
-    );
-  }
+  // Build the embed URL — use video_url directly (it's the embed page)
+  const embedUrl = episode.video_url?.trim();
 
-  if (streamError) {
+  if (!embedUrl) {
     return (
       <View style={styles.fullCenter}>
         <Ionicons name="cloud-offline-outline" size={56} color={COLORS.neonPink} />
-        <Text style={[styles.errorTitle, { marginTop: 16 }]}>Stream Unavailable</Text>
-        <Text style={[styles.loadingText, { textAlign: 'center', paddingHorizontal: 32 }]}>
-          {'This episode\u2019s video could not be loaded.\nIt may be unavailable or region-locked.'}
-        </Text>
-        <View style={styles.errorBtnRow}>
-          <TouchableOpacity
-            style={styles.errorBtn}
-            onPress={() => {
-              setStreamError(false);
-              setResolvedUrl(null);
-              if (episode?.video_url) {
-                setTimeout(() => setResolvedUrl(episode.video_url.trim()), 300);
-              }
-            }}
-          >
-            <Ionicons name="refresh" size={16} color='#000' />
-            <Text style={styles.errorBtnText}>Retry</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.errorBtn, styles.errorBtnSecondary]} onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={16} color={COLORS.neon} />
-            <Text style={[styles.errorBtnText, { color: COLORS.neon }]}>Go Back</Text>
-          </TouchableOpacity>
-        </View>
+        <Text style={styles.errorTitle}>Stream Unavailable</Text>
+        <TouchableOpacity onPress={() => router.back()} style={[styles.errorBtn, styles.errorBtnSecondary]}>
+          <Text style={[styles.errorBtnText, { color: COLORS.neon }]}>Go Back</Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
-  // ── Player ──────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
       <StatusBar hidden />
 
-      {/* Player only mounts here — after resolvedUrl is confirmed non-null */}
-      <VideoPlayer
-        url={resolvedUrl}
-        savedProgressSeconds={savedProgress?.progress_seconds}
-        onProgress={handleProgress}
-        onNearEnd={handleNearEnd}
-        onPlayerReady={(p) => { playerRef.current = p; }}
-        onStateChange={(isPlaying, current, duration) => {
-          setPlayerState({ isPlaying, current, duration });
+      {/* ── WEBVIEW PLAYER ── */}
+      <WebView
+        ref={webviewRef}
+        source={{ uri: embedUrl }}
+        style={StyleSheet.absoluteFill}
+        // Allow autoplay — critical for video embeds
+        mediaPlaybackRequiresUserAction={false}
+        allowsFullscreenVideo={false}      // We handle our own fullscreen via orientation lock
+        allowsInlineMediaPlayback={true}
+        javaScriptEnabled={true}
+        domStorageEnabled={true}
+        // Inject our polling + resume script once the page loads
+        injectedJavaScript={buildInjectedJS(resumeSeconds)}
+        onMessage={handleWebViewMessage}
+        // Spoof desktop user-agent so embeds don't redirect to mobile-only pages
+        applicationNameForUserAgent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+        // Kill any cookie / auth walls
+        thirdPartyCookiesEnabled={true}
+        sharedCookiesEnabled={true}
+        onError={() => setPlayerError(true)}
+        onHttpError={(e) => {
+          if (e.nativeEvent.statusCode >= 400) setPlayerError(true);
+        }}
+        // Prevent the embed page from navigating away (ads, pop-ups, etc.)
+        onShouldStartLoadWithRequest={(req) => {
+          // Only allow the original embed domain + its CDN subdomains
+          const allowed = req.url.startsWith(embedUrl) || req.url === embedUrl;
+          return allowed;
         }}
       />
 
-      <TouchableOpacity
-        activeOpacity={1}
-        onPress={() => setControlsVisible(v => !v)}
-        style={StyleSheet.absoluteFill}
-      >
-        <LinearGradient colors={['rgba(189,157,255,0.1)', 'transparent']} style={styles.glowTopLeft} />
-        <LinearGradient colors={['transparent', 'rgba(0,227,253,0.1)']} style={styles.glowBottomRight} />
+      {/* ── LOADING INDICATOR (while player initialises) ── */}
+      {!playerReady && !playerError && (
+        <View style={styles.playerLoadingOverlay} pointerEvents="none">
+          <ActivityIndicator size="large" color={COLORS.neonCyan} />
+          <Text style={styles.loadingText}>Loading stream…</Text>
+        </View>
+      )}
 
-        {controlsVisible && (
-          <View style={styles.overlay}>
-            <LinearGradient
-              colors={['rgba(14,14,17,0.9)', 'transparent', 'transparent', 'rgba(14,14,17,0.9)']}
-              style={StyleSheet.absoluteFill}
-            />
+      {/* ── STREAM ERROR ── */}
+      {playerError && (
+        <View style={styles.fullCenter}>
+          <Ionicons name="cloud-offline-outline" size={56} color={COLORS.neonPink} />
+          <Text style={styles.errorTitle}>Stream Unavailable</Text>
+          <View style={styles.errorBtnRow}>
+            <TouchableOpacity
+              style={styles.errorBtn}
+              onPress={() => {
+                setPlayerError(false);
+                setPlayerReady(false);
+                webviewRef.current?.reload();
+              }}
+            >
+              <Ionicons name="refresh" size={16} color="#000" />
+              <Text style={styles.errorBtnText}>Retry</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.errorBtn, styles.errorBtnSecondary]}
+              onPress={() => router.back()}
+            >
+              <Ionicons name="arrow-back" size={16} color={COLORS.neon} />
+              <Text style={[styles.errorBtnText, { color: COLORS.neon }]}>Go Back</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
-            {/* Top HUD */}
-            <View style={styles.topHud}>
-              <View style={styles.topHudLeft}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
-                  <Ionicons name="arrow-back" size={24} color={COLORS.text} />
-                </TouchableOpacity>
-                <View>
-                  <Text style={styles.animeTitle}>{anime?.title?.toUpperCase()}</Text>
-                  <Text style={styles.episodeInfo}>S1:E{episode.episode_number} • {episode.title}</Text>
-                </View>
-              </View>
-              <View style={styles.topHudRight}>
-                <TouchableOpacity style={styles.selectorBtn} onPress={() => setShowSelector(true)}>
-                  <Ionicons name="list" size={16} color={COLORS.text} />
-                  <Text style={styles.selectorBtnText}>EPISODES</Text>
-                </TouchableOpacity>
+      {/* ── HUD LAYER (always on top of WebView) ── */}
+      {!playerError && (
+        <View style={styles.hudLayer} pointerEvents="box-none">
+          <LinearGradient
+            colors={['rgba(14,14,17,0.85)', 'transparent']}
+            style={styles.topGradient}
+            pointerEvents="none"
+          />
+          <LinearGradient
+            colors={['transparent', 'rgba(14,14,17,0.7)']}
+            style={styles.bottomGradient}
+            pointerEvents="none"
+          />
+
+          {/* Top HUD */}
+          <View style={styles.topHud}>
+            <View style={styles.topHudLeft}>
+              <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
+                <Ionicons name="arrow-back" size={22} color={COLORS.text} />
+              </TouchableOpacity>
+              <View>
+                <Text style={styles.animeTitle}>{anime?.title?.toUpperCase()}</Text>
+                <Text style={styles.episodeInfo}>
+                  S1:E{episode.episode_number} • {episode.title}
+                </Text>
               </View>
             </View>
 
-            {/* Resume Toast */}
-            {resumeToast && (
-              <View style={styles.resumeToast}>
-                <BlurView intensity={40} style={styles.resumeToastBlur}>
-                  <Ionicons name="time" size={14} color={COLORS.neon} />
-                  <Text style={styles.resumeToastText}>
-                    Resuming from {formatTime(savedProgress?.progress_seconds)}
+            <View style={styles.topHudRight}>
+              {/* Live progress indicator */}
+              {playerState.duration > 0 && (
+                <View style={styles.progressChip} pointerEvents="none">
+                  <View
+                    style={[
+                      styles.progressChipFill,
+                      { width: `${(playerState.current / playerState.duration) * 100}%` },
+                    ]}
+                  />
+                  <Text style={styles.progressChipText}>
+                    {formatTime(playerState.current)} / {formatTime(playerState.duration)}
                   </Text>
-                </BlurView>
-              </View>
-            )}
+                </View>
+              )}
 
-            {/* Playback Controls */}
-            <PlaybackControls
-              player={playerRef.current}
-              isPlaying={playerState.isPlaying}
-              currentSeconds={playerState.current}
-              durationSeconds={playerState.duration}
-            />
-
-            {/* Up Next */}
-            {showNextUp && nextEpisode && (
               <TouchableOpacity
-                style={styles.nextUpCard}
-                onPress={() => router.replace(`/watch/${nextEpisode.id}`)}
+                style={styles.selectorBtn}
+                onPress={() => setShowSelector(true)}
               >
-                <BlurView intensity={30} style={styles.nextUpBlur}>
-                  <Image source={{ uri: nextEpisode.thumbnail_url || anime?.poster_url }} style={styles.nextUpThumb} />
-                  <View>
-                    <Text style={styles.nextUpLabel}>UP NEXT</Text>
-                    <Text style={styles.nextUpTitle} numberOfLines={1}>
-                      Episode {nextEpisode.episode_number}: {nextEpisode.title}
-                    </Text>
-                  </View>
-                  <Ionicons name="play-skip-forward" size={18} color={COLORS.neonCyan} />
-                </BlurView>
+                <Ionicons name="list" size={16} color={COLORS.text} />
+                <Text style={styles.selectorBtnText}>EPISODES</Text>
               </TouchableOpacity>
-            )}
+            </View>
           </View>
-        )}
-      </TouchableOpacity>
 
-      {/* Episode Selector */}
+          {/* Resume Toast */}
+          {resumeToast && (
+            <View style={styles.resumeToast} pointerEvents="none">
+              <BlurView intensity={40} style={styles.resumeToastBlur}>
+                <Ionicons name="time" size={14} color={COLORS.neon} />
+                <Text style={styles.resumeToastText}>
+                  Resuming from {formatTime(resumeSeconds)}
+                </Text>
+              </BlurView>
+            </View>
+          )}
+
+          {/* Up Next Card */}
+          {showNextUp && nextEpisode && (
+            <TouchableOpacity
+              style={styles.nextUpCard}
+              onPress={() => router.replace(`/watch/${nextEpisode.id}`)}
+            >
+              <BlurView intensity={30} style={styles.nextUpBlur}>
+                <Image
+                  source={{ uri: nextEpisode.thumbnail_url || anime?.poster_url }}
+                  style={styles.nextUpThumb}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.nextUpLabel}>UP NEXT</Text>
+                  <Text style={styles.nextUpTitle} numberOfLines={1}>
+                    Episode {nextEpisode.episode_number}: {nextEpisode.title}
+                  </Text>
+                </View>
+                <Ionicons name="play-skip-forward" size={18} color={COLORS.neonCyan} />
+              </BlurView>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
+      {/* ── EPISODE SELECTOR SHEET ── */}
       {showSelector && (
         <View style={StyleSheet.absoluteFill}>
-          <TouchableOpacity style={styles.modalBg} activeOpacity={1} onPress={() => setShowSelector(false)} />
+          <TouchableOpacity
+            style={styles.modalBg}
+            activeOpacity={1}
+            onPress={() => setShowSelector(false)}
+          />
           <BlurView intensity={80} style={styles.selectorSheet} tint="dark">
             <View style={styles.selectorHeader}>
               <Text style={styles.selectorTitle}>EPISODES</Text>
@@ -541,18 +458,25 @@ export default function WatchScreen() {
                 <Ionicons name="close" size={24} color={COLORS.textSub} />
               </TouchableOpacity>
             </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.selectorList}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.selectorList}
+            >
               {episodes?.map(ep => (
                 <TouchableOpacity
                   key={ep.id}
                   style={[styles.selectorItem, ep.id === id && styles.activeItem]}
                   onPress={() => {
                     setShowSelector(false);
-                    setResolvedUrl(null); // reset so new episode loads fresh
+                    // Navigate — useEffect resets state when id changes
                     router.replace(`/watch/${ep.id}`);
                   }}
                 >
-                  <Image source={{ uri: ep.thumbnail_url || anime?.poster_url }} style={styles.selectorThumb} />
+                  <Image
+                    source={{ uri: ep.thumbnail_url || anime?.poster_url }}
+                    style={styles.selectorThumb}
+                  />
                   <View style={styles.selectorInfo}>
                     <Text style={styles.selectorEpNum}>EP {ep.episode_number}</Text>
                     <Text style={styles.selectorEpTitle} numberOfLines={1}>{ep.title}</Text>
@@ -572,6 +496,7 @@ export default function WatchScreen() {
   );
 }
 
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
 function formatTime(seconds: number = 0) {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -580,71 +505,100 @@ function formatTime(seconds: number = 0) {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+// ─── STYLES ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
-  fullCenter: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', gap: 12 },
+  container:   { flex: 1, backgroundColor: '#000' },
+  fullCenter:  { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', gap: 12 },
   loadingText: { color: COLORS.textSub, fontSize: 13, fontWeight: '600', marginTop: 8 },
-  errorTitle: { color: COLORS.text, fontSize: 20, fontWeight: '900', marginTop: 12 },
+  errorTitle:  { color: COLORS.text, fontSize: 20, fontWeight: '900', marginTop: 12 },
+
   errorBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 28,
-    paddingVertical: 12,
-    backgroundColor: COLORS.neon,
-    borderRadius: 24,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 28, paddingVertical: 12,
+    backgroundColor: COLORS.neon, borderRadius: 24,
   },
   errorBtnSecondary: {
-    backgroundColor: 'transparent',
-    borderWidth: 1.5,
-    borderColor: COLORS.neon,
+    backgroundColor: 'transparent', borderWidth: 1.5, borderColor: COLORS.neon,
   },
   errorBtnRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: 'row', gap: 12, marginTop: 28,
+    alignItems: 'center', justifyContent: 'center',
   },
   errorBtnText: { color: '#000', fontWeight: '800', fontSize: 13 },
 
-  overlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'space-between', padding: 32 },
-  glowTopLeft: { position: 'absolute', top: 0, left: 0, width: '40%', height: '40%', opacity: 0.5 },
-  glowBottomRight: { position: 'absolute', bottom: 0, right: 0, width: '40%', height: '40%', opacity: 0.5 },
+  // Loading overlay sits over WebView while player boots
+  playerLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+  },
 
-  topHud: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  topHudLeft: { flexDirection: 'row', alignItems: 'center', gap: 16 },
-  animeTitle: { color: COLORS.neonCyan, fontSize: 10, fontWeight: '900', letterSpacing: 2 },
-  episodeInfo: { color: COLORS.text, fontSize: 20, fontWeight: '900', marginTop: 2 },
-  topHudRight: { flexDirection: 'row', gap: 12 },
+  // HUD layer — floats over WebView, box-none so touches pass through to WebView
+  hudLayer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'space-between',
+  },
+  topGradient:    { position: 'absolute', top: 0, left: 0, right: 0, height: 120 },
+  bottomGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 100 },
+
+  topHud: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingTop: 20,
+  },
+  topHudLeft:  { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  topHudRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  animeTitle:  { color: COLORS.neonCyan, fontSize: 9, fontWeight: '900', letterSpacing: 2 },
+  episodeInfo: { color: COLORS.text, fontSize: 16, fontWeight: '900', marginTop: 2 },
 
   iconBtn: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.12)',
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
   },
+
+  // Mini progress chip in top-right
+  progressChip: {
+    height: 28, minWidth: 110, borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    overflow: 'hidden', justifyContent: 'center', alignItems: 'center',
+  },
+  progressChipFill: {
+    position: 'absolute', left: 0, top: 0, bottom: 0,
+    backgroundColor: COLORS.neon, opacity: 0.25,
+  },
+  progressChipText: { fontSize: 10, fontWeight: '800', color: COLORS.text, zIndex: 1 },
+
   selectorBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: 'rgba(255,255,255,0.1)',
-    paddingHorizontal: 16, height: 44, borderRadius: 8,
+    paddingHorizontal: 14, height: 40, borderRadius: 8,
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
   },
   selectorBtnText: { color: COLORS.text, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
 
-  resumeToast: { position: 'absolute', top: 120, alignSelf: 'center' },
+  resumeToast: { position: 'absolute', top: 100, alignSelf: 'center' },
   resumeToastBlur: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.5)', overflow: 'hidden',
+    paddingHorizontal: 16, paddingVertical: 8,
+    borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.5)', overflow: 'hidden',
   },
   resumeToastText: { color: COLORS.text, fontSize: 12, fontWeight: '700' },
 
-  nextUpCard: { position: 'absolute', bottom: 100, right: 32, width: 280, borderRadius: 16, overflow: 'hidden' },
-  nextUpBlur: { flexDirection: 'row', alignItems: 'center', padding: 8, gap: 12 },
-  nextUpThumb: { width: 44, height: 44, borderRadius: 8, backgroundColor: COLORS.bgElevated },
+  nextUpCard: {
+    position: 'absolute', bottom: 28, right: 28,
+    width: 290, borderRadius: 16, overflow: 'hidden',
+  },
+  nextUpBlur:  { flexDirection: 'row', alignItems: 'center', padding: 10, gap: 12 },
+  nextUpThumb: { width: 48, height: 48, borderRadius: 8, backgroundColor: COLORS.bgElevated },
   nextUpLabel: { fontSize: 8, fontWeight: '900', color: COLORS.neonCyan, letterSpacing: 1 },
-  nextUpTitle: { fontSize: 11, fontWeight: '700', color: COLORS.text, width: 160 },
+  nextUpTitle: { fontSize: 11, fontWeight: '700', color: COLORS.text, marginTop: 2 },
 
   modalBg: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)' },
   selectorSheet: {
@@ -652,15 +606,18 @@ const styles = StyleSheet.create({
     padding: 32, borderTopLeftRadius: 32, borderTopRightRadius: 32,
     borderWidth: 1, borderColor: 'rgba(189,157,255,0.2)',
   },
-  selectorHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 24, alignItems: 'center' },
-  selectorTitle: { fontSize: 24, fontWeight: '900', color: COLORS.neon, letterSpacing: -1, fontStyle: 'italic' },
-  selectorList: { gap: 16, paddingBottom: 20 },
-  selectorItem: { width: 180, gap: 12 },
-  activeItem: { opacity: 1 },
-  selectorThumb: { width: '100%', height: 100, borderRadius: 12, backgroundColor: COLORS.bgElevated },
-  selectorInfo: { gap: 2 },
-  selectorEpNum: { fontSize: 8, fontWeight: '800', color: COLORS.textSub, letterSpacing: 1 },
-  selectorEpTitle: { fontSize: 12, fontWeight: '700', color: COLORS.text },
+  selectorHeader: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    marginBottom: 24, alignItems: 'center',
+  },
+  selectorTitle:  { fontSize: 24, fontWeight: '900', color: COLORS.neon, letterSpacing: -1, fontStyle: 'italic' },
+  selectorList:   { gap: 16, paddingBottom: 20 },
+  selectorItem:   { width: 180, gap: 12 },
+  activeItem:     { opacity: 1 },
+  selectorThumb:  { width: '100%', height: 100, borderRadius: 12, backgroundColor: COLORS.bgElevated },
+  selectorInfo:   { gap: 2 },
+  selectorEpNum:  { fontSize: 8, fontWeight: '800', color: COLORS.textSub, letterSpacing: 1 },
+  selectorEpTitle:{ fontSize: 12, fontWeight: '700', color: COLORS.text },
   nowPlayingBadge: {
     position: 'absolute', top: 8, left: 8,
     backgroundColor: COLORS.neon, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
