@@ -92,11 +92,9 @@ export default function ProfileScreen() {
         </View>
         
         <View style={styles.heroInfo}>
-          <View style={styles.heroNameRow}>
-            <Text style={styles.heroName}>{user.username}</Text>
-            <View style={styles.premiumBadge}>
-              <Text style={styles.premiumBadgeText}>PREMIUM MEMBER</Text>
-            </View>
+          <Text style={styles.heroName} numberOfLines={1}>{user.username}</Text>
+          <View style={styles.premiumBadge}>
+            <Text style={styles.premiumBadgeText}>PREMIUM MEMBER</Text>
           </View>
           <Text style={styles.heroBio}>
             Streaming the future of visual storytelling. Night owl, Sakuga enthusiast, and OST collector.
@@ -367,33 +365,33 @@ const styles = StyleSheet.create({
     transform: [{ scale: 1.1 }],
   },
   heroAvatar: {
-    width: 140, height: 140,
-    borderRadius: 70,
-    borderWidth: 4, borderColor: COLORS.bg,
+    width: 130, height: 130,
+    borderRadius: 65,
+    borderWidth: 3, borderColor: COLORS.neon,
   },
-  heroInfo: { alignItems: 'center' },
-  heroNameRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
-  heroName: { fontSize: 32, fontWeight: '900', color: COLORS.text, letterSpacing: -1 },
+  heroInfo: { alignItems: 'center', width: '100%' },
+  heroName: { fontSize: 28, fontWeight: '900', color: COLORS.text, letterSpacing: -1, marginBottom: 6 },
   premiumBadge: {
     paddingHorizontal: 12, paddingVertical: 4,
     backgroundColor: 'rgba(0,227,253,0.1)',
     borderRadius: 100,
-    borderWidth: 1, borderColor: 'rgba(0,227,253,0.2)',
+    borderWidth: 1, borderColor: 'rgba(0,227,253,0.3)',
+    marginBottom: 10,
   },
   premiumBadgeText: { fontSize: 8, fontWeight: '800', color: COLORS.neonCyan, letterSpacing: 2 },
-  heroBio: { color: COLORS.textSub, textAlign: 'center', fontSize: 13, lineHeight: 20, maxWidth: 300, marginBottom: SPACING.lg },
+  heroBio: { color: COLORS.textSub, textAlign: 'center', fontSize: 13, lineHeight: 20, paddingHorizontal: SPACING.xl, marginBottom: SPACING.lg },
   
-  heroActions: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' },
+  heroActions: { flexDirection: 'row', gap: 10, flexWrap: 'wrap', justifyContent: 'center', marginTop: 4 },
   editBtn: { borderRadius: 100, overflow: 'hidden' },
-  gradientBtn: { paddingHorizontal: 20, paddingVertical: 10 },
-  editBtnText: { color: COLORS.text, fontWeight: '800', fontSize: 13 },
+  gradientBtn: { paddingHorizontal: 24, paddingVertical: 12 },
+  editBtnText: { color: '#000', fontWeight: '800', fontSize: 13 },
   secondaryBtn: {
-    paddingHorizontal: 20, paddingVertical: 10,
-    backgroundColor: COLORS.bgElevated,
+    paddingHorizontal: 20, paddingVertical: 12,
+    backgroundColor: 'rgba(255,255,255,0.05)',
     borderRadius: 100,
-    borderWidth: 1, borderColor: 'rgba(72,71,75,0.3)',
+    borderWidth: 1, borderColor: 'rgba(189,157,255,0.2)',
   },
-  secondaryBtnText: { color: COLORS.text, fontWeight: '800', fontSize: 13 },
+  secondaryBtnText: { color: COLORS.text, fontWeight: '700', fontSize: 13 },
 
   section: { paddingHorizontal: SPACING.md, marginBottom: SPACING.xl },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: SPACING.md },
@@ -402,11 +400,11 @@ const styles = StyleSheet.create({
 
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   statTile: {
-    flex: 1, minWidth: '45%',
+    width: '47%',
+    flexGrow: 1,
     backgroundColor: COLORS.bgElevated,
     padding: 20, borderRadius: RADIUS.lg,
-    alignItems: 'center', gap: 4,
-    borderBottomWidth: 2, borderBottomColor: 'transparent',
+    alignItems: 'center', gap: 6,
   },
   statValueRow: { flexDirection: 'row', alignItems: 'center' },
   statTileValue: { fontSize: 28, fontWeight: '900', fontStyle: 'italic' },
@@ -435,9 +433,9 @@ const styles = StyleSheet.create({
   },
   activityPoster: { width: 50, height: 75, borderRadius: 8 },
   activityInfo: { flex: 1, gap: 4 },
-  activityHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  activityTitle: { fontSize: 16, fontWeight: '800', color: COLORS.text },
-  activityTime: { fontSize: 9, color: COLORS.textMuted, textTransform: 'uppercase' },
+  activityHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
+  activityTitle: { fontSize: 14, fontWeight: '800', color: COLORS.text, flex: 1 },
+  activityTime: { fontSize: 9, color: COLORS.textMuted, textTransform: 'uppercase', flexShrink: 0 },
   activitySub: { fontSize: 13, color: COLORS.textSub },
   activityProgressContainer: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
   activityProgressLine: { flex: 1, height: 3, backgroundColor: COLORS.bgCard, borderRadius: 2 },
@@ -455,7 +453,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(255,115,70,0.2)',
   },
 
-  gridContainer: { paddingHorizontal: SPACING.md, gap: SPACING.xl, marginBottom: SPACING.xl },
+  gridContainer: { paddingHorizontal: SPACING.md, flexDirection: 'column', gap: SPACING.lg, marginBottom: SPACING.xl },
   gridSectionTitle: { fontSize: 18, fontWeight: '900', color: COLORS.text, marginBottom: 16 },
   badgeSection: { 
     padding: 20, backgroundColor: COLORS.bgElevated, 
@@ -493,11 +491,12 @@ const styles = StyleSheet.create({
   friendPlusText: { fontSize: 9, fontWeight: '800', color: COLORS.textSub },
 
   signOutBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    marginHorizontal: SPACING.md, paddingVertical: 18,
-    borderTopWidth: 1, borderTopColor: 'rgba(255,45,120,0.1)',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
+    marginHorizontal: SPACING.md, marginTop: 8, paddingVertical: 16,
+    borderRadius: 100, borderWidth: 1, borderColor: 'rgba(255,45,120,0.25)',
+    backgroundColor: 'rgba(255,45,120,0.05)',
   },
-  signOutText: { color: COLORS.danger, fontWeight: '900', fontSize: 12, letterSpacing: 2 },
+  signOutText: { color: COLORS.danger, fontWeight: '900', fontSize: 13, letterSpacing: 2 },
 
   guestIcon: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(191,95,255,0.1)', alignItems: 'center', justifyContent: 'center' },
   guestTitle: { color: COLORS.text, fontWeight: '900', letterSpacing: 2, marginTop: 10 },

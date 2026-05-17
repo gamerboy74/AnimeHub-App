@@ -132,57 +132,53 @@ export default function SettingsScreen() {
           </View>
         </BlurView>
 
-        {/* Localization Bento Card */}
-        <View style={styles.gridRow}>
-          <BlurView intensity={30} style={styles.localizationCard}>
-            <View style={styles.cardHeader}>
-              <Ionicons name="language" size={20} color={COLORS.neonCyan} />
-              <Text style={styles.cardTitle}>Localization</Text>
-            </View>
-            <View style={styles.cardBody}>
-              <ActionRow label="Display Language" value="English (US)" />
-              <ActionRow label="Audio Preference" value="Japanese (Original)" />
-              <ActionRow label="Content Region" value="North America" />
-            </View>
-          </BlurView>
-        </View>
+        {/* Localization Card */}
+        <BlurView intensity={30} style={styles.bentoCard}>
+          <View style={styles.cardHeader}>
+            <Ionicons name="language" size={20} color={COLORS.neonCyan} />
+            <Text style={styles.cardTitle}>Localization</Text>
+          </View>
+          <View style={styles.cardBody}>
+            <ActionRow label="Display Language" value="English (US)" />
+            <ActionRow label="Audio Preference" value="Japanese (Original)" />
+            <ActionRow label="Content Region" value="North America" />
+          </View>
+        </BlurView>
 
-        <View style={styles.gridRow}>
-          {/* Security Hub */}
-          <BlurView intensity={30} style={styles.halfCard}>
-            <View style={styles.cardHeader}>
-              <Ionicons name="shield-checkmark" size={20} color="#ff7346" />
-              <Text style={styles.cardTitle}>Security & Login</Text>
-            </View>
-            <View style={styles.cardBody}>
-              <ActionRow label="Change Password" sub="Updated 3 months ago" />
-              <ActionRow label="Two-Factor Auth" value="Enabled" isValueHighlighted />
-              <ActionRow label="Connected Devices" sub="3 active sessions" />
-            </View>
-          </BlurView>
+        {/* Security Hub */}
+        <BlurView intensity={30} style={styles.bentoCard}>
+          <View style={styles.cardHeader}>
+            <Ionicons name="shield-checkmark" size={20} color="#ff7346" />
+            <Text style={styles.cardTitle}>Security &amp; Login</Text>
+          </View>
+          <View style={styles.cardBody}>
+            <ActionRow label="Change Password" sub="Updated 3 months ago" />
+            <ActionRow label="Two-Factor Auth" value="Enabled" isValueHighlighted />
+            <ActionRow label="Connected Devices" sub="3 active sessions" />
+          </View>
+        </BlurView>
 
-          {/* Payment Methods */}
-          <BlurView intensity={30} style={styles.halfCard}>
-            <View style={styles.cardHeader}>
-              <Ionicons name="card" size={20} color={COLORS.neon} />
-              <Text style={styles.cardTitle}>Payment Methods</Text>
-            </View>
-            <View style={styles.cardBody}>
-              <View style={styles.paymentCard}>
-                <View style={styles.visaBox}><Text style={styles.visaText}>VISA</Text></View>
-                <View>
-                  <Text style={styles.cardNum}>•••• 4242</Text>
-                  <Text style={styles.cardExpiry}>EXPIRES 12/26</Text>
-                </View>
-                <View style={styles.primaryPill}><Text style={styles.pillText}>PRIMARY</Text></View>
+        {/* Payment Methods */}
+        <BlurView intensity={30} style={styles.bentoCard}>
+          <View style={styles.cardHeader}>
+            <Ionicons name="card" size={20} color={COLORS.neon} />
+            <Text style={styles.cardTitle}>Payment Methods</Text>
+          </View>
+          <View style={styles.cardBody}>
+            <View style={styles.paymentCard}>
+              <View style={styles.visaBox}><Text style={styles.visaText}>VISA</Text></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cardNum}>{'•••• 4242'}</Text>
+                <Text style={styles.cardExpiry}>EXPIRES 12/26</Text>
               </View>
-              <TouchableOpacity style={styles.addPaymentBtn}>
-                <Ionicons name="add-circle-outline" size={16} color={COLORS.textSub} />
-                <Text style={styles.addPaymentText}>Add New Payment Method</Text>
-              </TouchableOpacity>
+              <View style={styles.primaryPill}><Text style={styles.pillText}>PRIMARY</Text></View>
             </View>
-          </BlurView>
-        </View>
+            <TouchableOpacity style={styles.addPaymentBtn}>
+              <Ionicons name="add-circle-outline" size={16} color={COLORS.textSub} />
+              <Text style={styles.addPaymentText}>Add New Payment Method</Text>
+            </TouchableOpacity>
+          </View>
+        </BlurView>
 
         {/* Preferences Module */}
         <BlurView intensity={30} style={styles.bentoCard}>
@@ -335,12 +331,13 @@ const styles = StyleSheet.create({
 
   actionRow: { 
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingVertical: 4,
+    paddingVertical: 12,
+    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)',
   },
   rowContent: { flex: 1, gap: 2 },
-  actionLabel: { fontSize: 14, fontWeight: '600', color: COLORS.textSub },
+  actionLabel: { fontSize: 14, fontWeight: '600', color: COLORS.text },
   actionSubText: { fontSize: 12, color: COLORS.textMuted },
-  actionValue: { fontSize: 13, color: COLORS.text, fontWeight: '500' },
+  actionValue: { fontSize: 12, color: COLORS.textSub, fontWeight: '500' },
 
   paymentCard: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
@@ -354,7 +351,7 @@ const styles = StyleSheet.create({
   visaText: { fontSize: 10, fontWeight: '900', color: COLORS.text, fontStyle: 'italic' },
   cardNum: { fontSize: 14, fontWeight: '700', color: COLORS.text },
   cardExpiry: { fontSize: 8, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 1 },
-  primaryPill: { paddingHorizontal: 8, paddingVertical: 2, backgroundColor: 'rgba(191,95,255,0.2)', borderRadius: 100, marginLeft: 'auto' },
+  primaryPill: { paddingHorizontal: 8, paddingVertical: 2, backgroundColor: 'rgba(191,95,255,0.2)', borderRadius: 100, alignSelf: 'center' },
   pillText: { fontSize: 8, fontWeight: '900', color: COLORS.neon },
 
   addPaymentBtn: {
