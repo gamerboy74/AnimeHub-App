@@ -103,10 +103,13 @@ const buildInjectedJS = (resumeSeconds: number) => `
     }, 500);
 
     // Also catch HTML5 video directly (fallback if no JWPlayer)
-    document.addEventListener('DOMContentLoaded', function() {
+    var videoInterval = setInterval(function() {
       var videos = document.querySelectorAll('video');
       if (videos.length === 0) return;
       var vid = videos[0];
+
+      // Found the video, stop searching
+      clearInterval(videoInterval);
 
       // Resume for plain HTML5 video
       vid.addEventListener('loadedmetadata', function() {
@@ -115,6 +118,11 @@ const buildInjectedJS = (resumeSeconds: number) => `
           vid.currentTime = ${resumeSeconds};
         }
       });
+      // Try applying immediately in case loadedmetadata already fired
+      if (!resumeApplied && ${resumeSeconds} > 5 && vid.readyState >= 1) {
+        resumeApplied = true;
+        vid.currentTime = ${resumeSeconds};
+      }
 
       setInterval(function() {
         if (isNaN(vid.duration)) return;
@@ -125,7 +133,7 @@ const buildInjectedJS = (resumeSeconds: number) => `
           playing:  !vid.paused,
         }));
       }, ${POLL_INTERVAL_MS});
-    });
+    }, 1000);
   })();
   true; // required by react-native-webview
 `;
