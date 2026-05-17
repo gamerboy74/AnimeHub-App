@@ -268,25 +268,67 @@ export default function WatchScreen() {
   // ── Resolve URL ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!episode?.video_url) return;
-    const url = episode.video_url.trim();
-    if (!url) {
-      setStreamError(true);
-      return;
-    }
-    console.log('VIDEO URL:', url);
-    setResolvedUrl(url);
-    // Start a 12-second watchdog — if player never reports any progress, the stream is broken
+    const raw = episode.video_url.trim();
+
+    const resolveStreamUrl = async (url: string): Promise<string> => {
+      // If it already looks like a direct media file, return as-is
+      if (url.endsWith('.m3u8') || url.endsWith('.mp4') || url.includes('.m3u8?')) {
+        return url;
+      }
+
+      // Otherwise hit the endpoint and extract the real URL
+      try {
+        const res = await fetch(url, {
+          headers: {
+            'Referer': 'https://megacloud.bloggy.click/',
+            'Origin': 'https://megacloud.bloggy.click',
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/120',
+          }
+        });
+
+        // Try JSON first — megacloud often returns { sources: [{ file: "..." }] }
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const json = await res.json();
+          const file =
+            json?.sources?.[0]?.file ||
+            json?.source?.[0]?.file ||
+            json?.data?.sources?.[0]?.file ||
+            json?.link ||
+            json?.url;
+          if (file) return file;
+        }
+
+        // Fallback: scrape the raw text for an m3u8/mp4 URL
+        const text = await res.text();
+        const m3u8Match = text.match(/https?:\/\/[^\s"']+\.m3u8[^\s"']*/);
+        const mp4Match  = text.match(/https?:\/\/[^\s"']+\.mp4[^\s"']*/);
+        if (m3u8Match) return m3u8Match[0];
+        if (mp4Match)  return mp4Match[0];
+
+        throw new Error('No stream URL found in response');
+      } catch (e) {
+        console.error('Stream resolution failed:', e);
+        throw e;
+      }
+    };
+
+    resolveStreamUrl(raw)
+      .then(direct => {
+        console.log('RESOLVED STREAM URL:', direct);
+        setResolvedUrl(direct);
+      })
+      .catch(() => setStreamError(true));
+
+    // watchdog stays
     streamTimeoutRef.current = setTimeout(() => {
       setPlayerState(prev => {
-        if (prev.current === 0 && prev.duration === 0) {
-          setStreamError(true);
-        }
+        if (prev.current === 0 && prev.duration === 0) setStreamError(true);
         return prev;
       });
-    }, 20000); // 20s watchdog — gives slow CDNs time to buffer
-    return () => {
-      if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current);
-    };
+    }, 20000);
+
+    return () => { if (streamTimeoutRef.current) clearTimeout(streamTimeoutRef.current); };
   }, [episode?.video_url]);
 
   // ── Resume toast ────────────────────────────────────────────────────────────
