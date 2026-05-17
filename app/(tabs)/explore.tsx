@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
-  View, Text, TextInput, FlatList, StyleSheet,
-  TouchableOpacity, ActivityIndicator, ScrollView, Image,
+  View, Text, TextInput, FlatList, StyleSheet, Modal,
+  TouchableOpacity, ActivityIndicator, ScrollView, Image, Pressable,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -68,6 +68,8 @@ export default function SearchScreen() {
   const [loading, setLoading] = useState(false);
   const [recommendations, setRecommendations] = useState<AnimeWithStats[]>([]);
   const [genreImages, setGenreImages] = useState<Record<string, string>>({});
+  const [showFilter, setShowFilter] = useState(false);
+  const [sortBy, setSortBy] = useState<'top_rated' | 'trending' | 'recent'>('top_rated');
   const debounceRef = useRef<any>(null);
 
   const fetchExploreData = useCallback(async () => {
@@ -83,7 +85,7 @@ export default function SearchScreen() {
       setRecommendations(topRatedRes.data || []);
 
       // Build genre → random poster map
-      const genreIds = ['action', 'sci-fi', 'fantasy', 'shonen', 'romance'];
+      const genreIds = ['action', 'sci-fi', 'fantasy', 'adventure', 'romance'];
       const imgs: Record<string, string> = {};
       genreResults.forEach((res, i) => {
         const list = (res.data || []).filter((a: Anime) => a.poster_url);
@@ -127,6 +129,18 @@ export default function SearchScreen() {
 
   const onGenrePress = (genre: string) => {
     router.push(`/genre/${genre}`);
+  };
+
+  const applySort = async (sort: 'top_rated' | 'trending' | 'recent') => {
+    setSortBy(sort);
+    setShowFilter(false);
+    try {
+      let res;
+      if (sort === 'trending') res = await animeAPI.getTrending(8);
+      else if (sort === 'recent') res = await animeAPI.getRecent(8);
+      else res = await animeAPI.getTopRated(8);
+      setRecommendations(res.data || []);
+    } catch (e) { console.error(e); }
   };
 
   const renderContent = () => {
@@ -185,7 +199,7 @@ export default function SearchScreen() {
               returnKeyType="search"
               onSubmitEditing={() => doSearch(query)}
             />
-            <TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowFilter(true)}>
               <View style={styles.filterButton}>
                 <Ionicons name="options-outline" size={18} color={COLORS.neonCyan} />
               </View>
@@ -314,6 +328,49 @@ export default function SearchScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {renderContent()}
+
+      {/* Filter Bottom Sheet */}
+      <Modal visible={showFilter} transparent animationType="slide" onRequestClose={() => setShowFilter(false)}>
+        <Pressable style={styles.modalOverlay} onPress={() => setShowFilter(false)} />
+        <BlurView intensity={60} tint="dark" style={styles.filterSheet}>
+          <View style={styles.filterHandle} />
+
+          <Text style={styles.filterTitle}>SORT & FILTER</Text>
+
+          <Text style={styles.filterSection}>Sort By</Text>
+          <View style={styles.filterOptions}>
+            {(['top_rated', 'trending', 'recent'] as const).map((opt) => (
+              <TouchableOpacity
+                key={opt}
+                style={[styles.filterChip, sortBy === opt && styles.filterChipActive]}
+                onPress={() => applySort(opt)}
+              >
+                <Ionicons
+                  name={opt === 'top_rated' ? 'star' : opt === 'trending' ? 'trending-up' : 'time'}
+                  size={14}
+                  color={sortBy === opt ? '#000' : COLORS.textSub}
+                />
+                <Text style={[styles.filterChipText, sortBy === opt && styles.filterChipTextActive]}>
+                  {opt === 'top_rated' ? 'Top Rated' : opt === 'trending' ? 'Trending' : 'Recent'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={styles.filterSection}>Browse Genre</Text>
+          <View style={styles.filterOptions}>
+            {['Action', 'Sci-Fi', 'Fantasy', 'Adventure', 'Romance', 'Thriller', 'Comedy', 'Drama'].map((g) => (
+              <TouchableOpacity
+                key={g}
+                style={styles.filterChip}
+                onPress={() => { setShowFilter(false); router.push(`/genre/${g}`); }}
+              >
+                <Text style={styles.filterChipText}>{g}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </BlurView>
+      </Modal>
     </View>
   );
 }
@@ -411,4 +468,31 @@ const styles = StyleSheet.create({
 
   grid: { padding: SPACING.sm, paddingBottom: 100 },
   gridRow: { gap: SPACING.sm, marginBottom: SPACING.sm, justifyContent: 'space-between' },
+
+  // Filter modal
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' },
+  filterSheet: {
+    borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    padding: 24, paddingBottom: 48,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(19,19,22,0.92)',
+    borderTopWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
+  },
+  filterHandle: {
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignSelf: 'center', marginBottom: 20,
+  },
+  filterTitle: { fontSize: 11, fontWeight: '900', color: COLORS.neonCyan, letterSpacing: 3, marginBottom: 20 },
+  filterSection: { fontSize: 12, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 12, marginTop: 8 },
+  filterOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  filterChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 16, paddingVertical: 10,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 100, borderWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
+  },
+  filterChipActive: { backgroundColor: COLORS.neon, borderColor: COLORS.neon },
+  filterChipText: { color: COLORS.textSub, fontSize: 12, fontWeight: '700' },
+  filterChipTextActive: { color: '#000' },
 });
