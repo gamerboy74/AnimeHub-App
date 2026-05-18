@@ -26,7 +26,8 @@ export default function EpisodesListScreen() {
     if (animeId) {
       setLoading(true);
       episodeAPI.getByAnime(animeId).then(({ data }) => {
-        setEpisodes(data || []);
+        // Only show episodes that have a working stream URL
+        setEpisodes((data || []).filter(ep => !!ep.video_url?.trim()));
         setLoading(false);
       });
     }
@@ -97,7 +98,7 @@ export default function EpisodesListScreen() {
                   {ep.title || `Episode ${ep.episode_number}`}
                 </Text>
                 <View style={styles.epMetaRow}>
-                  {ep.duration && <Text style={styles.epMeta}>{ep.duration}min</Text>}
+                  {ep.duration && <Text style={styles.epMeta}>{Math.round(ep.duration / 60)}m</Text>}
                   {ep.air_date && <Text style={styles.epMeta}>• {ep.air_date}</Text>}
                   {ep.is_premium && <Text style={[styles.epMeta, { color: COLORS.neonGold }]}>• PREMIUM</Text>}
                 </View>

@@ -177,6 +177,9 @@ export const userAPI = {
       last_watched: new Date().toISOString(),
     }, { onConflict: 'user_id,episode_id' }),
 
+  clearOtherProgress: (userId: string, episodeIds: string[]) =>
+    supabase.from('user_progress').delete().eq('user_id', userId).in('episode_id', episodeIds),
+
   getNotifications: (userId: string) =>
     supabase.from('notifications').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
 

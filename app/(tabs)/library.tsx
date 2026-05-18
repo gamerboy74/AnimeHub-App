@@ -6,6 +6,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { userAPI } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
@@ -153,7 +154,7 @@ export default function LibraryScreen() {
             >
               {continueWatching.map((item, idx) => {
                 const progress = item.episode_duration > 0
-                  ? (item.progress_seconds / (item.episode_duration * 60)) * 100
+                  ? (item.progress_seconds / item.episode_duration) * 100
                   : item.progress_percentage || 0;
                 
                 return (
@@ -168,7 +169,14 @@ export default function LibraryScreen() {
                         style={styles.continueThumb}
                         resizeMode="cover"
                       />
+                      {/* Subtle full-image dim so image doesn't blow out */}
                       <View style={styles.continueOverlay} />
+                      {/* Heavy bottom gradient — makes progress bar + labels crystal clear */}
+                      <LinearGradient
+                        colors={['transparent', 'rgba(8,8,16,0.7)', 'rgba(8,8,16,0.95)']}
+                        locations={[0.3, 0.7, 1]}
+                        style={styles.bottomGradient}
+                      />
                       <View style={styles.continueProgressBox}>
                         <View style={styles.progressBg}>
                           <View style={[styles.progressFill, { width: `${Math.min(progress, 100)}%` }]} />
@@ -177,7 +185,7 @@ export default function LibraryScreen() {
                           <Text style={styles.progressLabel}>EP {item.episode_number.toString().padStart(2, '0')} / {item.total_episodes || '??'}</Text>
                           <Text style={styles.progressLabel}>
                             {item.episode_duration 
-                              ? `${Math.max(0, item.episode_duration - Math.floor(item.progress_seconds / 60))}M LEFT` 
+                              ? `${Math.max(0, Math.round((item.episode_duration - item.progress_seconds) / 60))}M LEFT` 
                               : `${Math.floor(item.progress_seconds / 60)}M WATCHED`}
                           </Text>
                         </View>
@@ -292,7 +300,8 @@ const styles = StyleSheet.create({
   continueCard: { width: width * 0.75 },
   continueThumbBox: { aspectRatio: 16/9, borderRadius: RADIUS.lg, overflow: 'hidden', backgroundColor: COLORS.bgCard, elevation: 10, shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 10 },
   continueThumb: { ...StyleSheet.absoluteFillObject },
-  continueOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(8,8,16,0.3)' },
+  continueOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(8,8,16,0.15)' },
+  bottomGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '65%' },
   continueProgressBox: { position: 'absolute', bottom: 12, left: 12, right: 12 },
   progressBg: { height: 3, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 2, overflow: 'hidden' },
   progressFill: { height: '100%', backgroundColor: COLORS.neonCyan, shadowColor: COLORS.neonCyan, shadowOpacity: 0.8, shadowRadius: 5 },

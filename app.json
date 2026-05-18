@@ -13,9 +13,11 @@
       "backgroundColor": "#080810"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.dexstorm1.animehubmobile"
     },
     "android": {
+      "package": "com.dexstorm1.animehubmobile",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#080810"
@@ -28,6 +30,15 @@
       "expo-font",
       "expo-router",
       "expo-video"
-    ]
+    ],
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "a7309b43-e356-4157-9c54-3a91568d8c78"
+      }
+    },
+    "owner": "dexstorm1"
   }
 }

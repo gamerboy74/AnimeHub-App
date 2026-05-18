@@ -15,7 +15,7 @@ import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   useEpisodeDetails, useAnimeDetails, useEpisodes,
-  useWatchProgress, useSimilarAnime
+  useWatchProgress, useSimilarAnime, fetchEpisodeById
 } from '../../src/hooks/useQueries';
 import { supabase, userAPI } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
@@ -32,105 +32,125 @@ const NEAR_END_THRESHOLD_FALLBACK = 60;
 const MIN_PROGRESS_SECONDS = 5;
 
 // ─── INJECTED JAVASCRIPT ───────────────────────────────────────────────────────
-// This runs inside the WebView. It polls JWPlayer for state and posts messages
-// back to React Native. It also exposes a seekTo() function so we can resume.
+// Runs inside the WebView. Polls JWPlayer/HTML5 video for state, forwards progress
+// and error events back to React Native, and applies seek-to-resume.
 const buildInjectedJS = (resumeSeconds: number) => `
   (function() {
-    // --- Kill popups at the JS layer ---
+    // --- Kill popups / new windows at the JS layer ---
     window.open = function() { return null; };
+    window.alert = function() {};
 
-    // --- Escape cross-origin iframe jail ---
-    // If this page is just a wrapper for another iframe, redirect to the iframe
-    var iframe = document.querySelector('iframe');
-    if (iframe && iframe.src && (iframe.src.includes('megaplay') || iframe.src.includes('cinewave'))) {
-      window.location.replace(iframe.src);
-      return; // The script will run again on the new page
-    }
 
-    // --- Seek helper called from RN once player is ready ---
+    try {
+      window.location.replace = function() { console.log('Blocked JS replace'); };
+      window.location.assign = function() { console.log('Blocked JS assign'); };
+    } catch(e) {}
+
+    // --- Seek helper ---
     window.__rn_seek = function(seconds) {
       try {
         var p = jwplayer();
-        if (p && typeof p.seek === 'function' && seconds > 5) {
-          p.seek(seconds);
-        }
+        if (p && typeof p.seek === 'function' && seconds > 5) p.seek(seconds);
       } catch(e) {}
     };
 
-    // --- Wait for JWPlayer to be available ---
-    var attempts = 0;
+    var attempts     = 0;
     var resumeApplied = false;
-    var pollInterval = null;
+    var pollInterval  = null;
 
-    function startPolling() {
+    // --- Hook JWPlayer errors (including error 104153 = stream fetch failed) ---
+    function attachErrorListeners(p) {
+      function onJWError(e) {
+        var code = (e && e.code) ? e.code : 0;
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'player_error',
+          code: code,
+          message: (e && e.message) ? e.message : 'Unknown JWPlayer error',
+        }));
+        // For stream-fetch errors (104xxx range), try reloading the playlist once
+        if (code >= 104000 && code < 105000) {
+          setTimeout(function() {
+            try {
+              var playlist = p.getPlaylist();
+              if (playlist && playlist.length > 0) {
+                p.load(playlist);
+                p.play();
+              }
+            } catch(err) {}
+          }, 2000);
+        }
+      }
+      try { p.on('error',       onJWError); } catch(e) {}
+      try { p.on('setupError',  onJWError); } catch(e) {}
+      try { p.on('adError',     function() {}); } catch(e) {} // suppress ad errors silently
+    }
+
+    function startPolling(p) {
+      attachErrorListeners(p);
       pollInterval = setInterval(function() {
         try {
-          var p = jwplayer();
           if (!p || typeof p.getPosition !== 'function') return;
-
           var current  = Math.floor(p.getPosition());
           var duration = Math.floor(p.getDuration());
-          var state    = p.getState(); // 'playing' | 'paused' | 'idle' | 'buffering'
+          var state    = p.getState();
 
-          // Apply resume once we know duration > 0
           if (!resumeApplied && duration > 5 && ${resumeSeconds} > 5) {
             resumeApplied = true;
             p.seek(${resumeSeconds});
           }
 
-          // Post state to React Native
           window.ReactNativeWebView.postMessage(JSON.stringify({
             type:     'progress',
             current:  current,
             duration: duration,
             playing:  state === 'playing',
           }));
-        } catch(e) {
-          // JWPlayer not ready yet — silently retry
-        }
+        } catch(e) {}
       }, ${POLL_INTERVAL_MS});
     }
 
-    // Poll for JWPlayer availability (some embeds lazy-load it)
+    // Poll for JWPlayer availability
     var readyCheck = setInterval(function() {
       attempts++;
       try {
         var p = jwplayer();
         if (p && typeof p.getPosition === 'function') {
           clearInterval(readyCheck);
-          startPolling();
+          startPolling(p);
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'player_ready' }));
         }
       } catch(e) {}
-
-      // Give up after 15s — not a JWPlayer embed
       if (attempts > 30) {
         clearInterval(readyCheck);
         window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'player_not_found' }));
       }
     }, 500);
 
-    // Also catch HTML5 video directly (fallback if no JWPlayer)
+    // --- HTML5 <video> fallback ---
     var videoInterval = setInterval(function() {
       var videos = document.querySelectorAll('video');
       if (videos.length === 0) return;
       var vid = videos[0];
-
-      // Found the video, stop searching
       clearInterval(videoInterval);
 
-      // Resume for plain HTML5 video
       vid.addEventListener('loadedmetadata', function() {
         if (!resumeApplied && ${resumeSeconds} > 5) {
           resumeApplied = true;
           vid.currentTime = ${resumeSeconds};
         }
       });
-      // Try applying immediately in case loadedmetadata already fired
       if (!resumeApplied && ${resumeSeconds} > 5 && vid.readyState >= 1) {
         resumeApplied = true;
         vid.currentTime = ${resumeSeconds};
       }
+
+      // Forward HTML5 video errors
+      vid.addEventListener('error', function() {
+        var code = vid.error ? vid.error.code : -1;
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'player_error', code: code, message: 'HTML5 video error',
+        }));
+      });
 
       setInterval(function() {
         if (isNaN(vid.duration)) return;
@@ -143,71 +163,77 @@ const buildInjectedJS = (resumeSeconds: number) => `
       }, ${POLL_INTERVAL_MS});
     }, 1000);
   })();
-  true; // required by react-native-webview
+  true;
 `;
+
+// Module-level flag: true while a WatchScreen instance is actively mounting.
+// Used to skip portrait restoration when switching between episodes — the new
+// instance sets this flag before the old one's cleanup runs its portrait lock.
+let _watchMounting = false;
 
 // ─── MAIN SCREEN ──────────────────────────────────────────────────────────────
 export default function WatchScreen() {
   const { id } = useLocalSearchParams();
-  const router  = useRouter();
+  const router = useRouter();
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets(); // landscape: left/right insets for notch/cutout
 
   // UI state
-  const [showSelector, setShowSelector]   = useState(false);
-  const [showNextUp,   setShowNextUp]     = useState(false);
-  const [resumeToast,  setResumeToast]    = useState(false);
-  const [playerReady,  setPlayerReady]    = useState(false);
-  const [playerError,  setPlayerError]    = useState(false);
-  const [playerState,  setPlayerState]    = useState({ isPlaying: false, current: 0, duration: 0 });
+  const [showSelector, setShowSelector] = useState(false);
+  const [showNextUp, setShowNextUp] = useState(false);
+  const [resumeToast, setResumeToast] = useState(false);
+  const [playerReady, setPlayerReady] = useState(false);
+  const [playerError, setPlayerError] = useState(false);
+  const [playerState, setPlayerState] = useState({ isPlaying: false, current: 0, duration: 0 });
 
-  const webviewRef        = useRef<any>(null);
-  const nearEndFired      = useRef(false);
-  const lastSavedRef      = useRef(0);    // timestamp of last Supabase write
+  const webviewRef = useRef<any>(null);
+  const nearEndFired = useRef(false);
+  const lastSavedRef = useRef(0);    // timestamp of last Supabase write
   const spinnerTimeoutRef = useRef<any>(null); // auto-dismiss loading spinner
+  const isLoadedRef = useRef(false); // track if initial load is done
 
   // ── Data ──────────────────────────────────────────────────────────────────
-  const { data: episode,  isLoading: loadingEp }   = useEpisodeDetails(id as string);
-  const { data: anime,    isLoading: loadingAnime } = useAnimeDetails(episode?.anime_id);
-  const { data: episodes }                          = useEpisodes(episode?.anime_id);
-  const { data: savedProgress }                     = useWatchProgress(id as string);
-  const { data: similarAnime }                      = useSimilarAnime(anime?.genres, anime?.id);
+  const { data: episode, isLoading: loadingEp } = useEpisodeDetails(id as string);
+  const { data: anime, isLoading: loadingAnime } = useAnimeDetails(episode?.anime_id);
+  const { data: episodes } = useEpisodes(episode?.anime_id);
+  const { data: savedProgress } = useWatchProgress(id as string);
+  const { data: similarAnime } = useSimilarAnime(anime?.genres, anime?.id);
 
   const resumeSeconds = savedProgress?.progress_seconds ?? 0;
 
-  const nextEpisode = episodes?.find(
+  // Only show episodes that have a working video URL — same filter applied
+  // everywhere (detail page, episodes list, and here in the player selector).
+  const streamableEpisodes = episodes?.filter(ep => !!ep.video_url?.trim()) ?? [];
+
+  const nextEpisode = streamableEpisodes.find(
     e => e.episode_number === (episode?.episode_number ?? 0) + 1
   );
 
-  const activeIndex = episodes ? episodes.findIndex(ep => ep.id === id) : -1;
+  const activeIndex = streamableEpisodes.findIndex(ep => ep.id === id);
 
-  // ── Prefetch next 3 episodes ──────────────────────────────────────────────
+  // ── Prefetch next 2 streamable episodes ──────────────────────────────────────
+  // Dep: episode?.id only — re-runs only when the episode actually changes.
+  // Listing streamableEpisodes would re-run on every render (new array ref each time)
+  // causing an infinite loop driven by the 5s WebView progress poll.
   useEffect(() => {
-    if (!episodes || !episode) return;
+    if (!episode || streamableEpisodes.length === 0) return;
     const currentNum = episode.episode_number ?? 0;
 
-    // Grab next 3 episodes by episode_number
-    const upcoming = episodes
+    const upcoming = streamableEpisodes
       .filter(e => e.episode_number > currentNum)
-      .sort((a, b) => a.episode_number - b.episode_number)
-      .slice(0, 3);
+      .slice(0, 2); // prefetch next 2 only
 
     upcoming.forEach(ep => {
       queryClient.prefetchQuery({
         queryKey: ['episode', ep.id],
         staleTime: 10 * 60 * 1000,
-        queryFn: async () => {
-          const { data } = await supabase
-            .from('episodes')
-            .select('*')
-            .eq('id', ep.id)
-            .single();
-          return data;
-        },
+        gcTime: 20 * 60 * 1000,
+        queryFn: () => fetchEpisodeById(ep.id),
       });
     });
-  }, [episodes, episode?.id]);
+  }, [episode?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   // ── Resume toast ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -227,9 +253,9 @@ export default function WatchScreen() {
     lastSavedRef.current = now;
 
     const { error } = await userAPI.upsertProgress(
-      user.id, 
-      episode.id, 
-      current, 
+      user.id,
+      episode.id,
+      current,
       duration > 0 && current > duration * 0.9
     );
 
@@ -242,6 +268,16 @@ export default function WatchScreen() {
   const handleWebViewMessage = useCallback((event: any) => {
     try {
       const msg = JSON.parse(event.nativeEvent.data);
+
+      if (msg.type === 'player_error') {
+        const { code } = msg;
+        console.warn('[Watch] JWPlayer error', code, msg.message);
+        // 104xxx = stream/media fetch errors → show the error UI
+        // Other codes (e.g. ad errors) are non-fatal, ignore them
+        if (!code || code >= 100000) {
+          setPlayerError(true);
+        }
+      }
 
       if (msg.type === 'player_ready') {
         setPlayerReady(true);
@@ -268,18 +304,33 @@ export default function WatchScreen() {
           }
         }
       }
-    } catch (_) {}
+    } catch (_) { }
   }, [handleProgress, nextEpisode]);
 
   // ── Orientation + nav bar ─────────────────────────────────────────────────
+  // We mount landscape immediately. On unmount we restore portrait ONLY if no
+  // other WatchScreen is about to mount (i.e. we're genuinely leaving the player,
+  // not just switching episodes). The 50ms window lets the next instance set
+  // _watchMounting = true before this cleanup's timeout fires.
   useEffect(() => {
+    _watchMounting = true;          // Signal: this instance is active
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-    // Hide Android system navigation bar for full-bleed video
     NavigationBar.setVisibilityAsync('hidden');
-    NavigationBar.setBehaviorAsync('overlay-swipe'); // swipe-up peeks it, then auto-hides
+    NavigationBar.setBehaviorAsync('overlay-swipe');
+
+    // Clear the flag after mount so it doesn't block future cleanups
+    const clearTimer = setTimeout(() => { _watchMounting = false; }, 50);
+
     return () => {
-      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
-      NavigationBar.setVisibilityAsync('visible'); // restore for other screens
+      clearTimeout(clearTimer);
+      // Delay portrait restore by 50ms. If another WatchScreen mounts in that
+      // window (episode switch), it sets _watchMounting = true and we abort.
+      setTimeout(() => {
+        if (!_watchMounting) {
+          ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+          NavigationBar.setVisibilityAsync('visible');
+        }
+      }, 50);
     };
   }, []);
 
@@ -288,10 +339,11 @@ export default function WatchScreen() {
   // ── Reset state + spinner when episode changes ────────────────────────────
   useEffect(() => {
     nearEndFired.current = false;
-    lastSavedRef.current  = 0;
+    lastSavedRef.current = 0;
     setShowNextUp(false);
     setPlayerReady(false);
     setPlayerError(false);
+    isLoadedRef.current = false;
 
     // Auto-dismiss spinner after 8s — some embeds never fire player_ready
     if (spinnerTimeoutRef.current) clearTimeout(spinnerTimeoutRef.current);
@@ -299,6 +351,33 @@ export default function WatchScreen() {
 
     return () => { if (spinnerTimeoutRef.current) clearTimeout(spinnerTimeoutRef.current); };
   }, [id]);
+
+  // ── Clear previous progress for other episodes of this anime ──────────────
+  useEffect(() => {
+    if (!user?.id || !episode?.id || !episodes?.length) return;
+    
+    // Find all episodes from this anime EXCEPT the current one
+    const otherEpIds = episodes
+      .filter(ep => ep.id !== episode.id)
+      .map(ep => ep.id);
+
+    if (otherEpIds.length > 0) {
+      // Chunk by 500 to respect Supabase IN clause limits
+      const chunkSize = 500;
+      const clearAll = async () => {
+        for (let i = 0; i < otherEpIds.length; i += chunkSize) {
+          const chunk = otherEpIds.slice(i, i + chunkSize);
+          try {
+            await userAPI.clearOtherProgress(user.id, chunk);
+          } catch (err) {
+            console.warn('[Watch] Failed to clear other episodes progress:', err);
+          }
+        }
+      };
+      
+      clearAll();
+    }
+  }, [user?.id, episode?.id, episodes]);
 
   // ── Guards ────────────────────────────────────────────────────────────────
   if (loadingEp || loadingAnime) {
@@ -324,6 +403,12 @@ export default function WatchScreen() {
   // Build the embed URL — use video_url directly (it's the embed page)
   const embedUrl = episode.video_url?.trim();
 
+  // Derive Referer/Origin from the embed URL itself — works for megaplay, megacloud,
+  // rapidcloud, cinewave, or any future site without any hardcoding.
+  const embedOrigin = (() => {
+    try { return new URL(embedUrl || '').origin; } catch { return ''; }
+  })();
+
   if (!embedUrl) {
     return (
       <View style={styles.fullCenter}>
@@ -344,7 +429,16 @@ export default function WatchScreen() {
       {/* ── WEBVIEW PLAYER ── */}
       <WebView
         ref={webviewRef}
-        source={{ uri: embedUrl }}
+        source={{
+          uri: embedUrl,
+          // Use the embed URL's own origin as Referer so the CDN sees a
+          // self-referential request — works for any streaming host without
+          // maintaining a per-site list.
+          headers: embedOrigin ? {
+            'Referer': embedOrigin + '/',
+            'Origin': embedOrigin,
+          } : {},
+        }}
         style={StyleSheet.absoluteFill}
         // Allow autoplay — critical for video embeds
         mediaPlaybackRequiresUserAction={false}
@@ -355,16 +449,20 @@ export default function WatchScreen() {
         // Force block popups/new windows at the native layer
         setSupportMultipleWindows={false}
         javaScriptCanOpenWindowsAutomatically={false}
-        // Inject our polling + resume script once the page loads
+        // Inject our polling + resume script into ALL frames (so it reaches embedded players)
         injectedJavaScript={buildInjectedJS(resumeSeconds)}
+        injectedJavaScriptForMainFrameOnly={false}
         onMessage={handleWebViewMessage}
         // Page HTML loaded — cancel the 8s fallback timer and show the player immediately
         onLoadEnd={() => {
           if (spinnerTimeoutRef.current) clearTimeout(spinnerTimeoutRef.current);
           setPlayerReady(true);
+          isLoadedRef.current = true; // Lock top-level navigations
         }}
-        // Spoof desktop user-agent so embeds don't redirect to mobile-only pages
-        applicationNameForUserAgent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+        // Full Chrome 124 desktop UA — replaces the entire WebView UA string.
+        // applicationNameForUserAgent only *appends* to the Dalvik/mobile UA, which
+        // causes servers like megacloud.bloggy.click to detect a bot and block the stream.
+        userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         // Kill any cookie / auth walls
         thirdPartyCookiesEnabled={true}
         sharedCookiesEnabled={true}
@@ -372,52 +470,54 @@ export default function WatchScreen() {
         onHttpError={(e) => {
           if (e.nativeEvent.statusCode >= 400) setPlayerError(true);
         }}
-        // ── Redirect guard ─────────────────────────────────────────────────
-        // Allow: the embed host + its subdomains (megaplay.buzz, cinewave2.site, etc.)
-        // Allow: media/CDN requests (m3u8, mp4, ts segments, JS, CSS, fonts)
-        // Block: any navigation to a completely unrelated domain (ads, redirects, popups)
+        // ── Redirect guard — GENERIC, zero per-site maintenance ────────────
+        // OLD approach: allowlist every CDN domain → breaks whenever a new
+        //               streaming host is added.
+        // NEW approach: blocklist the tiny set of things that are ALWAYS harmful
+        //               (non-http schemes + confirmed pure-ad domains).
+        //               Everything else — CDNs, player scripts, HLS, APIs — passes.
+        //
+        // Note: on Android, onShouldStartLoadWithRequest fires for main-frame
+        // navigations only (not subresource fetches), so this is safe to open up.
         onShouldStartLoadWithRequest={(req) => {
           const url = req.url;
 
-          // Block App Store/Play Store intents immediately
-          if (!url.startsWith('http://') && !url.startsWith('https://')) {
-            console.log('[WebView] BLOCKED intent/scheme →', url);
+          // 0️⃣ Post-load redirect lock:
+          // Once the player page is fully loaded, any top-level navigation is guaranteed
+          // to be an ad or malicious redirect attempting to hijack the WebView.
+          // (On Android, sub-resource loads don't trigger this callback anyway).
+          const isTopFrame = req.isTopFrame ?? true;
+          if (isTopFrame && isLoadedRef.current && url !== embedUrl) {
+            console.log('[WebView] BLOCKED post-load redirect →', url);
             return false;
           }
 
-          // Always allow the original embed URL itself
-          if (url === embedUrl || url.startsWith(embedUrl)) return true;
+          // ① Block non-http(s) schemes: intent://, market://, app-store://, etc.
+          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            console.log('[WebView] BLOCKED scheme →', url);
+            return false;
+          }
 
-          // Extract hosts for comparison
-          let reqHost = '';
-          let embedHost = '';
-          try {
-            reqHost   = new URL(url).hostname;
-            embedHost = new URL(embedUrl).hostname;
-          } catch { return true; } // malformed URL — allow and let WebView handle it
-
-          // Allow same host and any subdomain of the embed host
-          const embedRoot = embedHost.split('.').slice(-2).join('.');
-          if (reqHost === embedHost || reqHost.endsWith('.' + embedRoot)) return true;
-
-          // Allow known video CDN / player domains that megaplay relies on
-          const ALLOWED_CDNS = [
-            'megaplay.buzz', 'megacloud.tv',
-            'cinewave2.site', 'cinewave.site',
-            'jwplatform.com', 'jwpcdn.com',
-            'hls.js', 'cdn.jsdelivr.net',
-            'cloudflare.com', 'cloudflareinsights.com',
-            'googleapis.com', 'gstatic.com',
-            'jquery.com',
+          // ② Block confirmed pure ad-click / redirect domains.
+          //    These never serve video content — adding a domain here is a
+          //    deliberate decision, not a default-deny fallback.
+          const AD_DOMAINS = [
+            'googlesyndication.com', 'doubleclick.net',
+            'adservice.google.com', 'amazon-adsystem.com',
+            'ads.yahoo.com', 'popads.net',
+            'popcash.net', 'exoclick.com',
+            'trafficjunky.net', 'juicyads.com',
           ];
-          if (ALLOWED_CDNS.some(d => reqHost.endsWith(d))) return true;
+          try {
+            const reqHost = new URL(url).hostname;
+            if (AD_DOMAINS.some(d => reqHost === d || reqHost.endsWith('.' + d))) {
+              console.log('[WebView] BLOCKED ad →', reqHost);
+              return false;
+            }
+          } catch { /* malformed URL — allow */ }
 
-          // Allow media segments — m3u8, mp4, ts, webm (CDN delivery)
-          if (/\.(m3u8|mp4|ts|webm|aac|m4s)(\?|$)/i.test(url)) return true;
-
-          // Block everything else — ads, trackers, redirect chains
-          console.log('[WebView] BLOCKED redirect →', url);
-          return false;
+          // ③ Allow everything else — any streaming host, CDN, player, HLS, subtitles.
+          return true;
         }}
       />
 
@@ -580,7 +680,7 @@ export default function WatchScreen() {
               horizontal
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.selectorList}
-              data={episodes}
+              data={streamableEpisodes}
               keyExtractor={ep => ep.id}
               initialScrollIndex={activeIndex >= 0 ? activeIndex : 0}
               // Item width = 180, gap = 16 => 196
@@ -590,7 +690,6 @@ export default function WatchScreen() {
                   style={[styles.selectorItem, ep.id === id && styles.activeItem]}
                   onPress={() => {
                     setShowSelector(false);
-                    // Navigate — useEffect resets state when id changes
                     router.replace(`/watch/${ep.id}`);
                   }}
                 >
@@ -601,6 +700,9 @@ export default function WatchScreen() {
                   <View style={styles.selectorInfo}>
                     <Text style={styles.selectorEpNum}>EP {ep.episode_number}</Text>
                     <Text style={styles.selectorEpTitle} numberOfLines={1}>{ep.title}</Text>
+                    {ep.duration ? (
+                      <Text style={styles.selectorEpDur}>{Math.round(ep.duration / 60)}m</Text>
+                    ) : null}
                   </View>
                   {ep.id === id && (
                     <View style={styles.nowPlayingBadge}>
@@ -628,10 +730,10 @@ function formatTime(seconds: number = 0) {
 
 // ─── STYLES ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container:   { flex: 1, backgroundColor: '#000' },
-  fullCenter:  { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', gap: 12 },
+  container: { flex: 1, backgroundColor: '#000' },
+  fullCenter: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center', gap: 12 },
   loadingText: { color: COLORS.textSub, fontSize: 13, fontWeight: '600', marginTop: 8 },
-  errorTitle:  { color: COLORS.text, fontSize: 20, fontWeight: '900', marginTop: 12 },
+  errorTitle: { color: COLORS.text, fontSize: 20, fontWeight: '900', marginTop: 12 },
 
   errorBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -661,7 +763,7 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'space-between',
   },
-  topGradient:    { position: 'absolute', top: 0, left: 0, right: 0, height: 120 },
+  topGradient: { position: 'absolute', top: 0, left: 0, right: 0, height: 120 },
   bottomGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 100 },
 
   topHud: {
@@ -671,9 +773,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 20,
   },
-  topHudLeft:  { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  topHudLeft: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   topHudRight: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  animeTitle:  { color: COLORS.neonCyan, fontSize: 9, fontWeight: '900', letterSpacing: 2 },
+  animeTitle: { color: COLORS.neonCyan, fontSize: 9, fontWeight: '900', letterSpacing: 2 },
   episodeInfo: { color: COLORS.text, fontSize: 16, fontWeight: '900', marginTop: 2 },
 
   iconBtn: {
@@ -716,7 +818,7 @@ const styles = StyleSheet.create({
     position: 'absolute', bottom: 28, right: 28,
     width: 290, borderRadius: 16, overflow: 'hidden',
   },
-  nextUpBlur:  { flexDirection: 'row', alignItems: 'center', padding: 10, gap: 12 },
+  nextUpBlur: { flexDirection: 'row', alignItems: 'center', padding: 10, gap: 12 },
   nextUpThumb: { width: 48, height: 48, borderRadius: 8, backgroundColor: COLORS.bgElevated },
   nextUpLabel: { fontSize: 8, fontWeight: '900', color: COLORS.neonCyan, letterSpacing: 1 },
   nextUpTitle: { fontSize: 11, fontWeight: '700', color: COLORS.text, marginTop: 2 },
@@ -731,14 +833,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'space-between',
     marginBottom: 24, alignItems: 'center',
   },
-  selectorTitle:  { fontSize: 24, fontWeight: '900', color: COLORS.neon, letterSpacing: -1, fontStyle: 'italic' },
-  selectorList:   { gap: 16, paddingBottom: 20 },
-  selectorItem:   { width: 180, gap: 12 },
-  activeItem:     { opacity: 1 },
-  selectorThumb:  { width: '100%', height: 100, borderRadius: 12, backgroundColor: COLORS.bgElevated },
-  selectorInfo:   { gap: 2 },
-  selectorEpNum:  { fontSize: 8, fontWeight: '800', color: COLORS.textSub, letterSpacing: 1 },
-  selectorEpTitle:{ fontSize: 12, fontWeight: '700', color: COLORS.text },
+  selectorTitle: { fontSize: 24, fontWeight: '900', color: COLORS.neon, letterSpacing: -1, fontStyle: 'italic' },
+  selectorList: { gap: 16, paddingBottom: 20 },
+  selectorItem: { width: 180, gap: 12 },
+  activeItem: { opacity: 1 },
+  selectorThumb: { width: '100%', height: 100, borderRadius: 12, backgroundColor: COLORS.bgElevated },
+  selectorInfo: { gap: 2 },
+  selectorEpNum: { fontSize: 8, fontWeight: '800', color: COLORS.textSub, letterSpacing: 1 },
+  selectorEpTitle: { fontSize: 12, fontWeight: '700', color: COLORS.text },
+  selectorEpDur: { fontSize: 10, fontWeight: '500', color: COLORS.textSub },
   nowPlayingBadge: {
     position: 'absolute', top: 8, left: 8,
     backgroundColor: COLORS.neon, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,

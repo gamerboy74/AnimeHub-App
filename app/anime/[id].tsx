@@ -44,7 +44,8 @@ export default function AnimeDetailScreen() {
         reviewAPI.getByAnime(animeId),
       ]);
       if (animeRes.data) setAnime(animeRes.data);
-      if (epRes.data) setEpisodes(epRes.data);
+      // Only keep episodes that have a working stream URL
+      if (epRes.data) setEpisodes(epRes.data.filter(ep => !!ep.video_url?.trim()));
       if (revRes.data) setReviews(revRes.data as any);
 
       // Check user state with targeted queries (no full-table scan)
@@ -289,7 +290,7 @@ function EpisodesTab({ episodes, anime, router, user }: any) {
                   {ep.title || `Episode ${ep.episode_number}`}
                 </Text>
                 <Text style={styles.epMeta}>
-                  {ep.duration ? `${ep.duration}m` : ''}{ep.air_date ? ` • ${ep.air_date}` : ''}
+                  {ep.duration ? `${Math.round(ep.duration / 60)}m` : ''}{ep.air_date ? ` • ${ep.air_date}` : ''}
                 </Text>
               </View>
               {ep.is_premium && user?.subscription_type !== 'premium' ? (
@@ -299,14 +300,14 @@ function EpisodesTab({ episodes, anime, router, user }: any) {
               )}
             </TouchableOpacity>
           ))}
-          {episodes.length > 5 && (
-            <TouchableOpacity
-              style={styles.seeAllEps}
-              onPress={() => router.push(`/anime/episodes/${anime.id}?animeTitle=${encodeURIComponent(anime.title)}`)}
-            >
-              <Text style={styles.seeAllEpsText}>SEE ALL {episodes.length} EPISODES →</Text>
-            </TouchableOpacity>
-          )}
+            {episodes.length > 5 && (
+              <TouchableOpacity
+                style={styles.seeAllEps}
+                onPress={() => router.push(`/anime/episodes/${anime.id}?animeTitle=${encodeURIComponent(anime.title)}`)}
+              >
+                <Text style={styles.seeAllEpsText}>SEE ALL {episodes.length} EPISODES →</Text>
+              </TouchableOpacity>
+            )}
         </>
       )}
     </View>

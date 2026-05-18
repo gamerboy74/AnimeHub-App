@@ -6,22 +6,11 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { AnimeWithStats, Episode, UserActivitySummary, UserWatchProgressDetailed } from '../types/database';
 
-// ─── CONFIG ───────────────────────────────────────────────────────────────────
-// Your Vercel deployment. Already deployed — just add the api/stream-proxy.js file.
-const VERCEL_BASE = 'https://anime-hub-mocha.vercel.app';
-
-// Build a proxied URL for any stream URL that needs header spoofing
+// ─── URL HELPER ────────────────────────────────────────────────────────────────
+// Returns the raw stream/embed URL. The WebView in watch/[id].tsx already handles
+// popup blocking, redirect filtering, and CDN allow-listing natively.
 export function buildProxiedStreamUrl(rawUrl: string): string {
-  if (!rawUrl) return '';
-
-  // Already a direct safe URL (Supabase storage) — no proxy needed
-  if (rawUrl.includes('supabase.co/storage')) return rawUrl;
-
-  // Direct mp4 without known CDN lock — try direct first
-  if (rawUrl.match(/\.mp4(\?|$)/i) && !rawUrl.includes('megacloud')) return rawUrl;
-
-  // Everything else (megacloud, rapidcloud, etc.) — proxy it
-  return `${VERCEL_BASE}/api/stream-proxy?url=${encodeURIComponent(rawUrl)}`;
+  return rawUrl?.trim() ?? '';
 }
 
 // ----------------------------------------------------------------------
@@ -32,7 +21,7 @@ export function useTrendingAnime() {
   return useQuery({
     queryKey: ['anime', 'trending'],
     staleTime: 5 * 60 * 1000,   // 5 min — trending doesn't change per-second
-    gcTime:    10 * 60 * 1000,  // keep in memory 10 min after unmount
+    gcTime: 10 * 60 * 1000,  // keep in memory 10 min after unmount
     queryFn: async (): Promise<AnimeWithStats[]> => {
       const { data, error } = await supabase
         .from('anime_with_stats')
@@ -49,7 +38,7 @@ export function useAnimeList(searchQuery?: string, genre?: string) {
   return useQuery({
     queryKey: ['anime', { search: searchQuery, genre }],
     staleTime: 3 * 60 * 1000,
-    gcTime:    10 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
     queryFn: async (): Promise<AnimeWithStats[]> => {
       let query = supabase
         .from('anime_with_stats')
@@ -68,7 +57,7 @@ export function useAnimeDetails(animeId?: string) {
   return useQuery({
     queryKey: ['anime', animeId],
     staleTime: 10 * 60 * 1000, // anime metadata rarely changes
-    gcTime:    15 * 60 * 1000,
+    gcTime: 15 * 60 * 1000,
     queryFn: async (): Promise<AnimeWithStats | null> => {
       if (!animeId) return null;
       const { data, error } = await supabase
@@ -91,7 +80,7 @@ export function useEpisodes(animeId?: string) {
   return useQuery({
     queryKey: ['episodes', animeId],
     staleTime: 10 * 60 * 1000,
-    gcTime:    20 * 60 * 1000,
+    gcTime: 20 * 60 * 1000,
     queryFn: async (): Promise<Episode[]> => {
       if (!animeId) return [];
       const { data, error } = await supabase
@@ -106,25 +95,24 @@ export function useEpisodes(animeId?: string) {
   });
 }
 
+// Shared fetcher — used by both useEpisodeDetails and the watch screen's prefetch.
+// Keeping a single function guarantees the cache shape is always identical.
+export async function fetchEpisodeById(episodeId: string): Promise<Episode | null> {
+  const { data, error } = await supabase
+    .from('episodes')
+    .select('*')
+    .eq('id', episodeId)
+    .single();
+  if (error) throw error;
+  return data ?? null;
+}
+
 export function useEpisodeDetails(episodeId?: string) {
   return useQuery({
     queryKey: ['episode', episodeId],
     staleTime: 10 * 60 * 1000,
-    gcTime:    20 * 60 * 1000,
-    queryFn: async (): Promise<Episode | null> => {
-      if (!episodeId) return null;
-      const { data, error } = await supabase
-        .from('episodes')
-        .select('*')
-        .eq('id', episodeId)
-        .single();
-      if (error) throw error;
-      if (!data) return null;
-      return {
-        ...data,
-        video_url: buildProxiedStreamUrl(data.video_url),
-      };
-    },
+    gcTime: 20 * 60 * 1000,
+    queryFn: () => episodeId ? fetchEpisodeById(episodeId) : null,
     enabled: !!episodeId,
   });
 }
@@ -141,7 +129,7 @@ export function useUserHistory() {
   return useQuery({
     queryKey: ['user', userId, 'history'],
     staleTime: 30 * 1000, // history should be reasonably fresh
-    gcTime:    5 * 60 * 1000,
+    gcTime: 5 * 60 * 1000,
     queryFn: async (): Promise<UserWatchProgressDetailed[]> => {
       if (!userId) return [];
       const { data, error } = await supabase
@@ -185,7 +173,7 @@ export function useWatchProgress(episodeId?: string) {
   return useQuery({
     queryKey: ['user', userId, 'progress', episodeId],
     staleTime: 10 * 1000, // progress must be fresh — 10s
-    gcTime:    2 * 60 * 1000,
+    gcTime: 2 * 60 * 1000,
     queryFn: async () => {
       if (!userId || !episodeId) return null;
       const { data, error } = await supabase
@@ -205,7 +193,7 @@ export function useSimilarAnime(genres: string[] = [], currentAnimeId?: string, 
   return useQuery({
     queryKey: ['anime', 'similar', currentAnimeId, genres],
     staleTime: 5 * 60 * 1000,
-    gcTime:    10 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
     queryFn: async (): Promise<AnimeWithStats[]> => {
       if (genres.length === 0) return [];
       const { data, error } = await supabase
