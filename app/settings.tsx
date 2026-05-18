@@ -81,15 +81,23 @@ export default function SettingsScreen() {
               source={{ uri: user.avatar_url || 'https://images.unsplash.com/photo-1511367461989-f85a21fda167?q=80&w=200' }} 
               style={styles.avatar} 
             />
-            <TouchableOpacity style={styles.editAvatarBtn}>
+            <TouchableOpacity
+              style={styles.editAvatarBtn}
+              onPress={() => Alert.alert('Change Avatar', 'To update your avatar, paste a public image URL.', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Use Gravatar', onPress: () => Alert.alert('Gravatar', `Your Gravatar for ${user.email} will be used automatically.`) },
+              ])}
+            >
               <Ionicons name="pencil" size={12} color={COLORS.bg} />
             </TouchableOpacity>
           </View>
           <View style={styles.identityInfo}>
             <Text style={styles.username}>{user.username}</Text>
             <View style={styles.identityBadges}>
-              <View style={styles.premiumBadge}>
-                <Text style={styles.premiumBadgeText}>PREMIUM MEMBER</Text>
+              <View style={[styles.premiumBadge, user.subscription_type === 'premium' && { backgroundColor: 'rgba(255,214,0,0.1)', borderColor: 'rgba(255,214,0,0.3)' }]}>
+                <Text style={[styles.premiumBadgeText, user.subscription_type === 'premium' && { color: COLORS.neonGold }]}>
+                  {user.subscription_type === 'premium' ? 'PREMIUM MEMBER' : 'FREE PLAN'}
+                </Text>
               </View>
               <Text style={styles.joinedText}>Joined {joinedDate}</Text>
             </View>
@@ -102,33 +110,53 @@ export default function SettingsScreen() {
           <View style={styles.bentoHeader}>
             <View>
               <Text style={styles.bentoTitle}>Subscription</Text>
-              <Text style={styles.bentoSub}>You are currently on the <Text style={{color: COLORS.neon, fontWeight: '700'}}>Ultra-HD Neon Elite</Text> plan.</Text>
+              {user.subscription_type === 'premium' ? (
+                <Text style={styles.bentoSub}>You are on the <Text style={{color: COLORS.neonGold, fontWeight: '700'}}>Premium</Text> plan.</Text>
+              ) : (
+                <Text style={styles.bentoSub}>You are on the <Text style={{color: COLORS.textSub, fontWeight: '700'}}>Free</Text> plan. Upgrade for HD streaming, offline downloads, and more.</Text>
+              )}
             </View>
-            <Ionicons name="ribbon" size={28} color={COLORS.neon} />
+            <Ionicons name="ribbon" size={28} color={user.subscription_type === 'premium' ? COLORS.neonGold : COLORS.textMuted} />
           </View>
-          <View style={styles.bentoStats}>
-            <View style={styles.bentoStat}>
-              <Text style={styles.statLabel}>Next Renewal</Text>
-              <Text style={styles.statValue}>Oct 12, 2024</Text>
+          {user.subscription_type === 'premium' ? (
+            <View style={styles.bentoStats}>
+              <View style={styles.bentoStat}>
+                <Text style={styles.statLabel}>Plan</Text>
+                <Text style={styles.statValue}>Premium</Text>
+              </View>
+              <View style={styles.bentoStat}>
+                <Text style={styles.statLabel}>Member Since</Text>
+                <Text style={styles.statValue}>
+                  {user.created_at ? new Date(user.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '—'}
+                </Text>
+              </View>
             </View>
-            <View style={styles.bentoStat}>
-              <Text style={styles.statLabel}>Monthly Cost</Text>
-              <Text style={styles.statValue}>$14.99</Text>
+          ) : (
+            <View style={styles.freeFeatureList}>
+              {['Unlimited Anime Access', 'HD Streaming', 'Offline Downloads', 'No Ads'].map(f => (
+                <View key={f} style={styles.freeFeatureRow}>
+                  <Ionicons name="lock-closed-outline" size={14} color={COLORS.textMuted} />
+                  <Text style={styles.freeFeatureText}>{f}</Text>
+                </View>
+              ))}
             </View>
-          </View>
+          )}
           <View style={styles.bentoActions}>
-            <TouchableOpacity style={styles.primaryAction}>
-              <LinearGradient 
-                colors={[COLORS.neon, COLORS.neonCyan]} 
-                start={{x:0, y:0}} end={{x:1, y:0}} 
-                style={styles.actionGradient}
-              >
-                <Text style={styles.primaryActionText}>Manage Plan</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryAction}>
-              <Text style={styles.secondaryActionText}>View Billing History</Text>
-            </TouchableOpacity>
+            {user.subscription_type === 'premium' ? (
+              <TouchableOpacity style={styles.secondaryAction} onPress={() => Alert.alert('Manage Plan', 'Subscription management coming soon!')}>  
+                <Text style={styles.secondaryActionText}>Manage Plan</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity style={styles.primaryAction} onPress={() => Alert.alert('Upgrade to Premium', 'Premium plans coming soon! Stay tuned.')}>
+                <LinearGradient
+                  colors={[COLORS.neonGold, '#ff7346']}
+                  start={{x:0, y:0}} end={{x:1, y:0}}
+                  style={styles.actionGradient}
+                >
+                  <Text style={styles.primaryActionText}>⚡ Upgrade to Premium</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
           </View>
         </BlurView>
 
@@ -287,6 +315,10 @@ const styles = StyleSheet.create({
   },
   premiumBadgeText: { fontSize: 9, fontWeight: '800', color: COLORS.neon, letterSpacing: 2 },
   joinedText: { fontSize: 13, color: COLORS.textSub, marginTop: 4 },
+
+  freeFeatureList: { gap: 10, marginBottom: 24 },
+  freeFeatureRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  freeFeatureText: { fontSize: 13, color: COLORS.textMuted, fontWeight: '500' },
 
   bentoCard: {
     padding: 24, borderRadius: RADIUS.lg,

@@ -84,6 +84,7 @@ export type User = {
   id: string;
   email: string;
   username: string;
+  bio?: string;
   avatar_url?: string;
   subscription_type: 'free' | 'premium';
   role: string;
@@ -167,6 +168,17 @@ export const userAPI = {
 
   getProgress: (userId: string) =>
     supabase.from('user_watch_progress_detailed').select('*').eq('user_id', userId).order('last_watched', { ascending: false }),
+
+  // Returns the most recently watched episode for a specific anime (for "Continue Watching")
+  getAnimeProgress: (userId: string, animeId: string) =>
+    supabase
+      .from('user_progress')
+      .select('episode_id, progress_seconds, is_completed, last_watched, episodes!inner(anime_id, episode_number)')
+      .eq('user_id', userId)
+      .eq('episodes.anime_id', animeId)
+      .order('last_watched', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
 
   upsertProgress: (userId: string, episodeId: string, progressSeconds: number, isCompleted: boolean) =>
     supabase.from('user_progress').upsert({

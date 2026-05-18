@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity, Image, Alert,
+  Modal, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -11,46 +12,136 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { userAPI } from '../../src/lib/supabase';
 
-const BADGES = [
-  { id: '1', name: 'ELITE', icon: 'star', color: COLORS.neon, earned: true },
-  { id: '2', name: 'GUARDIAN', icon: 'shield', color: COLORS.neonCyan, earned: true },
-  { id: '3', name: 'VETERAN', icon: 'medal', color: '#ff7346', earned: true },
-  { id: '4', name: 'LEGEND', icon: 'diamond', color: COLORS.textMuted, earned: false },
-  { id: '5', name: 'WARRIOR', icon: 'flash', color: COLORS.textMuted, earned: false },
-  { id: '6', name: 'MYSTIC', icon: 'color-wand', color: COLORS.neonPulse, earned: true },
+const BADGE_DEFS = [
+  { id: '1', name: 'FIRST EP', icon: 'play-circle', color: COLORS.neon, check: (p: any[], s: number, w: any[]) => p.length >= 1 },
+  { id: '2', name: 'DEDICATED', icon: 'flash', color: COLORS.neonCyan, check: (p: any[], s: number) => s >= 3 },
+  { id: '3', name: 'VETERAN', icon: 'medal', color: '#ff7346', check: (p: any[], s: number) => p.length >= 10 },
+  { id: '4', name: 'LISTER', icon: 'list', color: COLORS.neonPulse, check: (p: any[], s: number, w: any[]) => w.length >= 5 },
+  { id: '5', name: 'WARRIOR', icon: 'shield', color: COLORS.neonGold, check: (p: any[], s: number) => s >= 7 },
+  { id: '6', name: 'LEGEND', icon: 'star', color: '#BF5FFF', check: (p: any[], s: number) => p.length >= 50 },
 ];
 
-const GENRE_PROGRESS = [
-  { name: 'Cyberpunk', percent: 82, color: COLORS.neonCyan },
-  { name: 'Seinen', percent: 65, color: COLORS.neon },
-  { name: 'Psychological', percent: 48, color: '#ff7346' },
-];
+const GENRE_COLORS = ['#00F5FF', '#BF5FFF', '#ff7346', '#FFD600', '#FF2D78', '#00F5B4'];
+
+function computeGenres(progress: any[]) {
+  const counts: Record<string, number> = {};
+  for (const p of progress) {
+    const genres: string[] = p.genres || p.anime_genres || [];
+    for (const g of genres) {
+      counts[g] = (counts[g] || 0) + 1;
+    }
+  }
+  const total = Math.max(Object.values(counts).reduce((a, b) => a + b, 0), 1);
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([name, count], i) => ({
+      name,
+      percent: Math.round((count / total) * 100),
+      color: GENRE_COLORS[i % GENRE_COLORS.length],
+    }));
+}
+
+// ── Helpers ──────────────────────────────────────────────────
+function relativeTime(isoString: string) {
+  const diff = Date.now() - new Date(isoString).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return `${Math.floor(days / 7)}w ago`;
+}
+
+function computeStreak(progress: any[]): number {
+  const days = new Set(
+    progress.map(p => new Date(p.last_watched).toDateString())
+  );
+  const sorted = Array.from(days)
+    .map(d => new Date(d).getTime())
+    .sort((a, b) => b - a);
+  let streak = 0;
+  let check = new Date();
+  check.setHours(0, 0, 0, 0);
+  for (const ts of sorted) {
+    const d = new Date(ts);
+    d.setHours(0, 0, 0, 0);
+    const diff = Math.round((check.getTime() - d.getTime()) / 86400000);
+    if (diff <= 1) { streak++; check = d; }
+    else break;
+  }
+  return streak;
+}
 
 export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user, signOut } = useAuth();
+  const { user, signOut, refreshUser } = useAuth();
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
+  const [allProgress, setAllProgress] = useState<any[]>([]);
   const [watchlist, setWatchlist] = useState<any[]>([]);
   const [favorites, setFavorites] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [streak, setStreak] = useState(0);
+  const [genreStats, setGenreStats] = useState<{name:string;percent:number;color:string}[]>([]);
+  const [badges, setBadges] = useState<{id:string;name:string;icon:string;color:string;earned:boolean}[]>([]);
+
+  // Edit profile modal state
+  const [editVisible, setEditVisible] = useState(false);
+  const [editUsername, setEditUsername] = useState('');
+  const [editBio, setEditBio] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+
+  // Local bio (survives modal cancel)
+  const [bio, setBio] = useState('');
 
   useEffect(() => {
     if (user) {
+      setBio(user.bio || '');
       setLoading(true);
       Promise.all([
         userAPI.getProgress(user.id),
         userAPI.getWatchlist(user.id),
         userAPI.getFavorites(user.id),
       ]).then(([progressRes, watchlistRes, favoritesRes]) => {
-        setRecentActivity(progressRes.data?.slice(0, 3) || []);
-        // Watchlist data structure is { anime: { ... } }
-        setWatchlist(watchlistRes.data?.map(item => item.anime) || []);
-        setFavorites(favoritesRes.data?.map(item => item.anime) || []);
+        const prog = progressRes.data || [];
+        const wl = watchlistRes.data?.map((item: any) => item.anime) || [];
+        const s = computeStreak(prog);
+        setAllProgress(prog);
+        setRecentActivity(prog.slice(0, 3));
+        setStreak(s);
+        setWatchlist(wl);
+        setFavorites(favoritesRes.data?.map((item: any) => item.anime) || []);
+        setGenreStats(computeGenres(prog));
+        setBadges(BADGE_DEFS.map(b => ({ ...b, earned: b.check(prog, s, wl) })));
         setLoading(false);
       });
     }
   }, [user]);
+
+  const openEdit = () => {
+    setEditUsername(user?.username || '');
+    setEditBio(bio);
+    setEditVisible(true);
+  };
+
+  const saveEdit = async () => {
+    if (!user || !editUsername.trim()) return;
+    setEditSaving(true);
+    const { error } = await userAPI.updateProfile(user.id, {
+      username: editUsername.trim(),
+      ...(editBio !== undefined ? { bio: editBio.trim() } : {}),
+    } as any);
+    setEditSaving(false);
+    if (error) {
+      Alert.alert('Error', 'Could not update profile. Try again.');
+    } else {
+      setBio(editBio.trim());
+      setEditVisible(false);
+      await refreshUser();
+    }
+  };
 
   if (!user) {
     return (
@@ -62,6 +153,15 @@ export default function ProfileScreen() {
         <TouchableOpacity style={styles.signInBtn} onPress={() => router.push('/auth/login')}>
           <Text style={styles.signInText}>SIGN IN</Text>
         </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (loading) {
+    return (
+      <View style={[styles.container, styles.center]}>
+        <ActivityIndicator size="large" color={COLORS.neon} />
+        <Text style={[styles.guestTitle, { fontSize: 12, marginTop: 16, color: COLORS.textMuted, letterSpacing: 1 }]}>LOADING PROFILE…</Text>
       </View>
     );
   }
@@ -93,15 +193,29 @@ export default function ProfileScreen() {
         
         <View style={styles.heroInfo}>
           <Text style={styles.heroName} numberOfLines={1}>{user.username}</Text>
-          <View style={styles.premiumBadge}>
-            <Text style={styles.premiumBadgeText}>PREMIUM MEMBER</Text>
+          <View style={[
+            styles.premiumBadge,
+            user.subscription_type === 'premium' && styles.premiumBadgeActive,
+          ]}>
+            <Ionicons
+              name={user.subscription_type === 'premium' ? 'ribbon' : 'person'}
+              size={10}
+              color={user.subscription_type === 'premium' ? COLORS.neonGold : COLORS.textSub}
+              style={{ marginRight: 4 }}
+            />
+            <Text style={[
+              styles.premiumBadgeText,
+              user.subscription_type === 'premium' && { color: COLORS.neonGold },
+            ]}>
+              {user.subscription_type === 'premium' ? 'PREMIUM MEMBER' : 'FREE PLAN'}
+            </Text>
           </View>
           <Text style={styles.heroBio}>
-            Streaming the future of visual storytelling. Night owl, Sakuga enthusiast, and OST collector.
+            {bio || `@${user.username} · Anime fan`}
           </Text>
           
           <View style={styles.heroActions}>
-            <TouchableOpacity style={styles.editBtn} onPress={() => Alert.alert('Edit Profile', 'Profile editing coming soon!')}>
+            <TouchableOpacity style={styles.editBtn} onPress={openEdit}>
               <LinearGradient 
                 colors={[COLORS.neon, COLORS.accent]} 
                 start={{x:0, y:0}} end={{x:1, y:1}} 
@@ -113,9 +227,6 @@ export default function ProfileScreen() {
             <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.push('/settings')}>
               <Text style={styles.secondaryBtnText}>Settings</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryBtn} onPress={() => Alert.alert('Achievements', 'Achievement system coming soon!')}>
-              <Text style={styles.secondaryBtnText}>Achievements</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </View>
@@ -124,9 +235,9 @@ export default function ProfileScreen() {
       <View style={styles.section}>
         <View style={styles.statsGrid}>
           <StatTile value={formatWatchTime(user.total_watch_time)} label="HOURS WATCHED" color={COLORS.neon} />
-          <StatTile value={String(user.anime_watched || 0)} label="COMPLETED SERIES" color={COLORS.neonCyan} />
-          <StatTile value="4.8k" label="FOLLOWERS" color="#ff7346" />
-          <StatTile value="14" label="DAY STREAK" color={COLORS.neonPulse} isStreak />
+          <StatTile value={String(user.anime_watched || allProgress.filter((p: any) => p.is_completed).length)} label="COMPLETED" color={COLORS.neonCyan} />
+          <StatTile value={String(allProgress.length)} label="EPISODES" color="#ff7346" />
+          <StatTile value={String(streak)} label="DAY STREAK" color={COLORS.neonPulse} isStreak />
         </View>
       </View>
 
@@ -136,21 +247,28 @@ export default function ProfileScreen() {
           <View style={styles.streakHeader}>
             <View>
               <Text style={styles.streakTitle}>Current Streak</Text>
-              <Text style={styles.streakSub}>Watch 1 more episode today to keep the streak!</Text>
+              <Text style={styles.streakSub}>
+                {streak === 0
+                  ? 'Start watching to build your streak!'
+                  : allProgress.some(p => new Date(p.last_watched).toDateString() === new Date().toDateString())
+                    ? `🔥 Great job! Streak maintained today.`
+                    : `Watch 1 episode today to keep your ${streak}-day streak!`
+                }
+              </Text>
             </View>
             <Ionicons name="flash" size={24} color={COLORS.neonCyan} />
           </View>
           <View style={styles.streakProgressContainer}>
             <View style={styles.streakProgressLabels}>
               <Text style={styles.progressLabel}>PROGRESS</Text>
-              <Text style={[styles.progressLabel, { color: COLORS.text }]}>14/30 DAYS</Text>
+              <Text style={[styles.progressLabel, { color: COLORS.text }]}>{streak}/30 DAYS</Text>
             </View>
             <View style={styles.progressBarBg}>
-              <View style={[styles.progressBarFill, { width: '46%', backgroundColor: COLORS.neonCyan }]} />
+              <View style={[styles.progressBarFill, { width: `${Math.min((streak / 30) * 100, 100)}%`, backgroundColor: COLORS.neonCyan }]} />
             </View>
             <View style={styles.streakLevels}>
-              <Text style={styles.levelLabel}>Level 4: Shinobi</Text>
-              <Text style={styles.levelLabel}>Level 5: Ronin</Text>
+              <Text style={styles.levelLabel}>Level {Math.floor(streak / 7) + 1}: {['Genin','Chunin','Jonin','Anbu','Kage'][Math.min(Math.floor(streak/7), 4)]}</Text>
+              <Text style={styles.levelLabel}>Next: {Math.min((Math.floor(streak/7)+1)*7, 30)} days</Text>
             </View>
           </View>
         </BlurView>
@@ -218,32 +336,27 @@ export default function ProfileScreen() {
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Recent Activity</Text>
-          <TouchableOpacity><Text style={styles.seeAllText}>VIEW ALL</Text></TouchableOpacity>
+          <TouchableOpacity onPress={() => router.push('/history')}><Text style={styles.seeAllText}>VIEW ALL</Text></TouchableOpacity>
         </View>
         <View style={styles.activityList}>
-          {recentActivity.map((activity, idx) => (
-            <ActivityItem 
-              key={activity.id || idx} 
-              poster={activity.anime_poster_url} 
-              title={activity.anime_title} 
-              episode={activity.episode_number}
-              progress={activity.progress_percent || 15}
-              time="2h ago"
-            />
-          ))}
-          {/* Mock Badge Earned Item */}
-          <View style={styles.activityItemBadge}>
-            <View style={styles.badgeActivityIcon}>
-              <Ionicons name="ribbon-outline" size={24} color="#ff7346" />
-            </View>
-            <View style={styles.activityInfo}>
-              <View style={styles.activityHeader}>
-                <Text style={styles.activityTitle}>Badge Earned: "Sakuga Master"</Text>
-                <Text style={styles.activityTime}>Yesterday</Text>
-              </View>
-              <Text style={styles.activitySub}>Completed 50+ series in the <Text style={{color: COLORS.text}}>Action</Text> genre.</Text>
-            </View>
-          </View>
+          {recentActivity.length === 0 ? (
+            <BlurView intensity={10} style={styles.emptyCard}>
+              <Ionicons name="time-outline" size={32} color={COLORS.textMuted} />
+              <Text style={styles.emptyText}>No watch history yet</Text>
+            </BlurView>
+          ) : (
+            recentActivity.map((activity, idx) => (
+              <ActivityItem
+                key={activity.progress_id || activity.episode_id || idx}
+                poster={activity.poster_url || activity.anime_poster_url}
+                title={activity.anime_title}
+                episode={activity.episode_number}
+                progress={activity.progress_percentage || activity.progress_percent || 0}
+                time={activity.last_watched ? relativeTime(activity.last_watched) : ''}
+                onPress={() => router.push(`/anime/${activity.anime_id}`)}
+              />
+            ))
+          )}
         </View>
       </View>
 
@@ -252,12 +365,12 @@ export default function ProfileScreen() {
         <View style={styles.badgeSection}>
           <Text style={styles.gridSectionTitle}>Earned Badges</Text>
           <View style={styles.badgeGrid}>
-            {BADGES.map(badge => (
+            {badges.map(badge => (
               <View key={badge.id} style={styles.badgeItem}>
                 <View style={[styles.badgeIconBox, !badge.earned && styles.lockedBadge]}>
                   <Ionicons name={badge.icon as any} size={20} color={badge.earned ? badge.color : COLORS.textMuted} />
                 </View>
-                <Text style={styles.badgeName}>{badge.name}</Text>
+                <Text style={[styles.badgeName, badge.earned && { color: badge.color }]}>{badge.name}</Text>
               </View>
             ))}
           </View>
@@ -266,33 +379,67 @@ export default function ProfileScreen() {
         {/* Top Genres */}
         <View style={styles.genreSection}>
           <Text style={styles.gridSectionTitle}>Top Genres</Text>
-          <View style={styles.genreList}>
-            {GENRE_PROGRESS.map(g => (
-              <View key={g.name} style={styles.genreItem}>
-                <View style={styles.genreLabelRow}>
-                  <Text style={styles.genreNameLabel}>{g.name}</Text>
-                  <Text style={styles.genreValue}>{g.percent}%</Text>
+          {genreStats.length === 0 ? (
+            <Text style={styles.genreEmpty}>Watch more anime to see your genre stats!</Text>
+          ) : (
+            <View style={styles.genreList}>
+              {genreStats.map(g => (
+                <View key={g.name} style={styles.genreItem}>
+                  <View style={styles.genreLabelRow}>
+                    <Text style={styles.genreNameLabel}>{g.name}</Text>
+                    <Text style={[styles.genreValue, { color: g.color }]}>{g.percent}%</Text>
+                  </View>
+                  <View style={styles.genreBarBg}>
+                    <View style={[styles.genreBarFill, { width: `${g.percent}%`, backgroundColor: g.color }]} />
+                  </View>
                 </View>
-                <View style={styles.genreBarBg}>
-                  <View style={[styles.genreBarFill, { width: `${g.percent}%`, backgroundColor: g.color }]} />
-                </View>
-              </View>
-            ))}
-          </View>
+              ))}
+            </View>
+          )}
         </View>
       </View>
 
-      {/* Friends Online */}
+      {/* Account Info Card */}
       <View style={styles.section}>
-        <Text style={styles.gridSectionTitle}>Friends Online</Text>
-        <View style={styles.friendsContainer}>
-          <View style={styles.friendStack}>
-            <Image source={{ uri: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?q=80&w=50' }} style={styles.friendAvatar} />
-            <Image source={{ uri: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?q=80&w=50' }} style={[styles.friendAvatar, { marginLeft: -12 }]} />
-            <Image source={{ uri: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?q=80&w=50' }} style={[styles.friendAvatar, { marginLeft: -12 }]} />
-            <View style={[styles.friendAvatar, styles.friendPlus, { marginLeft: -12 }]}>
-              <Text style={styles.friendPlusText}>+12</Text>
+        <Text style={[styles.gridSectionTitle, { marginBottom: 14 }]}>Account Info</Text>
+        <View style={styles.accountCard}>
+          <View style={styles.accountRow}>
+            <View style={styles.accountRowIcon}>
+              <Ionicons name="mail-outline" size={16} color={COLORS.neonCyan} />
             </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.accountRowLabel}>Email</Text>
+              <Text style={styles.accountRowValue} numberOfLines={1}>{user.email}</Text>
+            </View>
+          </View>
+          <View style={styles.accountDivider} />
+          <View style={styles.accountRow}>
+            <View style={styles.accountRowIcon}>
+              <Ionicons name="calendar-outline" size={16} color={COLORS.neonPulse} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.accountRowLabel}>Member Since</Text>
+              <Text style={styles.accountRowValue}>
+                {user.created_at ? new Date(user.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—'}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.accountDivider} />
+          <View style={styles.accountRow}>
+            <View style={styles.accountRowIcon}>
+              <Ionicons name={user.subscription_type === 'premium' ? 'ribbon' : 'person-outline'} size={16} color={user.subscription_type === 'premium' ? COLORS.neonGold : COLORS.textMuted} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.accountRowLabel}>Plan</Text>
+              <Text style={[styles.accountRowValue, user.subscription_type === 'premium' && { color: COLORS.neonGold }]}>
+                {user.subscription_type === 'premium' ? 'Premium' : 'Free'}
+              </Text>
+            </View>
+            {user.subscription_type !== 'premium' && (
+              <TouchableOpacity style={styles.upgradePill} onPress={() => router.push('/settings')}>
+                <Text style={styles.upgradePillText}>UPGRADE</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </View>
@@ -301,6 +448,45 @@ export default function ProfileScreen() {
         <Ionicons name="log-out-outline" size={20} color={COLORS.danger} />
         <Text style={styles.signOutText}>SIGN OUT</Text>
       </TouchableOpacity>
+
+      {/* Edit Profile Modal */}
+      <Modal visible={editVisible} transparent animationType="slide" onRequestClose={() => setEditVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setEditVisible(false)} />
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalTitle}>Edit Profile</Text>
+            <Text style={styles.modalLabel}>Username</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={editUsername}
+              onChangeText={setEditUsername}
+              placeholder="Enter username"
+              placeholderTextColor={COLORS.textMuted}
+              autoCapitalize="none"
+              maxLength={30}
+            />
+            <Text style={styles.modalLabel}>Bio</Text>
+            <TextInput
+              style={[styles.modalInput, { height: 90, textAlignVertical: 'top' }]}
+              value={editBio}
+              onChangeText={setEditBio}
+              placeholder="Tell people about yourself…"
+              placeholderTextColor={COLORS.textMuted}
+              multiline
+              maxLength={150}
+            />
+            <TouchableOpacity style={styles.modalSaveBtn} onPress={saveEdit} disabled={editSaving}>
+              <LinearGradient colors={[COLORS.neon, COLORS.accent]} start={{x:0,y:0}} end={{x:1,y:1}} style={styles.modalSaveGradient}>
+                {editSaving
+                  ? <ActivityIndicator color="#000" size="small" />
+                  : <Text style={styles.modalSaveText}>Save Changes</Text>
+                }
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </ScrollView>
   );
 }
@@ -317,24 +503,24 @@ function StatTile({ value, label, color, isStreak }: any) {
   );
 }
 
-function ActivityItem({ poster, title, episode, progress, time }: any) {
+function ActivityItem({ poster, title, episode, progress, time, onPress }: any) {
   return (
-    <View style={styles.activityItem}>
+    <TouchableOpacity style={styles.activityItem} onPress={onPress} activeOpacity={0.8}>
       <Image source={{ uri: poster || 'https://via.placeholder.com/100x150' }} style={styles.activityPoster} />
       <View style={styles.activityInfo}>
         <View style={styles.activityHeader}>
-          <Text style={styles.activityTitle}>{title}</Text>
+          <Text style={styles.activityTitle} numberOfLines={1}>{title}</Text>
           <Text style={styles.activityTime}>{time}</Text>
         </View>
-        <Text style={styles.activitySub}>Started watching <Text style={{color: COLORS.text}}>Episode {episode}</Text></Text>
+        <Text style={styles.activitySub}>Episode <Text style={{color: COLORS.text}}>{episode}</Text></Text>
         <View style={styles.activityProgressContainer}>
           <View style={styles.activityProgressLine}>
-            <View style={[styles.activityProgressFill, { width: `${progress}%` }]} />
+            <View style={[styles.activityProgressFill, { width: `${Math.min(progress, 100)}%` }]} />
           </View>
-          <Text style={styles.activityProgressText}>{progress}%</Text>
+          <Text style={styles.activityProgressText}>{Math.round(progress)}%</Text>
         </View>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -372,11 +558,16 @@ const styles = StyleSheet.create({
   heroInfo: { alignItems: 'center', width: '100%' },
   heroName: { fontSize: 28, fontWeight: '900', color: COLORS.text, letterSpacing: -1, marginBottom: 6 },
   premiumBadge: {
+    flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 12, paddingVertical: 4,
-    backgroundColor: 'rgba(0,227,253,0.1)',
+    backgroundColor: 'rgba(0,227,253,0.08)',
     borderRadius: 100,
-    borderWidth: 1, borderColor: 'rgba(0,227,253,0.3)',
+    borderWidth: 1, borderColor: 'rgba(0,227,253,0.2)',
     marginBottom: 10,
+  },
+  premiumBadgeActive: {
+    backgroundColor: 'rgba(255,214,0,0.08)',
+    borderColor: 'rgba(255,214,0,0.3)',
   },
   premiumBadgeText: { fontSize: 8, fontWeight: '800', color: COLORS.neonCyan, letterSpacing: 2 },
   heroBio: { color: COLORS.textSub, textAlign: 'center', fontSize: 13, lineHeight: 20, paddingHorizontal: SPACING.xl, marginBottom: SPACING.lg },
@@ -478,6 +669,7 @@ const styles = StyleSheet.create({
   genreLabelRow: { flexDirection: 'row', justifyContent: 'space-between' },
   genreNameLabel: { fontSize: 10, fontWeight: '800', color: COLORS.text, textTransform: 'uppercase' },
   genreValue: { fontSize: 10, fontWeight: '800', color: COLORS.textSub },
+  genreEmpty: { fontSize: 12, color: COLORS.textMuted, fontStyle: 'italic', marginTop: 4 },
   genreBarBg: { height: 4, backgroundColor: COLORS.bgCard, borderRadius: 2 },
   genreBarFill: { height: '100%', borderRadius: 2 },
 
@@ -489,6 +681,29 @@ const styles = StyleSheet.create({
   friendAvatar: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: COLORS.bgElevated },
   friendPlus: { backgroundColor: '#25252A', alignItems: 'center', justifyContent: 'center' },
   friendPlusText: { fontSize: 9, fontWeight: '800', color: COLORS.textSub },
+
+  // Account Info Card
+  accountCard: {
+    backgroundColor: COLORS.bgElevated,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1, borderColor: 'rgba(189,157,255,0.08)',
+    overflow: 'hidden',
+  },
+  accountRow: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16 },
+  accountRowIcon: {
+    width: 36, height: 36, borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  accountRowLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 2 },
+  accountRowValue: { fontSize: 14, color: COLORS.text, fontWeight: '600' },
+  accountDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.04)', marginHorizontal: 16 },
+  upgradePill: {
+    paddingHorizontal: 12, paddingVertical: 6,
+    backgroundColor: COLORS.neon,
+    borderRadius: 100,
+  },
+  upgradePillText: { fontSize: 9, fontWeight: '900', color: '#000', letterSpacing: 1 },
 
   signOutBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
@@ -502,6 +717,28 @@ const styles = StyleSheet.create({
   guestTitle: { color: COLORS.text, fontWeight: '900', letterSpacing: 2, marginTop: 10 },
   signInBtn: { paddingHorizontal: 32, paddingVertical: 12, backgroundColor: COLORS.neon, borderRadius: 100, marginTop: 20 },
   signInText: { color: COLORS.bg, fontWeight: '900' },
+
+  // Edit modal
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)' },
+  modalSheet: {
+    backgroundColor: COLORS.bgElevated,
+    borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    padding: 28, paddingBottom: 48,
+    borderTopWidth: 1, borderColor: COLORS.border,
+  },
+  modalHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.border, alignSelf: 'center', marginBottom: 24 },
+  modalTitle: { fontSize: 22, fontWeight: '900', color: COLORS.text, marginBottom: 24 },
+  modalLabel: { fontSize: 10, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 2, marginBottom: 8, textTransform: 'uppercase' },
+  modalInput: {
+    backgroundColor: COLORS.bgCard, borderRadius: RADIUS.md,
+    borderWidth: 1, borderColor: COLORS.border,
+    paddingHorizontal: 16, paddingVertical: 14,
+    color: COLORS.text, fontSize: 16, fontWeight: '600',
+    marginBottom: 24,
+  },
+  modalSaveBtn: { borderRadius: 100, overflow: 'hidden' },
+  modalSaveGradient: { paddingVertical: 16, alignItems: 'center' },
+  modalSaveText: { color: '#000', fontWeight: '900', fontSize: 15 },
 
   horizontalList: { gap: 16, paddingRight: SPACING.md },
   animePosterCard: {

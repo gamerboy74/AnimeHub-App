@@ -26,6 +26,9 @@ export default function AnimeDetailScreen() {
   const [isFav, setIsFav] = useState(false);
   const [inWatchlist, setInWatchlist] = useState(false);
   const [activeTab, setActiveTab] = useState<'episodes' | 'reviews' | 'info'>('episodes');
+  // Resume state — set when the user has watch progress for this anime
+  const [resumeEpisodeId, setResumeEpisodeId] = useState<string | null>(null);
+  const [resumeProgress, setResumeProgress] = useState<{ epNum: number; seconds: number } | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -50,7 +53,7 @@ export default function AnimeDetailScreen() {
 
       // Check user state with targeted queries (no full-table scan)
       if (user) {
-        const [favRes, wlRes] = await Promise.all([
+        const [favRes, wlRes, progressRes] = await Promise.all([
           supabase
             .from('user_favorites')
             .select('id')
@@ -63,9 +66,22 @@ export default function AnimeDetailScreen() {
             .eq('user_id', user.id)
             .eq('anime_id', animeId)
             .maybeSingle(),
+          userAPI.getAnimeProgress(user.id, animeId),
         ]);
         setIsFav(!!favRes.data);
         setInWatchlist(!!wlRes.data);
+
+        if (progressRes.data) {
+          const prog = progressRes.data as any;
+          setResumeEpisodeId(prog.episode_id);
+          setResumeProgress({
+            epNum: prog.episodes?.episode_number ?? 0,
+            seconds: prog.progress_seconds ?? 0,
+          });
+        } else {
+          setResumeEpisodeId(null);
+          setResumeProgress(null);
+        }
       }
     } catch (e) {
       console.error(e);
@@ -165,15 +181,27 @@ export default function AnimeDetailScreen() {
           <TouchableOpacity
             style={styles.playBigBtn}
             onPress={() => {
-              if (episodes.length > 0) {
+              if (resumeEpisodeId) {
+                // User has watch history — jump straight back in
+                router.push(`/watch/${resumeEpisodeId}`);
+              } else if (episodes.length > 0) {
                 router.push(`/watch/${episodes[0].id}`);
               } else {
                 router.push(`/anime/episodes/${animeId}?animeTitle=${encodeURIComponent(anime.title)}`);
               }
             }}
           >
-            <Ionicons name="play" size={18} color={COLORS.bg} />
-            <Text style={styles.playBigText}>START WATCHING</Text>
+            <Ionicons name={resumeEpisodeId ? 'play-skip-forward' : 'play'} size={18} color={COLORS.bg} />
+            <View>
+              <Text style={styles.playBigText}>
+                {resumeEpisodeId ? 'CONTINUE WATCHING' : 'START WATCHING'}
+              </Text>
+              {resumeProgress && (
+                <Text style={styles.playBigSub}>
+                  EP {resumeProgress.epNum} • {Math.floor(resumeProgress.seconds / 60)}m watched
+                </Text>
+              )}
+            </View>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.iconActionBtn, inWatchlist && styles.iconActionBtnActive]} onPress={toggleWatchlist}>
             <Ionicons name={inWatchlist ? 'bookmark' : 'bookmark-outline'} size={20} color={inWatchlist ? COLORS.neon : COLORS.textSub} />
@@ -470,6 +498,7 @@ const styles = StyleSheet.create({
     paddingVertical: 13, borderRadius: RADIUS.md,
   },
   playBigText: { color: COLORS.bg, fontWeight: '800', fontSize: 13, letterSpacing: 1 },
+  playBigSub: { color: COLORS.bg, fontWeight: '500', fontSize: 10, opacity: 0.75, marginTop: 1 },
   iconActionBtn: {
     width: 48, height: 48,
     backgroundColor: COLORS.bgCard,
