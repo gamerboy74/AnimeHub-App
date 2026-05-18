@@ -1,8 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const SUPABASE_URL = 'https://ieopfdxgjlmdsidikgbj.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imllb3BmZHhnamxtZHNpZGlrZ2JqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA1Mjg1MDgsImV4cCI6MjA3NjEwNDUwOH0.8MaTqu67m1EUnWQk1UUol2OHnFcP6k0vpcdI7EVX3aE';
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error(
+    'Missing Supabase env vars. Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY to your .env file.'
+  );
+}
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
@@ -146,7 +152,7 @@ export const userAPI = {
     supabase.from('users').select('*').eq('id', userId).single(),
 
   updateProfile: (userId: string, data: Partial<User>) =>
-    supabase.from('users').update(data).eq('id', userId),
+    supabase.from('users').update(data).eq('id', userId).select(),
 
   getFavorites: (userId: string) =>
     supabase.from('user_favorites').select('*, anime(*)').eq('user_id', userId),

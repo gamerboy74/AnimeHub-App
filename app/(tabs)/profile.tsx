@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity, Image, Alert,
+  View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert,
   Modal, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,6 +12,7 @@ import { useAuth } from '../../src/context/AuthContext';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { userAPI } from '../../src/lib/supabase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const BADGE_DEFS = [
   { id: '1', name: 'FIRST EP', icon: 'play-circle', color: COLORS.neon, check: (p: any[], s: number, w: any[]) => p.length >= 1 },
@@ -83,59 +85,73 @@ export default function ProfileScreen() {
   const [watchlist, setWatchlist] = useState<any[]>([]);
   const [favorites, setFavorites] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [streak, setStreak] = useState(0);
-  const [genreStats, setGenreStats] = useState<{name:string;percent:number;color:string}[]>([]);
-  const [badges, setBadges] = useState<{id:string;name:string;icon:string;color:string;earned:boolean}[]>([]);
 
   // Edit profile modal state
   const [editVisible, setEditVisible] = useState(false);
   const [editUsername, setEditUsername] = useState('');
   const [editBio, setEditBio] = useState('');
+  const [editAvatarUrl, setEditAvatarUrl] = useState('');
   const [editSaving, setEditSaving] = useState(false);
 
   // Local bio (survives modal cancel)
   const [bio, setBio] = useState('');
 
+  // Load bio from local cache as fallback if database column is missing
   useEffect(() => {
     if (user) {
-      setBio(user.bio || '');
       setLoading(true);
       Promise.all([
         userAPI.getProgress(user.id),
         userAPI.getWatchlist(user.id),
         userAPI.getFavorites(user.id),
-      ]).then(([progressRes, watchlistRes, favoritesRes]) => {
+        AsyncStorage.getItem(`user_bio_${user.id}`),
+      ]).then(([progressRes, watchlistRes, favoritesRes, cachedBio]) => {
+        setBio(cachedBio || user.bio || '');
         const prog = progressRes.data || [];
         const wl = watchlistRes.data?.map((item: any) => item.anime) || [];
-        const s = computeStreak(prog);
         setAllProgress(prog);
         setRecentActivity(prog.slice(0, 3));
-        setStreak(s);
         setWatchlist(wl);
         setFavorites(favoritesRes.data?.map((item: any) => item.anime) || []);
-        setGenreStats(computeGenres(prog));
-        setBadges(BADGE_DEFS.map(b => ({ ...b, earned: b.check(prog, s, wl) })));
         setLoading(false);
       });
     }
   }, [user]);
 
-  const openEdit = () => {
+  // ── Derived values — only recompute when allProgress/watchlist change ──
+  const streak    = useMemo(() => computeStreak(allProgress), [allProgress]);
+  const genreStats = useMemo(() => computeGenres(allProgress), [allProgress]);
+  const badges    = useMemo(
+    () => BADGE_DEFS.map(b => ({ ...b, earned: b.check(allProgress, streak, watchlist) })),
+    [allProgress, streak, watchlist]
+  );
+
+  const openEdit = useCallback(() => {
     setEditUsername(user?.username || '');
     setEditBio(bio);
+    setEditAvatarUrl(user?.avatar_url || '');
     setEditVisible(true);
-  };
+  }, [user, bio]);
 
   const saveEdit = async () => {
     if (!user || !editUsername.trim()) return;
     setEditSaving(true);
-    const { error } = await userAPI.updateProfile(user.id, {
+
+    // Only update fields that exist in the DB (bio column does not exist)
+    const { data: updatedRows, error } = await userAPI.updateProfile(user.id, {
       username: editUsername.trim(),
-      ...(editBio !== undefined ? { bio: editBio.trim() } : {}),
-    } as any);
+    });
+
+    // Always persist bio locally regardless of DB result
+    await AsyncStorage.setItem(`user_bio_${user.id}`, editBio.trim());
+
     setEditSaving(false);
+
     if (error) {
-      Alert.alert('Error', 'Could not update profile. Try again.');
+      Alert.alert('Error', `Could not update profile: ${(error as any)?.message || 'Unknown error'}`);
+    } else if (!updatedRows || (updatedRows as any[]).length === 0) {
+      // RLS blocked the update silently — row was filtered out
+      Alert.alert('Error', 'Update blocked. Check Supabase RLS policy allows users to update their own row.');
     } else {
       setBio(editBio.trim());
       setEditVisible(false);
@@ -468,7 +484,7 @@ export default function ProfileScreen() {
             />
             <Text style={styles.modalLabel}>Bio</Text>
             <TextInput
-              style={[styles.modalInput, { height: 90, textAlignVertical: 'top' }]}
+              style={[styles.modalInput, { height: 80, textAlignVertical: 'top' }]}
               value={editBio}
               onChangeText={setEditBio}
               placeholder="Tell people about yourself…"

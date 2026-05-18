@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   View,
@@ -260,6 +260,10 @@ export default function WatchScreen() {
   const lastSavedRef = useRef(0); // timestamp of last Supabase write
   const spinnerTimeoutRef = useRef<any>(null); // auto-dismiss loading spinner
 
+  // Stable refs for episode/user IDs — avoids stale closures in handleProgress
+  const episodeIdRef = useRef<string | undefined>(undefined);
+  const userIdRef = useRef<string | undefined>(undefined);
+
 
   // ── Data ──────────────────────────────────────────────────────────────────
   const { data: episode, isLoading: loadingEp } = useEpisodeDetails(
@@ -274,16 +278,28 @@ export default function WatchScreen() {
 
   const resumeSeconds = savedProgress?.progress_seconds ?? 0;
 
+  // Keep refs in sync so handleProgress always has fresh IDs without stale closures
+  useEffect(() => { episodeIdRef.current = episode?.id; }, [episode?.id]);
+  useEffect(() => { userIdRef.current = user?.id; }, [user?.id]);
+
   // Only show episodes that have a working video URL — same filter applied
   // everywhere (detail page, episodes list, and here in the player selector).
-  const streamableEpisodes =
-    episodes?.filter((ep) => !!ep.video_url?.trim()) ?? [];
-
-  const nextEpisode = streamableEpisodes.find(
-    (e) => e.episode_number === (episode?.episode_number ?? 0) + 1,
+  const streamableEpisodes = useMemo(
+    () => episodes?.filter((ep) => !!ep.video_url?.trim()) ?? [],
+    [episodes]
   );
 
-  const activeIndex = streamableEpisodes.findIndex((ep) => ep.id === id);
+  const nextEpisode = useMemo(
+    () => streamableEpisodes.find(
+      (e) => e.episode_number === (episode?.episode_number ?? 0) + 1
+    ),
+    [streamableEpisodes, episode?.episode_number]
+  );
+
+  const activeIndex = useMemo(
+    () => streamableEpisodes.findIndex((ep) => ep.id === id),
+    [streamableEpisodes, id]
+  );
 
   // ── Prefetch next 2 streamable episodes ──────────────────────────────────────
   // Dep: episode?.id only — re-runs only when the episode actually changes.
@@ -317,26 +333,28 @@ export default function WatchScreen() {
   }, [resumeSeconds]);
 
   // ── Progress sync to Supabase (throttled to 1 write per 10s) ────────────────
+  // Uses refs instead of closure deps so we never capture a stale episode/user.
   const handleProgress = useCallback(
     async (current: number, duration: number) => {
-      if (!user || !episode || current < MIN_PROGRESS_SECONDS) return;
+      const uid = userIdRef.current;
+      const eid = episodeIdRef.current;
+      if (!uid || !eid || current < MIN_PROGRESS_SECONDS) return;
 
       const now = Date.now();
-      if (now - lastSavedRef.current < 10_000) return; // throttle
+      if (now - lastSavedRef.current < 10_000) return; // throttle: 1 write per 10s
       lastSavedRef.current = now;
 
-      const { error } = await userAPI.upsertProgress(
-        user.id,
-        episode.id,
-        current,
-        duration > 0 && current > duration * 0.9,
-      );
+      const isCompleted = duration > 0 && current > duration * 0.9;
+      const { error } = await userAPI.upsertProgress(uid, eid, current, isCompleted);
 
       if (error) {
-        console.error("[Watch] Progress Save Error:", error.message);
+        // Print the full error so RLS failures are visible in Metro terminal
+        console.error('[Watch] Progress save failed:', JSON.stringify(error));
+      } else {
+        console.log(`[Watch] ✓ Progress saved: ${current}s / ${duration}s (ep: ${eid})`);
       }
     },
-    [user, episode],
+    [], // no deps — reads from refs only, never stale
   );
 
   // ── WebView message handler ───────────────────────────────────────────────
@@ -439,35 +457,17 @@ export default function WatchScreen() {
     };
   }, [id]);
 
-  // ── Clear previous progress for other episodes of this anime ──────────────
-  useEffect(() => {
-    if (!user?.id || !episode?.id || !episodes?.length) return;
+  // NOTE: clearOtherProgress was removed — it was wiping all episode history
+  // on every mount which caused the watch tracker to lose progress.
 
-    // Find all episodes from this anime EXCEPT the current one
-    const otherEpIds = episodes
-      .filter((ep) => ep.id !== episode.id)
-      .map((ep) => ep.id);
-
-    if (otherEpIds.length > 0) {
-      // Chunk by 500 to respect Supabase IN clause limits
-      const chunkSize = 500;
-      const clearAll = async () => {
-        for (let i = 0; i < otherEpIds.length; i += chunkSize) {
-          const chunk = otherEpIds.slice(i, i + chunkSize);
-          try {
-            await userAPI.clearOtherProgress(user.id, chunk);
-          } catch (err) {
-            console.warn(
-              "[Watch] Failed to clear other episodes progress:",
-              err,
-            );
-          }
-        }
-      };
-
-      clearAll();
-    }
-  }, [user?.id, episode?.id, episodes]);
+  // ── Derived render values (must be before any early returns — Rules of Hooks) ─
+  // embedUrl / embedOrigin / injectedJS depend on episode which may be null;
+  // use safe fallbacks so the hooks always run in the same order.
+  const embedUrl = episode?.video_url?.trim() ?? '';
+  const embedOrigin = useMemo(() => {
+    try { return new URL(embedUrl).origin; } catch { return ''; }
+  }, [embedUrl]);
+  const injectedJS = useMemo(() => buildInjectedJS(resumeSeconds), [resumeSeconds]);
 
   // ── Guards ────────────────────────────────────────────────────────────────
   if (loadingEp || loadingAnime) {
@@ -491,17 +491,7 @@ export default function WatchScreen() {
   }
 
   // Build the embed URL — use video_url directly (it's the embed page)
-  const embedUrl = episode.video_url?.trim();
-
-  // Derive Referer/Origin from the embed URL itself — works for megaplay, megacloud,
-  // rapidcloud, cinewave, or any future site without any hardcoding.
-  const embedOrigin = (() => {
-    try {
-      return new URL(embedUrl || "").origin;
-    } catch {
-      return "";
-    }
-  })();
+  // embedUrl, embedOrigin, injectedJS are computed above before any early returns.
 
   if (!embedUrl) {
     return (
@@ -555,7 +545,7 @@ export default function WatchScreen() {
         setSupportMultipleWindows={false}
         javaScriptCanOpenWindowsAutomatically={false}
         // Inject our polling + resume script into ALL frames (so it reaches embedded players)
-        injectedJavaScript={buildInjectedJS(resumeSeconds)}
+        injectedJavaScript={injectedJS}
         injectedJavaScriptForMainFrameOnly={false}
         onMessage={handleWebViewMessage}
         // Page HTML loaded — cancel the 8s fallback timer and show the player immediately

@@ -1,32 +1,58 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, Switch, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Image,
+  View, Text, Switch, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert,
+  Modal, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
-import { userAPI } from '../src/lib/supabase';
+import { userAPI, supabase } from '../src/lib/supabase';
 import { useAuth } from '../src/context/AuthContext';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user, signOut } = useAuth();
+  const { user, signOut, refreshUser } = useAuth();
   const [prefs, setPrefs] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  // Dynamic lists and modal states
+  const [cards, setCards] = useState<any[]>([
+    { id: '1', brand: 'VISA', last4: '4242', expiry: '12/26', primary: true }
+  ]);
+  const [avatarModalVisible, setAvatarModalVisible] = useState(false);
+  const [avatarInputUrl, setAvatarInputUrl] = useState('');
+  const [passwordModalVisible, setPasswordModalVisible] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [cardModalVisible, setCardModalVisible] = useState(false);
+  const [cardNumInput, setCardNumInput] = useState('');
+  const [cardExpiryInput, setCardExpiryInput] = useState('');
+  const [cardBrandInput, setCardBrandInput] = useState('VISA');
+
   useEffect(() => {
     if (!user) { setLoading(false); return; }
+    
+    // Load local cards cache
+    AsyncStorage.getItem(`user_cards_${user.id}`).then(cached => {
+      if (cached) setCards(JSON.parse(cached));
+    });
+
     userAPI.getPreferences(user.id).then(({ data }) => {
       setPrefs(data || { 
         auto_play_next: true, 
         quality_preference: 'auto', 
         theme_preference: 'dark', 
         notification_settings: { push: true, email: true, recommendations: true },
-        privacy_settings: { profile_public: true, watch_history_public: false }
+        privacy_settings: { profile_public: true, watch_history_public: false },
+        display_language: 'English (US)',
+        audio_preference: 'Japanese (Original)',
+        content_region: 'North America',
+        two_factor_enabled: false,
       });
       setLoading(false);
     });
@@ -83,10 +109,10 @@ export default function SettingsScreen() {
             />
             <TouchableOpacity
               style={styles.editAvatarBtn}
-              onPress={() => Alert.alert('Change Avatar', 'To update your avatar, paste a public image URL.', [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Use Gravatar', onPress: () => Alert.alert('Gravatar', `Your Gravatar for ${user.email} will be used automatically.`) },
-              ])}
+              onPress={() => {
+                setAvatarInputUrl(user.avatar_url || '');
+                setAvatarModalVisible(true);
+              }}
             >
               <Ionicons name="pencil" size={12} color={COLORS.bg} />
             </TouchableOpacity>
@@ -167,9 +193,43 @@ export default function SettingsScreen() {
             <Text style={styles.cardTitle}>Localization</Text>
           </View>
           <View style={styles.cardBody}>
-            <ActionRow label="Display Language" value="English (US)" />
-            <ActionRow label="Audio Preference" value="Japanese (Original)" />
-            <ActionRow label="Content Region" value="North America" />
+            <ActionRow 
+              label="Display Language" 
+              value={prefs?.display_language || 'English (US)'} 
+              onPress={() => {
+                Alert.alert('Display Language', 'Select display language:', [
+                  { text: 'English (US)', onPress: () => updatePref('display_language', 'English (US)') },
+                  { text: '日本語 (Japanese)', onPress: () => updatePref('display_language', '日本語 (Japanese)') },
+                  { text: 'Español (Spanish)', onPress: () => updatePref('display_language', 'Español (Spanish)') },
+                  { text: 'Cancel', style: 'cancel' },
+                ]);
+              }}
+            />
+            <ActionRow 
+              label="Audio Preference" 
+              value={prefs?.audio_preference || 'Japanese (Original)'} 
+              onPress={() => {
+                Alert.alert('Audio Preference', 'Select audio track:', [
+                  { text: 'Japanese (Original)', onPress: () => updatePref('audio_preference', 'Japanese (Original)') },
+                  { text: 'English Dub', onPress: () => updatePref('audio_preference', 'English Dub') },
+                  { text: 'Spanish Dub', onPress: () => updatePref('audio_preference', 'Spanish Dub') },
+                  { text: 'Cancel', style: 'cancel' },
+                ]);
+              }}
+            />
+            <ActionRow 
+              label="Content Region" 
+              value={prefs?.content_region || 'North America'} 
+              onPress={() => {
+                Alert.alert('Content Region', 'Select stream gateway region:', [
+                  { text: 'North America', onPress: () => updatePref('content_region', 'North America') },
+                  { text: 'Europe', onPress: () => updatePref('content_region', 'Europe') },
+                  { text: 'Asia', onPress: () => updatePref('content_region', 'Asia') },
+                  { text: 'Global', onPress: () => updatePref('content_region', 'Global') },
+                  { text: 'Cancel', style: 'cancel' },
+                ]);
+              }}
+            />
           </View>
         </BlurView>
 
@@ -180,9 +240,41 @@ export default function SettingsScreen() {
             <Text style={styles.cardTitle}>Security &amp; Login</Text>
           </View>
           <View style={styles.cardBody}>
-            <ActionRow label="Change Password" sub="Updated 3 months ago" />
-            <ActionRow label="Two-Factor Auth" value="Enabled" isValueHighlighted />
-            <ActionRow label="Connected Devices" sub="3 active sessions" />
+            <ActionRow 
+              label="Change Password" 
+              sub="Update account password securely" 
+              onPress={() => {
+                setPasswordInput('');
+                setPasswordModalVisible(true);
+              }}
+            />
+            <ActionRow 
+              label="Two-Factor Auth" 
+              value={prefs?.two_factor_enabled ? 'Enabled' : 'Disabled'} 
+              isValueHighlighted={prefs?.two_factor_enabled}
+              onPress={() => {
+                const current = prefs?.two_factor_enabled ?? false;
+                Alert.alert('Two-Factor Auth', `${current ? 'Disable' : 'Enable'} 2FA protection?`, [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: current ? 'Disable' : 'Enable', onPress: () => updatePref('two_factor_enabled', !current) }
+                ]);
+              }}
+            />
+            <ActionRow 
+              label="Connected Devices" 
+              sub="Log out other active sessions" 
+              onPress={() => {
+                Alert.alert('Log out all other sessions?', 'This signs out your account from all other apps, tablets, and devices.', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Log Out Others', style: 'destructive', onPress: async () => {
+                      const { error } = await supabase.auth.signOut({ scope: 'others' });
+                      if (error) Alert.alert('Error', 'Failed to log out other devices.');
+                      else Alert.alert('Success', 'Logged out all other active sessions.');
+                    }
+                  }
+                ]);
+              }}
+            />
           </View>
         </BlurView>
 
@@ -193,15 +285,47 @@ export default function SettingsScreen() {
             <Text style={styles.cardTitle}>Payment Methods</Text>
           </View>
           <View style={styles.cardBody}>
-            <View style={styles.paymentCard}>
-              <View style={styles.visaBox}><Text style={styles.visaText}>VISA</Text></View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.cardNum} numberOfLines={1}>{'•••• 4242'}</Text>
-                <Text style={styles.cardExpiry}>EXPIRES 12/26</Text>
+            {cards.map(c => (
+              <View key={c.id} style={styles.paymentCard}>
+                <View style={styles.visaBox}><Text style={styles.visaText}>{c.brand}</Text></View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.cardNum} numberOfLines={1}>{`•••• ${c.last4}`}</Text>
+                  <Text style={styles.cardExpiry}>EXPIRES {c.expiry}</Text>
+                </View>
+                {c.primary ? (
+                  <View style={styles.primaryPill}><Text style={styles.pillText}>PRIMARY</Text></View>
+                ) : (
+                  <TouchableOpacity 
+                    onPress={() => {
+                      const updated = cards.map(x => ({ ...x, primary: x.id === c.id }));
+                      setCards(updated);
+                      AsyncStorage.setItem(`user_cards_${user.id}`, JSON.stringify(updated));
+                    }}
+                  >
+                    <Text style={{ fontSize: 9, fontWeight: '700', color: COLORS.textMuted }}>SET PRIMARY</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity 
+                  onPress={() => {
+                    const updated = cards.filter(x => x.id !== c.id);
+                    setCards(updated);
+                    AsyncStorage.setItem(`user_cards_${user.id}`, JSON.stringify(updated));
+                  }}
+                  style={{ marginLeft: 10 }}
+                >
+                  <Ionicons name="trash-outline" size={14} color={COLORS.danger} />
+                </TouchableOpacity>
               </View>
-              <View style={styles.primaryPill}><Text style={styles.pillText}>PRIMARY</Text></View>
-            </View>
-            <TouchableOpacity style={styles.addPaymentBtn}>
+            ))}
+            <TouchableOpacity 
+              style={styles.addPaymentBtn}
+              onPress={() => {
+                setCardNumInput('');
+                setCardExpiryInput('');
+                setCardBrandInput('VISA');
+                setCardModalVisible(true);
+              }}
+            >
               <Ionicons name="add-circle-outline" size={16} color={COLORS.textSub} />
               <Text style={styles.addPaymentText}>Add New Payment Method</Text>
             </TouchableOpacity>
@@ -236,6 +360,159 @@ export default function SettingsScreen() {
           </View>
         </BlurView>
 
+        {/* Edit Avatar Modal */}
+        <Modal visible={avatarModalVisible} transparent animationType="slide" onRequestClose={() => setAvatarModalVisible(false)}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+            <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setAvatarModalVisible(false)} />
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalTitle}>Change Avatar URL</Text>
+              <Text style={styles.modalLabel}>Avatar Image URL</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={avatarInputUrl}
+                onChangeText={setAvatarInputUrl}
+                placeholder="Paste a public avatar image URL"
+                placeholderTextColor={COLORS.textMuted}
+                autoCapitalize="none"
+              />
+              <TouchableOpacity 
+                style={styles.modalSaveBtn} 
+                onPress={async () => {
+                  if (!avatarInputUrl.trim()) return;
+                  const { error } = await userAPI.updateProfile(user.id, { avatar_url: avatarInputUrl.trim() });
+                  if (error) {
+                    Alert.alert('Error', `Failed to update avatar: ${(error as any)?.message || JSON.stringify(error)}`);
+                  } else {
+                    Alert.alert('Success', 'Avatar updated!');
+                    setAvatarModalVisible(false);
+                    await refreshUser();
+                  }
+                }}
+              >
+                <LinearGradient colors={[COLORS.neon, COLORS.accent]} start={{x:0,y:0}} end={{x:1,y:1}} style={styles.modalSaveGradient}>
+                  <Text style={styles.modalSaveText}>Update Avatar</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
+        {/* Change Password Modal */}
+        <Modal visible={passwordModalVisible} transparent animationType="slide" onRequestClose={() => setPasswordModalVisible(false)}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+            <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setPasswordModalVisible(false)} />
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalTitle}>Change Password</Text>
+              <Text style={styles.modalLabel}>New Password</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={passwordInput}
+                onChangeText={setPasswordInput}
+                placeholder="Enter at least 6 characters"
+                placeholderTextColor={COLORS.textMuted}
+                secureTextEntry
+                autoCapitalize="none"
+              />
+              <TouchableOpacity 
+                style={styles.modalSaveBtn} 
+                onPress={async () => {
+                  if (!passwordInput.trim() || passwordInput.length < 6) {
+                    Alert.alert('Error', 'Password must be at least 6 characters.');
+                    return;
+                  }
+                  const { error } = await supabase.auth.updateUser({ password: passwordInput.trim() });
+                  if (error) {
+                    Alert.alert('Error', error.message);
+                  } else {
+                    Alert.alert('Success', 'Password changed successfully!');
+                    setPasswordModalVisible(false);
+                  }
+                }}
+              >
+                <LinearGradient colors={[COLORS.neon, COLORS.accent]} start={{x:0,y:0}} end={{x:1,y:1}} style={styles.modalSaveGradient}>
+                  <Text style={styles.modalSaveText}>Update Password</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
+        {/* Add Payment Method Modal */}
+        <Modal visible={cardModalVisible} transparent animationType="slide" onRequestClose={() => setCardModalVisible(false)}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+            <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setCardModalVisible(false)} />
+            <View style={styles.modalSheet}>
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalTitle}>Add Payment Card</Text>
+              
+              <Text style={styles.modalLabel}>Card Provider</Text>
+              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
+                {['VISA', 'MC', 'AMEX'].map(brand => (
+                  <TouchableOpacity 
+                    key={brand}
+                    onPress={() => setCardBrandInput(brand)}
+                    style={[{
+                      paddingHorizontal: 16, paddingVertical: 10, borderRadius: RADIUS.md, borderWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
+                      backgroundColor: 'rgba(255,255,255,0.03)'
+                    }, cardBrandInput === brand && { borderColor: COLORS.neon, backgroundColor: 'rgba(189,157,255,0.05)' }]}
+                  >
+                    <Text style={{ color: COLORS.text, fontWeight: '700' }}>{brand}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={styles.modalLabel}>Last 4 Digits</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={cardNumInput}
+                onChangeText={setCardNumInput}
+                placeholder="e.g. 5678"
+                placeholderTextColor={COLORS.textMuted}
+                keyboardType="number-pad"
+                maxLength={4}
+              />
+
+              <Text style={styles.modalLabel}>Expiration Date</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={cardExpiryInput}
+                onChangeText={setCardExpiryInput}
+                placeholder="MM/YY"
+                placeholderTextColor={COLORS.textMuted}
+                maxLength={5}
+              />
+
+              <TouchableOpacity 
+                style={styles.modalSaveBtn} 
+                onPress={async () => {
+                  if (cardNumInput.trim().length < 4 || !cardExpiryInput.trim()) {
+                    Alert.alert('Error', 'Please fill in all card details.');
+                    return;
+                  }
+                  const newCard = {
+                    id: Date.now().toString(),
+                    brand: cardBrandInput,
+                    last4: cardNumInput.trim(),
+                    expiry: cardExpiryInput.trim(),
+                    primary: cards.length === 0,
+                  };
+                  const updated = [...cards, newCard];
+                  setCards(updated);
+                  await AsyncStorage.setItem(`user_cards_${user.id}`, JSON.stringify(updated));
+                  setCardModalVisible(false);
+                  Alert.alert('Success', 'Card added successfully!');
+                }}
+              >
+                <LinearGradient colors={[COLORS.neon, COLORS.accent]} start={{x:0,y:0}} end={{x:1,y:1}} style={styles.modalSaveGradient}>
+                  <Text style={styles.modalSaveText}>Add Payment Card</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
         <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
           <Ionicons name="log-out-outline" size={24} color={COLORS.danger} />
           <Text style={styles.signOutText}>SIGN OUT</Text>
@@ -246,9 +523,9 @@ export default function SettingsScreen() {
   );
 }
 
-function ActionRow({ label, value, sub, isValueHighlighted }: any) {
+function ActionRow({ label, value, sub, isValueHighlighted, onPress }: any) {
   return (
-    <TouchableOpacity style={styles.actionRow}>
+    <TouchableOpacity style={styles.actionRow} onPress={onPress}>
       <View style={styles.rowContent}>
         <Text style={styles.actionLabel}>{label}</Text>
         {sub && <Text style={styles.actionSubText}>{sub}</Text>}
@@ -405,4 +682,26 @@ const styles = StyleSheet.create({
   signOutText: { fontSize: 14, fontWeight: '900', color: COLORS.danger, letterSpacing: 3 },
   versionText: { textAlign: 'center', fontSize: 10, color: COLORS.textMuted, opacity: 0.5, letterSpacing: 1.5, marginTop: 10 },
   backBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border },
+
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)' },
+  modalSheet: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: '#121214', borderTopLeftRadius: RADIUS.lg, borderTopRightRadius: RADIUS.lg,
+    borderWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
+    padding: 24, paddingBottom: 40,
+  },
+  modalHandle: {
+    width: 36, height: 4, borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.1)', alignSelf: 'center', marginBottom: 20,
+  },
+  modalTitle: { fontSize: 20, fontWeight: '900', color: COLORS.text, letterSpacing: -0.5, marginBottom: 20 },
+  modalLabel: { fontSize: 11, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8, marginTop: 16 },
+  modalInput: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: RADIUS.md, borderWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
+    color: COLORS.text, paddingHorizontal: 16, paddingVertical: 14, fontSize: 14,
+  },
+  modalSaveBtn: { marginTop: 24, borderRadius: 100, overflow: 'hidden' },
+  modalSaveGradient: { paddingVertical: 15, alignItems: 'center', justifyContent: 'center' },
+  modalSaveText: { color: '#000', fontWeight: '800', fontSize: 14 },
 });
