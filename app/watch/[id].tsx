@@ -226,6 +226,16 @@ const buildInjectedJS = (resumeSeconds: number) => `
         }));
       }, ${POLL_INTERVAL_MS});
     }, 1000);
+    // ─── TAP → TOGGLE HUD ───────────────────────────────────────────────────
+    // Listen for any click/tap inside the WebView page. The event is NOT
+    // cancelled so the player's own controls still fire normally. We just
+    // piggyback on it to notify React Native so it can show/hide the HUD.
+    document.addEventListener('click', function() {
+      try {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'player_tap' }));
+      } catch(e) {}
+    }, true); // capture phase so we hear it before the player swallows it
+
   })();
   true;
 `;
@@ -259,6 +269,17 @@ export default function WatchScreen() {
   const nearEndFired = useRef(false);
   const lastSavedRef = useRef(0); // timestamp of last Supabase write
   const spinnerTimeoutRef = useRef<any>(null); // auto-dismiss loading spinner
+  const hudTimerRef = useRef<any>(null); // HUD auto-hide timer
+
+  // HUD visibility — driven by WebView click events (injected JS fires player_tap)
+  const [showHud, setShowHud] = useState(true);
+
+  // Show HUD for 4s then hide. Called on every player_tap message from WebView.
+  const resetHudTimer = useCallback(() => {
+    setShowHud(true);
+    if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
+    hudTimerRef.current = setTimeout(() => setShowHud(false), 4000);
+  }, []);
 
   // Stable refs for episode/user IDs — avoids stale closures in handleProgress
   const episodeIdRef = useRef<string | undefined>(undefined);
@@ -363,6 +384,11 @@ export default function WatchScreen() {
       try {
         const msg = JSON.parse(event.nativeEvent.data);
 
+        if (msg.type === "player_tap") {
+          // User tapped inside the WebView — toggle the HUD
+          resetHudTimer();
+        }
+
         if (msg.type === "player_error") {
           const { code } = msg;
           console.warn("[Watch] JWPlayer error", code, msg.message);
@@ -401,9 +427,9 @@ export default function WatchScreen() {
             }
           }
         }
-      } catch (_) {}
+      } catch (_) { }
     },
-    [handleProgress, nextEpisode],
+    [handleProgress, nextEpisode, resetHudTimer],
   );
 
   // ── Orientation + nav bar ─────────────────────────────────────────────────
@@ -529,9 +555,9 @@ export default function WatchScreen() {
           // maintaining a per-site list.
           headers: embedOrigin
             ? {
-                Referer: embedOrigin + "/",
-                Origin: embedOrigin,
-              }
+              Referer: embedOrigin + "/",
+              Origin: embedOrigin,
+            }
             : {},
         }}
         style={StyleSheet.absoluteFill}
@@ -667,85 +693,91 @@ export default function WatchScreen() {
 
       {/* ── HUD LAYER (always on top of WebView) ── */}
       {!playerError && (
-        <View style={styles.hudLayer} pointerEvents="box-none">
-          <LinearGradient
-            colors={["rgba(14,14,17,0.85)", "transparent"]}
-            style={styles.topGradient}
-            pointerEvents="none"
-          />
-          <LinearGradient
-            colors={["transparent", "rgba(14,14,17,0.7)"]}
-            style={styles.bottomGradient}
-            pointerEvents="none"
-          />
+        <View
+          style={StyleSheet.absoluteFill}
+          pointerEvents={showHud ? "box-none" : "none"}
+        >
 
-          {/* Top HUD */}
-          <View
-            style={[
-              styles.topHud,
-              {
-                paddingLeft: Math.max(24, insets.left),
-                paddingRight: Math.max(24, insets.right),
-                paddingTop: Math.max(20, insets.top),
-              },
-            ]}
-          >
-            <View style={styles.topHudLeft}>
-              <TouchableOpacity
-                onPress={() => router.back()}
-                style={styles.iconBtn}
-              >
-                <Ionicons name="arrow-back" size={22} color={COLORS.text} />
-              </TouchableOpacity>
-              <View>
-                <Text style={styles.animeTitle}>
-                  {anime?.title?.toUpperCase()}
-                </Text>
-                <Text style={styles.episodeInfo}>
-                  S1:E{episode.episode_number} • {episode.title}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.topHudRight}>
-              {/* Live progress indicator */}
-              {playerState.duration > 0 && (
-                <View style={styles.progressChip} pointerEvents="none">
-                  <View
-                    style={[
-                      styles.progressChipFill,
-                      {
-                        width: `${(playerState.current / playerState.duration) * 100}%`,
-                      },
-                    ]}
-                  />
-                  <Text style={styles.progressChipText}>
-                    {formatTime(playerState.current)} /{" "}
-                    {formatTime(playerState.duration)}
+          {/* Top bar — back, title, episodes. Only rendered when HUD visible */}
+          {showHud && (
+            <View
+              style={[
+                styles.topHud,
+                {
+                  paddingLeft: Math.max(24, insets.left),
+                  paddingRight: Math.max(24, insets.right),
+                  paddingTop: Math.max(20, insets.top),
+                },
+              ]}
+              pointerEvents="box-none"
+            >
+              <View style={styles.topHudLeft} pointerEvents="box-none">
+                <TouchableOpacity
+                  onPress={() => router.back()}
+                  style={styles.iconBtn}
+                >
+                  <Ionicons name="arrow-back" size={22} color={COLORS.text} />
+                </TouchableOpacity>
+                <View pointerEvents="none">
+                  <Text style={styles.animeTitle}>
+                    {anime?.title?.toUpperCase()}
+                  </Text>
+                  <Text style={styles.episodeInfo}>
+                    S1:E{episode.episode_number} • {episode.title}
                   </Text>
                 </View>
+              </View>
+
+              <View style={styles.topHudRight} pointerEvents="box-none">
+                {playerState.duration > 0 && (
+                  <View style={styles.progressChip} pointerEvents="none">
+                    <View
+                      style={[
+                        styles.progressChipFill,
+                        { width: `${(playerState.current / playerState.duration) * 100}%` },
+                      ]}
+                    />
+                    <Text style={styles.progressChipText}>
+                      {formatTime(playerState.current)} / {formatTime(playerState.duration)}
+                    </Text>
+                  </View>
+                )}
+                <TouchableOpacity
+                  style={styles.selectorBtn}
+                  onPress={() => setShowSelector(true)}
+                >
+                  <Ionicons name="list" size={16} color={COLORS.text} />
+                  <Text style={styles.selectorBtnText}>EPISODES</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* Gradients + toast — only while HUD expanded */}
+
+          {showHud && (
+            <>
+              <LinearGradient
+                colors={["rgba(14,14,17,0.85)", "transparent"]}
+                style={styles.topGradient}
+                pointerEvents="none"
+              />
+              <LinearGradient
+                colors={["transparent", "rgba(14,14,17,0.7)"]}
+                style={styles.bottomGradient}
+                pointerEvents="none"
+              />
+              {resumeToast && (
+                <View style={styles.resumeToast} pointerEvents="none">
+                  <BlurView intensity={40} style={styles.resumeToastBlur}>
+                    <Ionicons name="time" size={14} color={COLORS.neon} />
+                    <Text style={styles.resumeToastText}>
+                      Resuming from {formatTime(resumeSeconds)}
+                    </Text>
+                  </BlurView>
+                </View>
               )}
-
-              <TouchableOpacity
-                style={styles.selectorBtn}
-                onPress={() => setShowSelector(true)}
-              >
-                <Ionicons name="list" size={16} color={COLORS.text} />
-                <Text style={styles.selectorBtnText}>EPISODES</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Resume Toast */}
-          {resumeToast && (
-            <View style={styles.resumeToast} pointerEvents="none">
-              <BlurView intensity={40} style={styles.resumeToastBlur}>
-                <Ionicons name="time" size={14} color={COLORS.neon} />
-                <Text style={styles.resumeToastText}>
-                  Resuming from {formatTime(resumeSeconds)}
-                </Text>
-              </BlurView>
-            </View>
+            </>
           )}
 
           {/* Up Next Card */}
