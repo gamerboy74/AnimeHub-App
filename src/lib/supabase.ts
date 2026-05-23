@@ -114,6 +114,9 @@ export type Notification = {
 
 // ─── API Helpers ──────────────────────────────────────────────
 
+// In-memory cache to prevent redundant database queries for static mapping
+let malIdMapCache: Map<number, string> | null = null;
+
 export const animeAPI = {
   getAll: (limit = 20, offset = 0) =>
     supabase.from('anime_with_stats').select('*').range(offset, offset + limit - 1),
@@ -140,22 +143,28 @@ export const animeAPI = {
 
   /** Returns the Set of all mal_ids present in the local database */
   getMalIds: async (): Promise<Set<number>> => {
-    const { data } = await supabase
-      .from('anime')
-      .select('mal_id')
-      .not('mal_id', 'is', null);
-    return new Set((data ?? []).map((r: { mal_id: number }) => r.mal_id));
+    const map = await animeAPI.getMalIdMap();
+    return new Set(map.keys());
   },
 
   /** Returns a Map<mal_id, supabase_uuid> for navigation from external APIs */
   getMalIdMap: async (): Promise<Map<number, string>> => {
+    if (malIdMapCache) {
+      return malIdMapCache;
+    }
     const { data } = await supabase
       .from('anime')
       .select('id, mal_id')
       .not('mal_id', 'is', null);
     const map = new Map<number, string>();
     (data ?? []).forEach((r: { id: string; mal_id: number }) => map.set(r.mal_id, r.id));
+    malIdMapCache = map;
     return map;
+  },
+
+  /** Invalidates the local cache if new entries are dynamically inserted/refreshed */
+  invalidateCache: () => {
+    malIdMapCache = null;
   },
 };
 
