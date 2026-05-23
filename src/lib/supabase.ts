@@ -146,6 +146,17 @@ export const animeAPI = {
       .not('mal_id', 'is', null);
     return new Set((data ?? []).map((r: { mal_id: number }) => r.mal_id));
   },
+
+  /** Returns a Map<mal_id, supabase_uuid> for navigation from external APIs */
+  getMalIdMap: async (): Promise<Map<number, string>> => {
+    const { data } = await supabase
+      .from('anime')
+      .select('id, mal_id')
+      .not('mal_id', 'is', null);
+    const map = new Map<number, string>();
+    (data ?? []).forEach((r: { id: string; mal_id: number }) => map.set(r.mal_id, r.id));
+    return map;
+  },
 };
 
 export const episodeAPI = {

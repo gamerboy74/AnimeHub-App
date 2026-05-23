@@ -65,6 +65,7 @@ export default function ScheduleScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [totalFromJikan, setTotalFromJikan] = useState(0);
+  const [idMap, setIdMap] = useState<Map<number, string>>(new Map());
 
   const weekDates = getWeekDates();
 
@@ -73,17 +74,19 @@ export default function ScheduleScreen() {
     try {
       const day = DAYS[selectedDay].toLowerCase();
 
-      // Fetch Jikan schedule + local mal_ids in parallel
-      const [jikanRes, localIds] = await Promise.all([
+      // Fetch Jikan schedule + local mal_id map in parallel
+      const [jikanRes, malIdMap] = await Promise.all([
         fetch(
           `https://api.jikan.moe/v4/schedules?filter=${day}&limit=25`,
           { headers: { Accept: 'application/json' } }
         ),
-        animeAPI.getMalIds(),
+        animeAPI.getMalIdMap(),
       ]);
 
       if (!jikanRes.ok) throw new Error(`API error ${jikanRes.status}`);
       const json = await jikanRes.json();
+
+      setIdMap(malIdMap);
 
       // Deduplicate by mal_id
       const seen = new Set<number>();
@@ -96,9 +99,9 @@ export default function ScheduleScreen() {
       setTotalFromJikan(unique.length);
 
       // Filter: only anime in our app
-      const inApp = localIds.size > 0
-        ? unique.filter((e: ScheduleEntry) => localIds.has(e.mal_id))
-        : unique; // fallback: show all if DB has no mal_ids yet
+      const inApp = malIdMap.size > 0
+        ? unique.filter((e: ScheduleEntry) => malIdMap.has(e.mal_id))
+        : unique;
 
       const sorted = inApp.sort((a: ScheduleEntry, b: ScheduleEntry) => {
         const ta = a.broadcast?.time ?? '99:99';
@@ -213,7 +216,7 @@ export default function ScheduleScreen() {
             </View>
           }
           renderItem={({ item, index }) => (
-            <TimelineRow entry={item} index={index} />
+            <TimelineRow entry={item} index={index} idMap={idMap} />
           )}
         />
       )}
@@ -222,7 +225,15 @@ export default function ScheduleScreen() {
 }
 
 // ─── Timeline row — left / right alternating ────────────────────────────────────
-function TimelineRow({ entry, index }: { entry: ScheduleEntry; index: number }) {
+function TimelineRow({
+  entry,
+  index,
+  idMap,
+}: {
+  entry: ScheduleEntry;
+  index: number;
+  idMap: Map<number, string>;
+}) {
   const isLeft = index % 2 === 0;
   const airTime = formatTime(entry.broadcast?.time);
   const epNum = entry.episodes;
@@ -232,7 +243,7 @@ function TimelineRow({ entry, index }: { entry: ScheduleEntry; index: number }) 
       {/* Left side */}
       <View style={styles.rowSide}>
         {isLeft ? (
-          <AnimeCard entry={entry} align="right" />
+          <AnimeCard entry={entry} align="right" idMap={idMap} />
         ) : (
           <TimeLabel time={airTime} episode={epNum} align="right" />
         )}
@@ -250,7 +261,7 @@ function TimelineRow({ entry, index }: { entry: ScheduleEntry; index: number }) 
         {isLeft ? (
           <TimeLabel time={airTime} episode={epNum} align="left" />
         ) : (
-          <AnimeCard entry={entry} align="left" />
+          <AnimeCard entry={entry} align="left" idMap={idMap} />
         )}
       </View>
     </View>
@@ -258,9 +269,29 @@ function TimelineRow({ entry, index }: { entry: ScheduleEntry; index: number }) 
 }
 
 // ─── Anime card ────────────────────────────────────────────────────────────────
-function AnimeCard({ entry, align }: { entry: ScheduleEntry; align: 'left' | 'right' }) {
+function AnimeCard({
+  entry,
+  align,
+  idMap,
+}: {
+  entry: ScheduleEntry;
+  align: 'left' | 'right';
+  idMap: Map<number, string>;
+}) {
+  const router = useRouter();
+  const supabaseId = idMap.get(entry.mal_id);
+
+  const handlePress = () => {
+    if (supabaseId) router.push(`/anime/${supabaseId}` as any);
+  };
+
   return (
-    <View style={[styles.card, align === 'right' ? styles.cardRight : styles.cardLeft]}>
+    <TouchableOpacity
+      style={[styles.card, align === 'right' ? styles.cardRight : styles.cardLeft]}
+      onPress={handlePress}
+      activeOpacity={supabaseId ? 0.7 : 1}
+      disabled={!supabaseId}
+    >
       <Image
         source={{ uri: entry.images.jpg.image_url }}
         style={styles.cardThumb}
@@ -275,7 +306,6 @@ function AnimeCard({ entry, align }: { entry: ScheduleEntry; align: 'left' | 'ri
             {entry.synopsis}
           </Text>
         ) : null}
-        {/* Genres */}
         {entry.genres && entry.genres.length > 0 && (
           <View style={styles.genreRow}>
             {entry.genres.slice(0, 2).map((g) => (
@@ -286,7 +316,7 @@ function AnimeCard({ entry, align }: { entry: ScheduleEntry; align: 'left' | 'ri
           </View>
         )}
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
