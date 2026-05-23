@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
+import { animeAPI } from '../src/lib/supabase';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH * 0.42;
@@ -63,6 +64,7 @@ export default function ScheduleScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [totalFromJikan, setTotalFromJikan] = useState(0);
 
   const weekDates = getWeekDates();
 
@@ -70,25 +72,40 @@ export default function ScheduleScreen() {
     setError(null);
     try {
       const day = DAYS[selectedDay].toLowerCase();
-      const res = await fetch(
-        `https://api.jikan.moe/v4/schedules?filter=${day}&limit=25`,
-        { headers: { Accept: 'application/json' } }
-      );
-      if (!res.ok) throw new Error(`API error ${res.status}`);
-      const json = await res.json();
-      // Sort by broadcast time
-      // Deduplicate by mal_id (Jikan can return the same anime twice)
+
+      // Fetch Jikan schedule + local mal_ids in parallel
+      const [jikanRes, localIds] = await Promise.all([
+        fetch(
+          `https://api.jikan.moe/v4/schedules?filter=${day}&limit=25`,
+          { headers: { Accept: 'application/json' } }
+        ),
+        animeAPI.getMalIds(),
+      ]);
+
+      if (!jikanRes.ok) throw new Error(`API error ${jikanRes.status}`);
+      const json = await jikanRes.json();
+
+      // Deduplicate by mal_id
       const seen = new Set<number>();
       const unique = (json.data ?? []).filter((e: ScheduleEntry) => {
         if (seen.has(e.mal_id)) return false;
         seen.add(e.mal_id);
         return true;
       });
-      const sorted = unique.sort((a: ScheduleEntry, b: ScheduleEntry) => {
+
+      setTotalFromJikan(unique.length);
+
+      // Filter: only anime in our app
+      const inApp = localIds.size > 0
+        ? unique.filter((e: ScheduleEntry) => localIds.has(e.mal_id))
+        : unique; // fallback: show all if DB has no mal_ids yet
+
+      const sorted = inApp.sort((a: ScheduleEntry, b: ScheduleEntry) => {
         const ta = a.broadcast?.time ?? '99:99';
         const tb = b.broadcast?.time ?? '99:99';
         return ta.localeCompare(tb);
       });
+
       setEntries(sorted);
     } catch (e: any) {
       setError(e?.message ?? 'Failed to load schedule');
@@ -190,7 +207,9 @@ export default function ScheduleScreen() {
           ListEmptyComponent={
             <View style={styles.centered}>
               <Ionicons name="calendar-outline" size={48} color={COLORS.textMuted} />
-              <Text style={styles.errorText}>No anime airing on {DAYS[selectedDay]}</Text>
+              <Text style={styles.errorText}>
+                None of the {totalFromJikan} anime airing on {DAYS[selectedDay]} are available in this app yet.
+              </Text>
             </View>
           }
           renderItem={({ item, index }) => (

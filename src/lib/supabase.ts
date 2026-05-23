@@ -137,6 +137,15 @@ export const animeAPI = {
 
   getRecent: (limit = 10) =>
     supabase.from('anime').select('*').order('created_at', { ascending: false }).limit(limit),
+
+  /** Returns the Set of all mal_ids present in the local database */
+  getMalIds: async (): Promise<Set<number>> => {
+    const { data } = await supabase
+      .from('anime')
+      .select('mal_id')
+      .not('mal_id', 'is', null);
+    return new Set((data ?? []).map((r: { mal_id: number }) => r.mal_id));
+  },
 };
 
 export const episodeAPI = {
