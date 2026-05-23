@@ -1,6 +1,7 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator,
+  View, Text, ScrollView, StyleSheet, TouchableOpacity,
+  ActivityIndicator, Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,14 +12,44 @@ import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
 import { useAuth } from '../src/context/AuthContext';
 import { userAPI } from '../src/lib/supabase';
 
-// ─── Badge definitions ────────────────────────────────────────────────────────
+// ─── Badge definitions ─── each has check() + progress() + description ───────
 const BADGE_DEFS = [
-  { id: '1', name: 'FIRST EP',  icon: 'play-circle',    color: COLORS.neon,      check: (p: any[], s: number, w: any[]) => p.length >= 1 },
-  { id: '2', name: 'DEDICATED', icon: 'flash',           color: COLORS.neonCyan,  check: (p: any[], s: number) => s >= 3 },
-  { id: '3', name: 'VETERAN',   icon: 'medal',           color: '#ff7346',        check: (p: any[], s: number) => p.length >= 10 },
-  { id: '4', name: 'LISTER',    icon: 'list',            color: COLORS.neonPulse, check: (p: any[], s: number, w: any[]) => w.length >= 5 },
-  { id: '5', name: 'WARRIOR',   icon: 'shield',          color: COLORS.neonGold,  check: (p: any[], s: number) => s >= 7 },
-  { id: '6', name: 'LEGEND',    icon: 'star',            color: '#BF5FFF',        check: (p: any[], s: number) => p.length >= 50 },
+  {
+    id: '1', name: 'FIRST EP', desc: 'Watch any episode',
+    icon: 'play-circle',  color: COLORS.neon,
+    check:    (p: any[], s: number, w: any[]) => p.length >= 1,
+    progress: (p: any[], s: number, w: any[]) => ({ cur: Math.min(p.length, 1), max: 1 }),
+  },
+  {
+    id: '2', name: 'DEDICATED', desc: '3-day watch streak',
+    icon: 'flash',         color: COLORS.neonCyan,
+    check:    (p: any[], s: number) => s >= 3,
+    progress: (p: any[], s: number) => ({ cur: Math.min(s, 3), max: 3 }),
+  },
+  {
+    id: '3', name: 'VETERAN', desc: 'Watch 10 episodes',
+    icon: 'medal',         color: '#ff7346',
+    check:    (p: any[], s: number) => p.length >= 10,
+    progress: (p: any[], s: number) => ({ cur: Math.min(p.length, 10), max: 10 }),
+  },
+  {
+    id: '4', name: 'LISTER', desc: 'Add 5 to watchlist',
+    icon: 'list',          color: COLORS.neonPulse,
+    check:    (p: any[], s: number, w: any[]) => w.length >= 5,
+    progress: (p: any[], s: number, w: any[]) => ({ cur: Math.min(w.length, 5), max: 5 }),
+  },
+  {
+    id: '5', name: 'WARRIOR', desc: '7-day streak',
+    icon: 'shield',        color: COLORS.neonGold,
+    check:    (p: any[], s: number) => s >= 7,
+    progress: (p: any[], s: number) => ({ cur: Math.min(s, 7), max: 7 }),
+  },
+  {
+    id: '6', name: 'LEGEND', desc: 'Watch 50 episodes',
+    icon: 'star',          color: '#BF5FFF',
+    check:    (p: any[], s: number) => p.length >= 50,
+    progress: (p: any[], s: number) => ({ cur: Math.min(p.length, 50), max: 50 }),
+  },
 ];
 
 const GENRE_COLORS = ['#00F5FF', '#BF5FFF', '#ff7346', '#FFD600', '#FF2D78', '#00F5B4'];
@@ -27,16 +58,15 @@ const GENRE_COLORS = ['#00F5FF', '#BF5FFF', '#ff7346', '#FFD600', '#FF2D78', '#0
 function computeGenres(progress: any[]) {
   const counts: Record<string, number> = {};
   for (const p of progress) {
-    const genres: string[] = p.genres || p.anime_genres || [];
-    for (const g of genres) counts[g] = (counts[g] || 0) + 1;
+    for (const g of (p.genres || p.anime_genres || []) as string[])
+      counts[g] = (counts[g] || 0) + 1;
   }
   const total = Math.max(Object.values(counts).reduce((a, b) => a + b, 0), 1);
   return Object.entries(counts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
     .map(([name, count], i) => ({
-      name,
-      percent: Math.round((count / total) * 100),
+      name, percent: Math.round((count / total) * 100),
       color: GENRE_COLORS[i % GENRE_COLORS.length],
     }));
 }
@@ -54,11 +84,83 @@ function computeStreak(progress: any[]): number {
   return streak;
 }
 
-function formatWatchTime(seconds: number = 0) {
+/** Compute watch time from real progress_seconds — more accurate than stale DB column */
+function computeWatchTime(progress: any[]): number {
+  return progress.reduce((sum: number, p: any) => sum + (p.progress_seconds || 0), 0);
+}
+
+/** Compute completed anime from distinct anime_ids where is_completed=true */
+function computeCompletedAnime(progress: any[]): number {
+  const ids = new Set(progress.filter(p => p.is_completed).map(p => p.anime_id).filter(Boolean));
+  return ids.size;
+}
+
+function formatWatchTime(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h.toLocaleString()}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
+}
+
+// ─── Animated badge glow component ───────────────────────────────────────────
+function BadgeCard({ badge }: { badge: any }) {
+  const glowAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!badge.earned) return;
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(glowAnim, { toValue: 1, duration: 1500, useNativeDriver: true }),
+        Animated.timing(glowAnim, { toValue: 0, duration: 1500, useNativeDriver: true }),
+      ])
+    ).start();
+  }, [badge.earned]);
+
+  const { cur, max } = badge.progress;
+  const pct = Math.round((cur / max) * 100);
+  const glowOpacity = glowAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3, 0.8] });
+
+  return (
+    <View style={[
+      styles.badgeItem,
+      badge.earned
+        ? { borderColor: badge.color + '60', backgroundColor: badge.color + '0D' }
+        : { borderColor: COLORS.border, opacity: 0.65 },
+    ]}>
+      {/* Glow ring behind icon (earned only) */}
+      {badge.earned && (
+        <Animated.View style={[styles.badgeGlow, { backgroundColor: badge.color, opacity: glowOpacity }]} />
+      )}
+
+      <View style={[
+        styles.badgeIconBox,
+        { borderColor: badge.earned ? badge.color + '80' : 'transparent',
+          backgroundColor: badge.earned ? badge.color + '22' : 'rgba(30,30,36,0.8)' },
+      ]}>
+        <Ionicons name={badge.icon as any} size={22} color={badge.earned ? badge.color : COLORS.textMuted} />
+        {badge.earned && (
+          <View style={[styles.checkBadge, { backgroundColor: badge.color }]}>
+            <Ionicons name="checkmark" size={8} color="#000" />
+          </View>
+        )}
+      </View>
+
+      <Text style={[styles.badgeName, badge.earned && { color: badge.color }]}>{badge.name}</Text>
+      <Text style={styles.badgeDesc} numberOfLines={1}>{badge.desc}</Text>
+
+      {/* Progress bar */}
+      <View style={styles.badgeProgressBg}>
+        <View style={[styles.badgeProgressFill, {
+          width: `${pct}%`,
+          backgroundColor: badge.earned ? badge.color : COLORS.textMuted,
+        }]} />
+      </View>
+      <Text style={[styles.badgeProgressLabel, badge.earned && { color: badge.color }]}>
+        {badge.earned ? '✓ EARNED' : `${cur}/${max}`}
+      </Text>
+    </View>
+  );
 }
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
@@ -84,17 +186,25 @@ export default function StatsScreen() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const streak     = useMemo(() => computeStreak(allProgress), [allProgress]);
-  const genreStats = useMemo(() => computeGenres(allProgress), [allProgress]);
-  const badges     = useMemo(
-    () => BADGE_DEFS.map(b => ({ ...b, earned: b.check(allProgress, streak, watchlist) })),
+  const streak        = useMemo(() => computeStreak(allProgress),        [allProgress]);
+  const genreStats    = useMemo(() => computeGenres(allProgress),         [allProgress]);
+  const totalWatchSec = useMemo(() => computeWatchTime(allProgress),      [allProgress]);
+  const completedCnt  = useMemo(() => computeCompletedAnime(allProgress), [allProgress]);
+
+  const badges = useMemo(
+    () => BADGE_DEFS.map(b => ({
+      ...b,
+      earned:   b.check(allProgress, streak, watchlist),
+      progress: b.progress(allProgress, streak, watchlist),
+    })),
     [allProgress, streak, watchlist]
   );
 
-  const completed = user?.anime_watched ?? allProgress.filter((p: any) => p.is_completed).length;
-  const watchedToday = allProgress.some(p =>
-    new Date(p.last_watched).toDateString() === new Date().toDateString()
+  const watchedToday = allProgress.some(
+    p => new Date(p.last_watched).toDateString() === new Date().toDateString()
   );
+
+  const earnedCount = badges.filter(b => b.earned).length;
 
   if (loading) {
     return (
@@ -116,40 +226,22 @@ export default function StatsScreen() {
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
           <Ionicons name="chevron-back" size={22} color={COLORS.text} />
         </TouchableOpacity>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={styles.headerLabel}>⚡ YOUR STATS</Text>
           <Text style={styles.headerTitle}>My Statistics</Text>
         </View>
+        <View style={styles.earnedPill}>
+          <Text style={styles.earnedPillText}>{earnedCount}/{badges.length} badges</Text>
+        </View>
       </View>
 
-      {/* ── Bento Stat Tiles ── */}
+      {/* ── Stat Tiles — computed from real progress data ── */}
       <View style={styles.section}>
         <View style={styles.statsGrid}>
-          <StatTile
-            value={formatWatchTime(user?.total_watch_time)}
-            label="WATCH TIME"
-            color={COLORS.neon}
-            icon="time-outline"
-          />
-          <StatTile
-            value={String(completed)}
-            label="COMPLETED"
-            color={COLORS.neonCyan}
-            icon="checkmark-circle-outline"
-          />
-          <StatTile
-            value={String(allProgress.length)}
-            label="EPISODES"
-            color="#ff7346"
-            icon="play-outline"
-          />
-          <StatTile
-            value={String(streak)}
-            label="DAY STREAK"
-            color={COLORS.neonPulse}
-            icon="flash"
-            isStreak
-          />
+          <StatTile value={formatWatchTime(totalWatchSec)} label="WATCH TIME"  color={COLORS.neon}      icon="time-outline" />
+          <StatTile value={String(completedCnt)}           label="COMPLETED"   color={COLORS.neonCyan}  icon="checkmark-circle-outline" />
+          <StatTile value={String(allProgress.length)}     label="EPISODES"    color="#ff7346"          icon="play-outline" />
+          <StatTile value={String(streak)}                 label="DAY STREAK"  color={COLORS.neonPulse} icon="flash" isStreak />
         </View>
       </View>
 
@@ -157,22 +249,19 @@ export default function StatsScreen() {
       <View style={styles.section}>
         <BlurView intensity={20} style={styles.streakCard}>
           <LinearGradient
-            colors={['rgba(0,245,255,0.05)', 'transparent']}
+            colors={['rgba(0,245,255,0.06)', 'transparent']}
             style={StyleSheet.absoluteFill}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-          >
-            <View />
-          </LinearGradient>
+            start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+          ><View /></LinearGradient>
           <View style={styles.streakHeader}>
-            <View>
+            <View style={{ flex: 1, marginRight: 12 }}>
               <Text style={styles.streakTitle}>Current Streak</Text>
               <Text style={styles.streakSub}>
                 {streak === 0
                   ? 'Start watching to build your streak!'
                   : watchedToday
-                    ? `🔥 Great job! Streak maintained today.`
-                    : `Watch 1 episode today to keep your ${streak}-day streak!`}
+                    ? '🔥 Great job! Streak maintained today.'
+                    : `Watch 1 ep today to keep your ${streak}-day streak!`}
               </Text>
             </View>
             <View style={styles.streakBubble}>
@@ -185,11 +274,15 @@ export default function StatsScreen() {
             <Text style={[styles.progressLabel, { color: COLORS.text }]}>{streak}/30</Text>
           </View>
           <View style={styles.progressBarBg}>
-            <View style={[styles.progressBarFill, { width: `${Math.min((streak / 30) * 100, 100)}%` }]} />
+            <LinearGradient
+              colors={[COLORS.neonCyan, '#00F5B4']}
+              style={[styles.progressBarFill, { width: `${Math.min((streak / 30) * 100, 100)}%` }]}
+              start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+            ><View /></LinearGradient>
           </View>
           <View style={styles.streakLevels}>
             <Text style={styles.levelLabel}>
-              Level {Math.floor(streak / 7) + 1}: {['Genin','Chunin','Jonin','Anbu','Kage'][Math.min(Math.floor(streak / 7), 4)]}
+              Lv.{Math.floor(streak / 7) + 1} {['Genin','Chunin','Jonin','Anbu','Kage'][Math.min(Math.floor(streak / 7), 4)]}
             </Text>
             <Text style={styles.levelLabel}>Next: {Math.min((Math.floor(streak / 7) + 1) * 7, 30)} days</Text>
           </View>
@@ -214,13 +307,10 @@ export default function StatsScreen() {
                 </View>
                 <View style={styles.genreBarBg}>
                   <LinearGradient
-                    colors={[g.color, g.color + '66']}
+                    colors={[g.color, g.color + '55']}
                     style={[styles.genreBarFill, { width: `${g.percent}%` }]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                  >
-                    <View />
-                  </LinearGradient>
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                  ><View /></LinearGradient>
                 </View>
               </View>
             ))}
@@ -228,30 +318,25 @@ export default function StatsScreen() {
         )}
       </View>
 
-      {/* ── Earned Badges ── */}
+      {/* ── Badges ── */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Earned Badges</Text>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Badges</Text>
+          <Text style={styles.earnedLabel}>{earnedCount} / {badges.length} earned</Text>
+        </View>
         <View style={styles.badgeGrid}>
-          {badges.map((badge) => (
-            <View key={badge.id} style={[styles.badgeItem, badge.earned && styles.badgeItemEarned]}>
-              <View style={[styles.badgeIconBox, !badge.earned && styles.lockedBadge, badge.earned && { borderColor: badge.color + '66' }]}>
-                <Ionicons name={badge.icon as any} size={24} color={badge.earned ? badge.color : COLORS.textMuted} />
-              </View>
-              <Text style={[styles.badgeName, badge.earned && { color: badge.color }]}>{badge.name}</Text>
-              {badge.earned && <View style={[styles.badgeDot, { backgroundColor: badge.color }]} />}
-            </View>
-          ))}
+          {badges.map((badge) => <BadgeCard key={badge.id} badge={badge} />)}
         </View>
       </View>
     </ScrollView>
   );
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+// ─── StatTile sub-component ───────────────────────────────────────────────────
 function StatTile({ value, label, color, icon, isStreak }: any) {
   return (
-    <View style={[styles.statTile, { borderColor: color + '22' }]}>
-      <View style={[styles.statIconWrap, { backgroundColor: color + '15' }]}>
+    <View style={[styles.statTile, { borderColor: color + '30' }]}>
+      <View style={[styles.statIconWrap, { backgroundColor: color + '18' }]}>
         <Ionicons name={icon} size={18} color={color} />
       </View>
       <View style={styles.statValueRow}>
@@ -266,74 +351,58 @@ function StatTile({ value, label, color, icon, isStreak }: any) {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: COLORS.bg },
-  centered: { alignItems: 'center', justifyContent: 'center', gap: SPACING.md },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: SPACING.md },
   loadingText: { fontSize: 12, color: COLORS.textMuted },
 
   header: {
     flexDirection: 'row', alignItems: 'center', gap: SPACING.sm,
     paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm,
-    borderBottomWidth: 1, borderBottomColor: COLORS.border,
-    marginBottom: SPACING.sm,
+    borderBottomWidth: 1, borderBottomColor: COLORS.border, marginBottom: SPACING.sm,
   },
   backBtn: {
     width: 38, height: 38, borderRadius: 19,
-    backgroundColor: COLORS.bgCard,
-    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: COLORS.border,
   },
   headerLabel: { fontSize: 10, color: COLORS.neon, letterSpacing: 2, fontWeight: '700' },
   headerTitle: { fontSize: 20, color: COLORS.text, fontWeight: '900' },
+  earnedPill: {
+    paddingHorizontal: 10, paddingVertical: 4,
+    backgroundColor: 'rgba(191,95,255,0.1)',
+    borderRadius: 20, borderWidth: 1, borderColor: 'rgba(191,95,255,0.3)',
+  },
+  earnedPillText: { fontSize: 10, color: '#BF5FFF', fontWeight: '800' },
 
   section: { paddingHorizontal: SPACING.md, marginBottom: SPACING.xl },
-  sectionTitle: { fontSize: 18, color: COLORS.text, fontWeight: '900', marginBottom: SPACING.md },
+  sectionHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: SPACING.md },
+  sectionTitle: { fontSize: 18, color: COLORS.text, fontWeight: '900' },
+  earnedLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: '700' },
 
-  // Stat tiles
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   statTile: {
-    width: '47%', flexGrow: 1,
-    backgroundColor: COLORS.bgElevated,
-    padding: 18, borderRadius: RADIUS.lg,
-    borderWidth: 1, gap: 6,
+    width: '47%', flexGrow: 1, backgroundColor: COLORS.bgElevated,
+    padding: 18, borderRadius: RADIUS.lg, borderWidth: 1, gap: 6,
   },
-  statIconWrap: {
-    width: 36, height: 36, borderRadius: 10,
-    alignItems: 'center', justifyContent: 'center',
-    marginBottom: 4,
-  },
+  statIconWrap: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
   statValueRow: { flexDirection: 'row', alignItems: 'center' },
   statValue: { fontSize: 26, fontWeight: '900', fontStyle: 'italic' },
   statLabel: { fontSize: 9, color: COLORS.textSub, fontWeight: '800', letterSpacing: 1.5 },
 
-  // Streak
-  streakCard: {
-    padding: 20, borderRadius: RADIUS.lg,
-    backgroundColor: 'rgba(25,25,29,0.5)',
-    overflow: 'hidden', gap: 12,
-  },
+  streakCard: { padding: 20, borderRadius: RADIUS.lg, backgroundColor: 'rgba(25,25,29,0.5)', overflow: 'hidden', gap: 12 },
   streakHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   streakTitle: { fontSize: 18, fontWeight: '900', color: COLORS.text },
-  streakSub: { fontSize: 12, color: COLORS.textSub, marginTop: 4, maxWidth: '75%' },
-  streakBubble: {
-    width: 64, height: 64, borderRadius: 32,
-    backgroundColor: 'rgba(0,245,255,0.1)',
-    borderWidth: 2, borderColor: COLORS.neonCyan,
-    alignItems: 'center', justifyContent: 'center',
-  },
+  streakSub: { fontSize: 12, color: COLORS.textSub, marginTop: 4 },
+  streakBubble: { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(0,245,255,0.1)', borderWidth: 2, borderColor: COLORS.neonCyan, alignItems: 'center', justifyContent: 'center' },
   streakNumber: { fontSize: 22, fontWeight: '900', color: COLORS.neonCyan },
   streakDayLabel: { fontSize: 7, fontWeight: '800', color: COLORS.neonCyan, letterSpacing: 1 },
   streakProgressLabels: { flexDirection: 'row', justifyContent: 'space-between' },
   progressLabel: { fontSize: 9, fontWeight: '800', color: COLORS.neonCyan, letterSpacing: 1 },
-  progressBarBg: { height: 8, backgroundColor: COLORS.bgCard, borderRadius: 4 },
-  progressBarFill: { height: '100%', borderRadius: 4, backgroundColor: COLORS.neonCyan },
+  progressBarBg: { height: 8, backgroundColor: COLORS.bgCard, borderRadius: 4, overflow: 'hidden' },
+  progressBarFill: { height: '100%', borderRadius: 4 },
   streakLevels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 },
   levelLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: '600' },
 
-  // Genres
-  card: {
-    backgroundColor: COLORS.bgElevated, borderRadius: RADIUS.lg,
-    padding: 16, gap: 14,
-    borderWidth: 1, borderColor: COLORS.border,
-  },
+  card: { backgroundColor: COLORS.bgElevated, borderRadius: RADIUS.lg, padding: 16, gap: 14, borderWidth: 1, borderColor: COLORS.border },
   genreItem: { gap: 6 },
   genreLabelRow: { flexDirection: 'row', justifyContent: 'space-between' },
   genreName: { fontSize: 11, fontWeight: '800', color: COLORS.text, textTransform: 'uppercase' },
@@ -341,30 +410,33 @@ const styles = StyleSheet.create({
   genreBarBg: { height: 6, backgroundColor: COLORS.bgCard, borderRadius: 3, overflow: 'hidden' },
   genreBarFill: { height: '100%', borderRadius: 3 },
 
-  // Badges
   badgeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   badgeItem: {
-    width: '30%', flexGrow: 1,
-    alignItems: 'center', gap: 6,
-    backgroundColor: COLORS.bgElevated,
-    padding: 14, borderRadius: RADIUS.md,
-    borderWidth: 1, borderColor: COLORS.border,
+    width: '30%', flexGrow: 1, alignItems: 'center', gap: 4,
+    backgroundColor: COLORS.bgElevated, padding: 12,
+    borderRadius: RADIUS.md, borderWidth: 1, overflow: 'hidden',
   },
-  badgeItemEarned: { borderColor: 'rgba(191,95,255,0.3)' },
+  badgeGlow: {
+    position: 'absolute', top: -20, left: '50%', marginLeft: -20,
+    width: 40, height: 40, borderRadius: 20,
+  },
   badgeIconBox: {
-    width: 48, height: 48, borderRadius: 14,
-    backgroundColor: 'rgba(191,95,255,0.08)',
+    width: 46, height: 46, borderRadius: 14,
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: 'rgba(191,95,255,0.15)',
+    borderWidth: 1.5, position: 'relative',
   },
-  lockedBadge: { opacity: 0.3, backgroundColor: 'rgba(0,0,0,0.2)', borderColor: 'transparent' },
+  checkBadge: {
+    position: 'absolute', bottom: -2, right: -2,
+    width: 16, height: 16, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1.5, borderColor: COLORS.bgElevated,
+  },
   badgeName: { fontSize: 8, fontWeight: '900', color: COLORS.textSub, letterSpacing: 1, textAlign: 'center' },
-  badgeDot: { width: 6, height: 6, borderRadius: 3 },
+  badgeDesc: { fontSize: 7, color: COLORS.textMuted, textAlign: 'center' },
+  badgeProgressBg: { width: '100%', height: 3, backgroundColor: COLORS.bgCard, borderRadius: 2, marginTop: 4, overflow: 'hidden' },
+  badgeProgressFill: { height: '100%', borderRadius: 2 },
+  badgeProgressLabel: { fontSize: 7, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 0.5 },
 
-  emptyBox: {
-    backgroundColor: COLORS.bgElevated, borderRadius: RADIUS.lg,
-    padding: 30, alignItems: 'center', gap: 10,
-    borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(189,157,255,0.15)',
-  },
+  emptyBox: { backgroundColor: COLORS.bgElevated, borderRadius: RADIUS.lg, padding: 30, alignItems: 'center', gap: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(189,157,255,0.15)' },
   emptyText: { fontSize: 12, color: COLORS.textMuted, textAlign: 'center' },
 });
