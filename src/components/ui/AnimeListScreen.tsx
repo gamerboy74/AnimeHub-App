@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, FlatList, StyleSheet,
-  TouchableOpacity, ActivityIndicator, RefreshControl, Image,
+  TouchableOpacity, ActivityIndicator, RefreshControl, Image, Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -45,6 +45,10 @@ const CONFIG: Record<ListType, { title: string; label: string; url: string }> = 
     url: 'https://api.jikan.moe/v4/seasons/now?limit=10',
   },
 };
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+// padding=8 each side, gap=8 between cols → (screenWidth - 8 - 8 - 8) / 2
+const CARD_WIDTH = (SCREEN_WIDTH - SPACING.sm * 2 - 8) / 2;
 
 interface Props { type: ListType }
 
@@ -240,7 +244,7 @@ const styles = StyleSheet.create({
   row: { gap: 8, marginBottom: 8 },
 
   card: {
-    flex: 1,
+    width: CARD_WIDTH,
     backgroundColor: COLORS.bgCard,
     borderRadius: RADIUS.md,
     overflow: 'hidden',
