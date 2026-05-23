@@ -473,6 +473,8 @@ export default function WatchScreen() {
     setPlayerReady(false);
     setPlayerError(false);
 
+    // Show HUD briefly then auto-hide — restarts the timer on every episode switch
+    resetHudTimer();
 
     // Auto-dismiss spinner after 8s — some embeds never fire player_ready
     if (spinnerTimeoutRef.current) clearTimeout(spinnerTimeoutRef.current);
@@ -481,7 +483,7 @@ export default function WatchScreen() {
     return () => {
       if (spinnerTimeoutRef.current) clearTimeout(spinnerTimeoutRef.current);
     };
-  }, [id]);
+  }, [id, resetHudTimer]);
 
   // NOTE: clearOtherProgress was removed — it was wiping all episode history
   // on every mount which caused the watch tracker to lose progress.
