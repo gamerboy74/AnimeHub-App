@@ -1,85 +1,128 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform, Image } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { BlurView } from 'expo-blur';
-import { COLORS, SPACING, RADIUS, FONTS } from '../../constants/theme';
+import { COLORS, SPACING, RADIUS } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
+import { userAPI } from '../../lib/supabase';
+import SideDrawer from './SideDrawer';
 
 export default function UniversalHeader() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
 
-  const initials = user?.username?.substring(0, 2).toUpperCase() || '??';
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // Fetch unread notification count
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+
+    const fetchUnread = async () => {
+      const { data } = await userAPI.getNotifications(user.id);
+      if (!cancelled) {
+        setUnreadCount((data ?? []).filter((n: any) => !n.read).length);
+      }
+    };
+
+    fetchUnread();
+    // Refresh every 60s while header is mounted
+    const interval = setInterval(fetchUnread, 60_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [user?.id]);
+
+  const initials = user?.username?.substring(0, 2).toUpperCase() ?? '??';
 
   return (
-    <BlurView intensity={100} tint="dark" style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.glowLine} />
-      <View style={styles.inner}>
-        {/* Left: Menu */}
-        <TouchableOpacity 
-          style={styles.menuBtn} 
-          onPress={() => router.push('/notifications')}
-          activeOpacity={0.7}
-          accessibilityLabel="Open notifications"
-          accessibilityRole="button"
-        >
-          <Ionicons name="menu" size={24} color={COLORS.text} />
-        </TouchableOpacity>
+    <>
+      <BlurView intensity={100} tint="dark" style={[styles.container, { paddingTop: insets.top }]}>
+        <View style={styles.glowLine} />
+        <View style={styles.inner}>
 
-        {/* Center: Branding */}
-        <TouchableOpacity 
-          style={styles.logoRow} 
-          onPress={() => router.push('/')}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.logoText}>ANIMEHUB</Text>
-        </TouchableOpacity>
-
-        {/* Right: Actions */}
-        <View style={styles.actions}>
-          <TouchableOpacity 
-            style={styles.iconBtn} 
-            onPress={() => router.push('/notifications')}
+          {/* Left: Hamburger menu */}
+          <TouchableOpacity
+            style={styles.menuBtn}
+            onPress={() => setDrawerOpen(true)}
             activeOpacity={0.7}
-            accessibilityLabel="Notifications"
+            accessibilityLabel="Open menu"
             accessibilityRole="button"
           >
-            <Ionicons name="notifications-outline" size={20} color={COLORS.textSub} />
+            <View style={styles.hamburgerLines}>
+              <View style={styles.line} />
+              <View style={[styles.line, styles.lineShort]} />
+              <View style={styles.line} />
+            </View>
           </TouchableOpacity>
 
-          <TouchableOpacity 
-            style={styles.settingsBtn} 
-            onPress={() => router.push('/settings')}
+          {/* Center: Branding */}
+          <TouchableOpacity
+            style={styles.logoRow}
+            onPress={() => router.push('/')}
             activeOpacity={0.7}
-            accessibilityLabel="Settings"
-            accessibilityRole="button"
           >
-            <Ionicons name="settings-outline" size={20} color={COLORS.neon} />
+            <Text style={styles.logoText}>ANIMEHUB</Text>
           </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={styles.avatarBtn} 
-            onPress={() => router.push('/profile')}
-            activeOpacity={0.7}
-            accessibilityLabel="My profile"
-            accessibilityRole="button"
-          >
-            {user?.avatar_url ? (
-              <Image source={{ uri: user.avatar_url }} style={styles.avatarImage} />
-            ) : (
-              <View style={styles.avatarPlaceholder}>
-                <Text style={styles.avatarText}>{initials}</Text>
-              </View>
-            )}
-            <View style={styles.avatarGlow} />
-          </TouchableOpacity>
+
+          {/* Right: Actions */}
+          <View style={styles.actions}>
+            {/* Notifications with badge */}
+            <TouchableOpacity
+              style={styles.iconBtn}
+              onPress={() => router.push('/notifications')}
+              activeOpacity={0.7}
+              accessibilityLabel={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
+              accessibilityRole="button"
+            >
+              <Ionicons name="notifications-outline" size={20} color={COLORS.textSub} />
+              {unreadCount > 0 && (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
+            {/* Settings */}
+            <TouchableOpacity
+              style={styles.iconBtn}
+              onPress={() => router.push('/settings')}
+              activeOpacity={0.7}
+              accessibilityLabel="Settings"
+              accessibilityRole="button"
+            >
+              <Ionicons name="settings-outline" size={20} color={COLORS.neon} />
+            </TouchableOpacity>
+
+            {/* Avatar */}
+            <TouchableOpacity
+              style={styles.avatarBtn}
+              onPress={() => router.push('/(tabs)/profile')}
+              activeOpacity={0.7}
+              accessibilityLabel="My profile"
+              accessibilityRole="button"
+            >
+              {user?.avatar_url ? (
+                <Image source={{ uri: user.avatar_url }} style={styles.avatarImage} />
+              ) : (
+                <View style={styles.avatarPlaceholder}>
+                  <Text style={styles.avatarText}>{initials}</Text>
+                </View>
+              )}
+              <View style={styles.avatarGlow} />
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
-      <View style={styles.bottomBorder} />
-    </BlurView>
+        <View style={styles.bottomBorder} />
+      </BlurView>
+
+      {/* Slide-out drawer — renders above everything */}
+      <SideDrawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
+    </>
   );
 }
 
@@ -104,18 +147,26 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: SPACING.md,
   },
+  // Hamburger
   menuBtn: {
     width: 40,
     height: 40,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  iconBtn: {
-    width: 32,
-    height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
+  hamburgerLines: {
+    width: 22,
+    gap: 5,
   },
+  line: {
+    height: 2,
+    backgroundColor: COLORS.text,
+    borderRadius: 2,
+  },
+  lineShort: {
+    width: '65%',
+  },
+  // Logo
   logoRow: {
     flex: 1,
     alignItems: 'center',
@@ -132,17 +183,41 @@ const styles = StyleSheet.create({
     textShadowRadius: 10,
     textTransform: 'uppercase',
   },
+  // Right actions
   actions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
   },
-  settingsBtn: {
-    width: 32,
-    height: 32,
+  iconBtn: {
+    width: 36,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
   },
+  // Notification badge
+  badge: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: COLORS.neonPink,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    borderWidth: 1.5,
+    borderColor: 'rgba(8,8,16,1)',
+  },
+  badgeText: {
+    fontSize: 9,
+    color: '#fff',
+    fontWeight: '900',
+    lineHeight: 11,
+  },
+  // Avatar
   avatarBtn: {
     width: 34,
     height: 34,
