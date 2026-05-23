@@ -47,6 +47,25 @@ const MIN_PROGRESS_SECONDS = 5;
 // and error events back to React Native, and applies seek-to-resume.
 const buildInjectedJS = (resumeSeconds: number) => `
   (function() {
+    // ─── FORCE FULL-SCREEN LAYOUT ────────────────────────────────────────────
+    // Eliminates blank bars on the left/right in landscape by ensuring the page
+    // itself (not just the WebView container) fills the entire viewport.
+    var _style = document.createElement('style');
+    _style.textContent = [
+      'html, body { width:100% !important; height:100% !important; margin:0 !important; padding:0 !important; overflow:hidden !important; background:#000 !important; }',
+      'iframe, video, #player, .player, [id*="player"], [class*="player"] { width:100% !important; height:100% !important; max-width:100% !important; position:fixed !important; top:0 !important; left:0 !important; }',
+    ].join('');
+    (document.head || document.documentElement).appendChild(_style);
+
+    // Also ensure the viewport meta tag requests full width
+    var _meta = document.querySelector('meta[name="viewport"]');
+    if (!_meta) {
+      _meta = document.createElement('meta');
+      _meta.setAttribute('name', 'viewport');
+      (document.head || document.documentElement).appendChild(_meta);
+    }
+    _meta.setAttribute('content', 'width=device-width, initial-scale=1.0, viewport-fit=cover');
+
     // ─── REDIRECT / POPUP KILL ────────────────────────────────────────────────
     // Block every JS navigation method ads use to hijack the WebView.
 
@@ -545,7 +564,7 @@ export default function WatchScreen() {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
-      <StatusBar hidden />
+      <StatusBar hidden translucent backgroundColor="transparent" />
 
       {/* ── WEBVIEW PLAYER ── */}
       <WebView
@@ -565,8 +584,11 @@ export default function WatchScreen() {
         style={StyleSheet.absoluteFill}
         // Allow autoplay — critical for video embeds
         mediaPlaybackRequiresUserAction={false}
-        allowsFullscreenVideo={false} // We handle our own fullscreen via orientation lock
+        allowsFullscreenVideo={true}
         allowsInlineMediaPlayback={true}
+        contentInsetAdjustmentBehavior="never"
+        automaticallyAdjustsScrollIndicatorInsets={false}
+        overScrollMode="never"
         javaScriptEnabled={true}
         domStorageEnabled={true}
         // Force block popups/new windows at the native layer
@@ -902,7 +924,14 @@ function formatTime(seconds: number = 0) {
 
 // ─── STYLES ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#000" },
+  container: {
+    flex: 1,
+    backgroundColor: "#000",
+    // Ensure the player fills the full display including areas behind the notch.
+    // On Android this overrides WindowInsets that would otherwise leave blank bars
+    // on the sides in landscape mode.
+    ...StyleSheet.absoluteFillObject,
+  },
   fullCenter: {
     flex: 1,
     backgroundColor: "#000",
