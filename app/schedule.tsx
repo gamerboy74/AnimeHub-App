@@ -77,7 +77,14 @@ export default function ScheduleScreen() {
       if (!res.ok) throw new Error(`API error ${res.status}`);
       const json = await res.json();
       // Sort by broadcast time
-      const sorted = (json.data ?? []).sort((a: ScheduleEntry, b: ScheduleEntry) => {
+      // Deduplicate by mal_id (Jikan can return the same anime twice)
+      const seen = new Set<number>();
+      const unique = (json.data ?? []).filter((e: ScheduleEntry) => {
+        if (seen.has(e.mal_id)) return false;
+        seen.add(e.mal_id);
+        return true;
+      });
+      const sorted = unique.sort((a: ScheduleEntry, b: ScheduleEntry) => {
         const ta = a.broadcast?.time ?? '99:99';
         const tb = b.broadcast?.time ?? '99:99';
         return ta.localeCompare(tb);
@@ -171,7 +178,7 @@ export default function ScheduleScreen() {
       ) : (
         <FlatList
           data={entries}
-          keyExtractor={(item) => String(item.mal_id)}
+          keyExtractor={(item, index) => `${item.mal_id}_${index}`}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
           refreshControl={
