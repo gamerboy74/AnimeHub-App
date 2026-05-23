@@ -84,6 +84,22 @@ function computeStreak(progress: any[]): number {
   return streak;
 }
 
+/** Longest streak ever — scans full history regardless of today */
+function computeLongestStreak(progress: any[]): number {
+  const days = Array.from(
+    new Set(progress.map(p => new Date(p.last_watched).toDateString()))
+  ).map(d => new Date(d).getTime()).sort((a, b) => a - b); // ascending
+
+  if (days.length === 0) return 0;
+  let best = 1, cur = 1;
+  for (let i = 1; i < days.length; i++) {
+    const diffDays = Math.round((days[i] - days[i - 1]) / 86400000);
+    if (diffDays === 1) { cur++; if (cur > best) best = cur; }
+    else if (diffDays > 1) cur = 1;
+  }
+  return best;
+}
+
 /** Compute watch time from real progress_seconds — more accurate than stale DB column */
 function computeWatchTime(progress: any[]): number {
   return progress.reduce((sum: number, p: any) => sum + (p.progress_seconds || 0), 0);
@@ -187,6 +203,7 @@ export default function StatsScreen() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const streak        = useMemo(() => computeStreak(allProgress),        [allProgress]);
+  const longestStreak = useMemo(() => computeLongestStreak(allProgress),  [allProgress]);
   const genreStats    = useMemo(() => computeGenres(allProgress),         [allProgress]);
   const totalWatchSec = useMemo(() => computeWatchTime(allProgress),      [allProgress]);
   const completedCnt  = useMemo(() => computeCompletedAnime(allProgress), [allProgress]);
@@ -194,10 +211,10 @@ export default function StatsScreen() {
   const badges = useMemo(
     () => BADGE_DEFS.map(b => ({
       ...b,
-      earned:   b.check(allProgress, streak, watchlist),
-      progress: b.progress(allProgress, streak, watchlist),
+      earned:   b.check(allProgress, longestStreak, watchlist), // use best ever streak for badges
+      progress: b.progress(allProgress, longestStreak, watchlist),
     })),
-    [allProgress, streak, watchlist]
+    [allProgress, longestStreak, watchlist]
   );
 
   const watchedToday = allProgress.some(
@@ -247,6 +264,15 @@ export default function StatsScreen() {
 
       {/* ── Streak Card ── */}
       <View style={styles.section}>
+        {/* At-risk banner */}
+        {streak > 0 && !watchedToday && (
+          <View style={styles.atRiskBanner}>
+            <Ionicons name="warning-outline" size={14} color="#FFD600" />
+            <Text style={styles.atRiskText}>
+              ⚠️ Watch an episode today to keep your {streak}-day streak!
+            </Text>
+          </View>
+        )}
         <BlurView intensity={20} style={styles.streakCard}>
           <LinearGradient
             colors={['rgba(0,245,255,0.06)', 'transparent']}
@@ -258,7 +284,9 @@ export default function StatsScreen() {
               <Text style={styles.streakTitle}>Current Streak</Text>
               <Text style={styles.streakSub}>
                 {streak === 0
-                  ? 'Start watching to build your streak!'
+                  ? longestStreak > 0
+                    ? `Best was ${longestStreak} days — start again today!`
+                    : 'Start watching to build your streak!'
                   : watchedToday
                     ? '🔥 Great job! Streak maintained today.'
                     : `Watch 1 ep today to keep your ${streak}-day streak!`}
@@ -269,6 +297,15 @@ export default function StatsScreen() {
               <Text style={styles.streakDayLabel}>DAYS</Text>
             </View>
           </View>
+
+          {/* Best streak row */}
+          <View style={styles.bestStreakRow}>
+            <Ionicons name="trophy-outline" size={12} color={COLORS.neonGold} />
+            <Text style={styles.bestStreakText}>
+              Best streak: <Text style={{ color: COLORS.neonGold, fontWeight: '900' }}>{longestStreak} days</Text>
+            </Text>
+          </View>
+
           <View style={styles.streakProgressLabels}>
             <Text style={styles.progressLabel}>PROGRESS TO 30</Text>
             <Text style={[styles.progressLabel, { color: COLORS.text }]}>{streak}/30</Text>
@@ -387,6 +424,22 @@ const styles = StyleSheet.create({
   statValueRow: { flexDirection: 'row', alignItems: 'center' },
   statValue: { fontSize: 26, fontWeight: '900', fontStyle: 'italic' },
   statLabel: { fontSize: 9, color: COLORS.textSub, fontWeight: '800', letterSpacing: 1.5 },
+
+  atRiskBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: 'rgba(255,214,0,0.08)',
+    borderRadius: RADIUS.md, padding: 12, marginBottom: 10,
+    borderWidth: 1, borderColor: 'rgba(255,214,0,0.25)',
+  },
+  atRiskText: { fontSize: 11, color: '#FFD600', fontWeight: '700', flex: 1 },
+
+  bestStreakRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingVertical: 8, paddingHorizontal: 2,
+    borderTopWidth: 1, borderBottomWidth: 1,
+    borderColor: 'rgba(255,214,0,0.12)',
+  },
+  bestStreakText: { fontSize: 11, color: COLORS.textSub, fontWeight: '600' },
 
   streakCard: { padding: 20, borderRadius: RADIUS.lg, backgroundColor: 'rgba(25,25,29,0.5)', overflow: 'hidden', gap: 12 },
   streakHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
