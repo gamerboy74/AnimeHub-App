@@ -32,7 +32,7 @@ const CONFIG: Record<ListType, { title: string; label: string; url: string }> = 
   'trending': {
     title: 'Trending',
     label: '🔥 TRENDING NOW',
-    url: 'https://api.jikan.moe/v4/top/anime?filter=airing&limit=25',
+    url: 'https://api.jikan.moe/v4/top/anime?filter=airing&limit=20',
   },
   'top-rated': {
     title: 'Top Rated',
@@ -42,7 +42,7 @@ const CONFIG: Record<ListType, { title: string; label: string; url: string }> = 
   'new-arrivals': {
     title: 'New Arrivals',
     label: '🆕 THIS SEASON',
-    url: 'https://api.jikan.moe/v4/seasons/now?limit=25',
+    url: 'https://api.jikan.moe/v4/seasons/now?limit=10',
   },
 };
 
