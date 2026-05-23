@@ -247,47 +247,20 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      {/* Bento Stats Grid */}
+      {/* Stats Shortcut Card */}
       <View style={styles.section}>
-        <View style={styles.statsGrid}>
-          <StatTile value={formatWatchTime(user.total_watch_time)} label="HOURS WATCHED" color={COLORS.neon} />
-          <StatTile value={String(user.anime_watched || allProgress.filter((p: any) => p.is_completed).length)} label="COMPLETED" color={COLORS.neonCyan} />
-          <StatTile value={String(allProgress.length)} label="EPISODES" color="#ff7346" />
-          <StatTile value={String(streak)} label="DAY STREAK" color={COLORS.neonPulse} isStreak />
-        </View>
-      </View>
-
-      {/* Current Streak Card */}
-      <View style={styles.section}>
-        <BlurView intensity={20} style={styles.streakCard}>
-          <View style={styles.streakHeader}>
+        <TouchableOpacity style={styles.statsCard} onPress={() => router.push('/stats' as any)} activeOpacity={0.8}>
+          <View style={styles.statsCardLeft}>
+            <View style={styles.statsCardIconWrap}>
+              <Ionicons name="stats-chart" size={22} color={COLORS.neon} />
+            </View>
             <View>
-              <Text style={styles.streakTitle}>Current Streak</Text>
-              <Text style={styles.streakSub}>
-                {streak === 0
-                  ? 'Start watching to build your streak!'
-                  : allProgress.some(p => new Date(p.last_watched).toDateString() === new Date().toDateString())
-                    ? `🔥 Great job! Streak maintained today.`
-                    : `Watch 1 episode today to keep your ${streak}-day streak!`
-                }
-              </Text>
-            </View>
-            <Ionicons name="flash" size={24} color={COLORS.neonCyan} />
-          </View>
-          <View style={styles.streakProgressContainer}>
-            <View style={styles.streakProgressLabels}>
-              <Text style={styles.progressLabel}>PROGRESS</Text>
-              <Text style={[styles.progressLabel, { color: COLORS.text }]}>{streak}/30 DAYS</Text>
-            </View>
-            <View style={styles.progressBarBg}>
-              <View style={[styles.progressBarFill, { width: `${Math.min((streak / 30) * 100, 100)}%`, backgroundColor: COLORS.neonCyan }]} />
-            </View>
-            <View style={styles.streakLevels}>
-              <Text style={styles.levelLabel}>Level {Math.floor(streak / 7) + 1}: {['Genin','Chunin','Jonin','Anbu','Kage'][Math.min(Math.floor(streak/7), 4)]}</Text>
-              <Text style={styles.levelLabel}>Next: {Math.min((Math.floor(streak/7)+1)*7, 30)} days</Text>
+              <Text style={styles.statsCardTitle}>My Stats</Text>
+              <Text style={styles.statsCardSub}>Streak · Badges · Genre breakdown</Text>
             </View>
           </View>
-        </BlurView>
+          <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
+        </TouchableOpacity>
       </View>
 
       {/* Watchlist Section */}
@@ -376,44 +349,6 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-      <View style={styles.gridContainer}>
-        {/* Badges Wall */}
-        <View style={styles.badgeSection}>
-          <Text style={styles.gridSectionTitle}>Earned Badges</Text>
-          <View style={styles.badgeGrid}>
-            {badges.map(badge => (
-              <View key={badge.id} style={styles.badgeItem}>
-                <View style={[styles.badgeIconBox, !badge.earned && styles.lockedBadge]}>
-                  <Ionicons name={badge.icon as any} size={20} color={badge.earned ? badge.color : COLORS.textMuted} />
-                </View>
-                <Text style={[styles.badgeName, badge.earned && { color: badge.color }]}>{badge.name}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-
-        {/* Top Genres */}
-        <View style={styles.genreSection}>
-          <Text style={styles.gridSectionTitle}>Top Genres</Text>
-          {genreStats.length === 0 ? (
-            <Text style={styles.genreEmpty}>Watch more anime to see your genre stats!</Text>
-          ) : (
-            <View style={styles.genreList}>
-              {genreStats.map(g => (
-                <View key={g.name} style={styles.genreItem}>
-                  <View style={styles.genreLabelRow}>
-                    <Text style={styles.genreNameLabel}>{g.name}</Text>
-                    <Text style={[styles.genreValue, { color: g.color }]}>{g.percent}%</Text>
-                  </View>
-                  <View style={styles.genreBarBg}>
-                    <View style={[styles.genreBarFill, { width: `${g.percent}%`, backgroundColor: g.color }]} />
-                  </View>
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
-      </View>
 
       {/* Account Info Card */}
       <View style={styles.section}>
@@ -599,6 +534,21 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(189,157,255,0.2)',
   },
   secondaryBtnText: { color: COLORS.text, fontWeight: '700', fontSize: 13 },
+
+  statsCard: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: COLORS.bgElevated, borderRadius: RADIUS.lg,
+    padding: 18, borderWidth: 1, borderColor: 'rgba(0,245,255,0.15)',
+  },
+  statsCardLeft: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  statsCardIconWrap: {
+    width: 44, height: 44, borderRadius: 12,
+    backgroundColor: 'rgba(0,245,255,0.08)',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: 'rgba(0,245,255,0.2)',
+  },
+  statsCardTitle: { fontSize: 16, fontWeight: '800', color: COLORS.text },
+  statsCardSub: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
 
   section: { paddingHorizontal: SPACING.md, marginBottom: SPACING.xl },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: SPACING.md },

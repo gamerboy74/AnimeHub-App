@@ -35,7 +35,7 @@ const NAV_ITEMS = [
   { label: 'Watch History',   icon: 'time-outline',           route: '/history'         },
   { label: 'Watchlist',       icon: 'list-outline',           route: '/watchlist'       },
   { label: 'Downloads',       icon: 'download-outline',       route: '/downloads',    badge: 'SOON' },
-  { label: 'My Stats',        icon: 'stats-chart-outline',    route: '/(tabs)/profile'  },
+  { label: 'My Stats',        icon: 'stats-chart-outline',    route: '/stats'           },
   // ── App ────────────────────────────────────────────────────
   { label: 'Notifications',   icon: 'notifications-outline',  route: '/notifications'   },
   { label: 'Settings',        icon: 'settings-outline',       route: '/settings'        },
