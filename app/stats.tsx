@@ -191,13 +191,26 @@ export default function StatsScreen() {
 
   const fetchData = useCallback(async () => {
     if (!user) return;
-    const [progressRes, watchlistRes] = await Promise.all([
-      userAPI.getProgress(user.id),
-      userAPI.getWatchlist(user.id),
-    ]);
-    setAllProgress(progressRes.data || []);
-    setWatchlist(watchlistRes.data?.map((i: any) => i.anime) || []);
-    setLoading(false);
+    try {
+      const [progressRes, watchlistRes] = await Promise.all([
+        userAPI.getProgress(user.id),
+        userAPI.getWatchlist(user.id),
+      ]);
+      
+      if (progressRes.error) {
+        console.error('[Stats] Error fetching watch progress:', progressRes.error);
+      }
+      if (watchlistRes.error) {
+        console.error('[Stats] Error fetching watchlist:', watchlistRes.error);
+      }
+
+      setAllProgress(progressRes.data || []);
+      setWatchlist(watchlistRes.data?.map((i: any) => i.anime).filter(Boolean) || []);
+    } catch (err) {
+      console.error('[Stats] Unexpected error loading stats data:', err);
+    } finally {
+      setLoading(false);
+    }
   }, [user?.id]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
