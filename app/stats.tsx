@@ -15,37 +15,37 @@ import { userAPI } from '../src/lib/supabase';
 // ─── Badge definitions ─── each has check() + progress() + description ───────
 const BADGE_DEFS = [
   {
-    id: '1', name: 'FIRST EP', desc: 'Watch any episode',
+    id: '1', code: 'FIRST_EP', name: 'FIRST EP', desc: 'Watch any episode',
     icon: 'play-circle',  color: COLORS.neon,
     check:    (p: any[], s: number, w: any[]) => p.length >= 1,
     progress: (p: any[], s: number, w: any[]) => ({ cur: Math.min(p.length, 1), max: 1 }),
   },
   {
-    id: '2', name: 'DEDICATED', desc: '3-day watch streak',
+    id: '2', code: 'DEDICATED', name: 'DEDICATED', desc: '3-day watch streak',
     icon: 'flash',         color: COLORS.neonCyan,
     check:    (p: any[], s: number) => s >= 3,
     progress: (p: any[], s: number) => ({ cur: Math.min(s, 3), max: 3 }),
   },
   {
-    id: '3', name: 'VETERAN', desc: 'Watch 10 episodes',
+    id: '3', code: 'VETERAN', name: 'VETERAN', desc: 'Watch 10 episodes',
     icon: 'medal',         color: '#ff7346',
     check:    (p: any[], s: number) => p.length >= 10,
     progress: (p: any[], s: number) => ({ cur: Math.min(p.length, 10), max: 10 }),
   },
   {
-    id: '4', name: 'LISTER', desc: 'Add 5 to watchlist',
+    id: '4', code: 'LISTER', name: 'LISTER', desc: 'Add 5 to watchlist',
     icon: 'list',          color: COLORS.neonPulse,
     check:    (p: any[], s: number, w: any[]) => w.length >= 5,
     progress: (p: any[], s: number, w: any[]) => ({ cur: Math.min(w.length, 5), max: 5 }),
   },
   {
-    id: '5', name: 'WARRIOR', desc: '7-day streak',
+    id: '5', code: 'WARRIOR', name: 'WARRIOR', desc: '7-day streak',
     icon: 'shield',        color: COLORS.neonGold,
     check:    (p: any[], s: number) => s >= 7,
     progress: (p: any[], s: number) => ({ cur: Math.min(s, 7), max: 7 }),
   },
   {
-    id: '6', name: 'LEGEND', desc: 'Watch 50 episodes',
+    id: '6', code: 'LEGEND', name: 'LEGEND', desc: 'Watch 50 episodes',
     icon: 'star',          color: '#BF5FFF',
     check:    (p: any[], s: number) => p.length >= 50,
     progress: (p: any[], s: number) => ({ cur: Math.min(p.length, 50), max: 50 }),
@@ -187,14 +187,18 @@ export default function StatsScreen() {
 
   const [allProgress, setAllProgress] = useState<any[]>([]);
   const [watchlist, setWatchlist]     = useState<any[]>([]);
+  const [dbStats, setDbStats]         = useState<any>(null);
+  const [dbBadges, setDbBadges]       = useState<any[]>([]);
   const [loading, setLoading]         = useState(true);
 
   const fetchData = useCallback(async () => {
     if (!user) return;
     try {
-      const [progressRes, watchlistRes] = await Promise.all([
+      const [progressRes, watchlistRes, statsRes, badgesRes] = await Promise.all([
         userAPI.getProgress(user.id),
         userAPI.getWatchlist(user.id),
+        userAPI.getUserStats(user.id),
+        userAPI.getUserBadges(user.id),
       ]);
       
       if (progressRes.error) {
@@ -206,6 +210,18 @@ export default function StatsScreen() {
 
       setAllProgress(progressRes.data || []);
       setWatchlist(watchlistRes.data?.map((i: any) => i.anime).filter(Boolean) || []);
+      
+      if (statsRes && !statsRes.error && statsRes.data) {
+        setDbStats(statsRes.data);
+      } else {
+        setDbStats(null);
+      }
+      
+      if (badgesRes && !badgesRes.error && badgesRes.data) {
+        setDbBadges(badgesRes.data);
+      } else {
+        setDbBadges([]);
+      }
     } catch (err) {
       console.error('[Stats] Unexpected error loading stats data:', err);
     } finally {
@@ -215,19 +231,41 @@ export default function StatsScreen() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const streak        = useMemo(() => computeStreak(allProgress),        [allProgress]);
-  const longestStreak = useMemo(() => computeLongestStreak(allProgress),  [allProgress]);
+  const streak = useMemo(() => {
+    return dbStats ? dbStats.current_streak : computeStreak(allProgress);
+  }, [allProgress, dbStats]);
+
+  const longestStreak = useMemo(() => {
+    return dbStats ? dbStats.longest_streak : computeLongestStreak(allProgress);
+  }, [allProgress, dbStats]);
+
   const genreStats    = useMemo(() => computeGenres(allProgress),         [allProgress]);
-  const totalWatchSec = useMemo(() => computeWatchTime(allProgress),      [allProgress]);
-  const completedCnt  = useMemo(() => computeCompletedAnime(allProgress), [allProgress]);
+  
+  const totalWatchSec = useMemo(() => {
+    return dbStats ? dbStats.total_watch_time : computeWatchTime(allProgress);
+  }, [allProgress, dbStats]);
+
+  const completedCnt = useMemo(() => {
+    return dbStats ? dbStats.completed_anime_count : computeCompletedAnime(allProgress);
+  }, [allProgress, dbStats]);
 
   const badges = useMemo(
-    () => BADGE_DEFS.map(b => ({
-      ...b,
-      earned:   b.check(allProgress, longestStreak, watchlist), // use best ever streak for badges
-      progress: b.progress(allProgress, longestStreak, watchlist),
-    })),
-    [allProgress, longestStreak, watchlist]
+    () => BADGE_DEFS.map(b => {
+      const earnedFromDb = dbBadges.some((dbB: any) => dbB.badge_code === b.code);
+      const earnedFromClient = b.check(allProgress, longestStreak, watchlist);
+      const earned = earnedFromDb || earnedFromClient;
+      
+      const progress = b.progress(allProgress, longestStreak, watchlist);
+      if (earned) {
+        progress.cur = progress.max; // ensure full bar visual if awarded
+      }
+      return {
+        ...b,
+        earned,
+        progress,
+      };
+    }),
+    [allProgress, longestStreak, watchlist, dbBadges]
   );
 
   const watchedToday = allProgress.some(

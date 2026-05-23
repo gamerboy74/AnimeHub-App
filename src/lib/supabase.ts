@@ -218,6 +218,12 @@ export const userAPI = {
   clearOtherProgress: (userId: string, episodeIds: string[]) =>
     supabase.from('user_progress').delete().eq('user_id', userId).in('episode_id', episodeIds),
 
+  getUserStats: (userId: string) =>
+    supabase.from('user_stats').select('*').eq('user_id', userId).maybeSingle(),
+
+  getUserBadges: (userId: string) =>
+    supabase.from('user_badges').select('badge_code').eq('user_id', userId),
+
   getNotifications: (userId: string) =>
     supabase.from('notifications').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
 
