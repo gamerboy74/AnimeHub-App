@@ -21,16 +21,16 @@ const BADGE_DEFS = [
     progress: (p: any[], s: number, w: any[]) => ({ cur: Math.min(p.length, 1), max: 1 }),
   },
   {
-    id: '2', code: 'DEDICATED', name: 'DEDICATED', desc: '3-day watch streak',
+    id: '2', code: 'HUNTER', name: 'HUNTER', desc: 'Add 1 to watchlist',
+    icon: 'bookmark',     color: '#00FFCC',
+    check:    (p: any[], s: number, w: any[]) => w.length >= 1,
+    progress: (p: any[], s: number, w: any[]) => ({ cur: Math.min(w.length, 1), max: 1 }),
+  },
+  {
+    id: '3', code: 'DEDICATED', name: 'DEDICATED', desc: '3-day watch streak',
     icon: 'flash',         color: COLORS.neonCyan,
     check:    (p: any[], s: number) => s >= 3,
     progress: (p: any[], s: number) => ({ cur: Math.min(s, 3), max: 3 }),
-  },
-  {
-    id: '3', code: 'VETERAN', name: 'VETERAN', desc: 'Watch 10 episodes',
-    icon: 'medal',         color: '#ff7346',
-    check:    (p: any[], s: number) => p.length >= 10,
-    progress: (p: any[], s: number) => ({ cur: Math.min(p.length, 10), max: 10 }),
   },
   {
     id: '4', code: 'LISTER', name: 'LISTER', desc: 'Add 5 to watchlist',
@@ -39,16 +39,46 @@ const BADGE_DEFS = [
     progress: (p: any[], s: number, w: any[]) => ({ cur: Math.min(w.length, 5), max: 5 }),
   },
   {
-    id: '5', code: 'WARRIOR', name: 'WARRIOR', desc: '7-day streak',
+    id: '5', code: 'SHONEN', name: 'SHONEN', desc: 'Watch 5 Action episodes',
+    icon: 'flame',         color: '#FF3E3E',
+    check:    (p: any[]) => p.filter(x => (x.genres || x.anime_genres || []).includes('Action')).length >= 5,
+    progress: (p: any[]) => {
+      const c = p.filter(x => (x.genres || x.anime_genres || []).includes('Action')).length;
+      return { cur: Math.min(c, 5), max: 5 };
+    },
+  },
+  {
+    id: '6', code: 'VETERAN', name: 'VETERAN', desc: 'Watch 10 episodes',
+    icon: 'medal',         color: '#ff7346',
+    check:    (p: any[], s: number) => p.length >= 10,
+    progress: (p: any[], s: number) => ({ cur: Math.min(p.length, 10), max: 10 }),
+  },
+  {
+    id: '7', code: 'WARRIOR', name: 'WARRIOR', desc: '7-day streak',
     icon: 'shield',        color: COLORS.neonGold,
     check:    (p: any[], s: number) => s >= 7,
     progress: (p: any[], s: number) => ({ cur: Math.min(s, 7), max: 7 }),
   },
   {
-    id: '6', code: 'LEGEND', name: 'LEGEND', desc: 'Watch 50 episodes',
+    id: '8', code: 'BINGE', name: 'BINGE SENSEI', desc: 'Watch 5 hours of anime',
+    icon: 'time',          color: '#FFB300',
+    check:    (p: any[]) => p.reduce((sum, x) => sum + (x.progress_seconds || 0), 0) >= 18000,
+    progress: (p: any[]) => {
+      const sec = p.reduce((sum, x) => sum + (x.progress_seconds || 0), 0);
+      return { cur: Math.min(sec, 18000), max: 18000 };
+    },
+  },
+  {
+    id: '9', code: 'LEGEND', name: 'LEGEND', desc: 'Watch 50 episodes',
     icon: 'star',          color: '#BF5FFF',
     check:    (p: any[], s: number) => p.length >= 50,
     progress: (p: any[], s: number) => ({ cur: Math.min(p.length, 50), max: 50 }),
+  },
+  {
+    id: '10', code: 'OTAKU', name: 'OTAKU KING', desc: 'Watch 100 episodes',
+    icon: 'crown',         color: '#E040FB',
+    check:    (p: any[], s: number) => p.length >= 100,
+    progress: (p: any[], s: number) => ({ cur: Math.min(p.length, 100), max: 100 }),
   },
 ];
 
