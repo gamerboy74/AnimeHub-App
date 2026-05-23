@@ -27,18 +27,18 @@ interface SideDrawerProps {
 
 const NAV_ITEMS = [
   // ── Discover (not in bottom nav) ───────────────────────────
-  { label: 'Airing Schedule', icon: 'calendar-outline',       route: '/schedule'      },
-  { label: 'Trending',        icon: 'flame-outline',          route: '/trending',     badge: 'SOON' },
-  { label: 'Seasonal',        icon: 'partly-sunny-outline',   route: '/seasonal',     badge: 'SOON' },
+  { label: 'Airing Schedule', icon: 'calendar-outline',       route: '/schedule'        },
+  { label: 'Trending',        icon: 'flame-outline',          route: '/(tabs)/explore'  },
+  { label: 'Seasonal',        icon: 'partly-sunny-outline',   route: '/(tabs)/explore'  },
   // ── My Stuff ───────────────────────────────────────────────
-  { label: 'Favorites',       icon: 'heart-outline',          route: '/favorites'     },
-  { label: 'Watch History',   icon: 'time-outline',           route: '/history'       },
-  { label: 'Watchlist',       icon: 'list-outline',           route: '/watchlist'     },
+  { label: 'Favorites',       icon: 'heart-outline',          route: '/favorites'       },
+  { label: 'Watch History',   icon: 'time-outline',           route: '/history'         },
+  { label: 'Watchlist',       icon: 'list-outline',           route: '/watchlist'       },
   { label: 'Downloads',       icon: 'download-outline',       route: '/downloads',    badge: 'SOON' },
-  { label: 'My Stats',        icon: 'stats-chart-outline',    route: '/stats',        badge: 'SOON' },
+  { label: 'My Stats',        icon: 'stats-chart-outline',    route: '/(tabs)/profile'  },
   // ── App ────────────────────────────────────────────────────
-  { label: 'Notifications',   icon: 'notifications-outline',  route: '/notifications' },
-  { label: 'Settings',        icon: 'settings-outline',       route: '/settings'      },
+  { label: 'Notifications',   icon: 'notifications-outline',  route: '/notifications'   },
+  { label: 'Settings',        icon: 'settings-outline',       route: '/settings'        },
 ] as const;
 
 export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
@@ -156,16 +156,16 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
             contentContainerStyle={styles.navScrollContent}
           >
             <Text style={styles.navSection}>DISCOVER</Text>
-            {NAV_ITEMS.filter(i => ['schedule','trending','seasonal'].includes((i.route as string).replace('/', ''))).map((item) => (
-              <NavRow key={item.route} item={item} onPress={() => navigate(item.route)} />
+            {NAV_ITEMS.filter(i => ['Airing Schedule','Trending','Seasonal'].includes(i.label)).map((item) => (
+              <NavRow key={item.label} item={item} onPress={() => navigate(item.route)} />
             ))}
             <Text style={styles.navSection}>MY STUFF</Text>
-            {NAV_ITEMS.filter(i => ['favorites','history','watchlist','downloads','stats'].includes((i.route as string).replace('/', ''))).map((item) => (
-              <NavRow key={item.route} item={item} onPress={() => navigate(item.route)} />
+            {NAV_ITEMS.filter(i => ['Favorites','Watch History','Watchlist','Downloads','My Stats'].includes(i.label)).map((item) => (
+              <NavRow key={item.label} item={item} onPress={() => navigate(item.route)} />
             ))}
             <Text style={styles.navSection}>APP</Text>
-            {NAV_ITEMS.filter(i => ['notifications','settings'].includes((i.route as string).replace('/', ''))).map((item) => (
-              <NavRow key={item.route} item={item} onPress={() => navigate(item.route)} />
+            {NAV_ITEMS.filter(i => ['Notifications','Settings'].includes(i.label)).map((item) => (
+              <NavRow key={item.label} item={item} onPress={() => navigate(item.route)} />
             ))}
           </ScrollView>
 
