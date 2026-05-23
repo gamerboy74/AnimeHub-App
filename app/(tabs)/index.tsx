@@ -151,7 +151,7 @@ export default function HomeScreen() {
         subtitle="TRENDING"
         data={trending}
         router={router}
-        seeAllRoute="/(tabs)/explore"
+        seeAllRoute="/trending"
       />
 
       {/* Top Rated */}
@@ -161,7 +161,7 @@ export default function HomeScreen() {
         data={topRated}
         router={router}
         showStats
-        seeAllRoute="/(tabs)/explore"
+        seeAllRoute="/top-rated"
       />
 
       {/* Recently Added */}
@@ -170,7 +170,7 @@ export default function HomeScreen() {
         subtitle="RECENT"
         data={recent}
         router={router}
-        seeAllRoute="/(tabs)/explore"
+        seeAllRoute="/new-arrivals"
       />
     </ScrollView>
   );

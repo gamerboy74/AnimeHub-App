@@ -28,8 +28,8 @@ interface SideDrawerProps {
 const NAV_ITEMS = [
   // ── Discover (not in bottom nav) ───────────────────────────
   { label: 'Airing Schedule', icon: 'calendar-outline',       route: '/schedule'        },
-  { label: 'Trending',        icon: 'flame-outline',          route: '/(tabs)/explore'  },
-  { label: 'Seasonal',        icon: 'partly-sunny-outline',   route: '/(tabs)/explore'  },
+  { label: 'Trending',        icon: 'flame-outline',          route: '/trending'        },
+  { label: 'New Arrivals',    icon: 'sparkles-outline',       route: '/new-arrivals'    },
   // ── My Stuff ───────────────────────────────────────────────
   { label: 'Favorites',       icon: 'heart-outline',          route: '/favorites'       },
   { label: 'Watch History',   icon: 'time-outline',           route: '/history'         },
@@ -156,7 +156,7 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
             contentContainerStyle={styles.navScrollContent}
           >
             <Text style={styles.navSection}>DISCOVER</Text>
-            {NAV_ITEMS.filter(i => ['Airing Schedule','Trending','Seasonal'].includes(i.label)).map((item) => (
+            {NAV_ITEMS.filter(i => ['Airing Schedule','Trending','New Arrivals'].includes(i.label)).map((item) => (
               <NavRow key={item.label} item={item} onPress={() => navigate(item.route)} />
             ))}
             <Text style={styles.navSection}>MY STUFF</Text>
