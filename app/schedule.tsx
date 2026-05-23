@@ -9,6 +9,7 @@ import {
   Image,
   ScrollView,
   RefreshControl,
+  Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,13 +17,15 @@ import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
 
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const CARD_WIDTH = SCREEN_WIDTH * 0.42;
+
 // ─── Types ─────────────────────────────────────────────────────────────────────
 interface ScheduleEntry {
   mal_id: number;
   title: string;
   title_english?: string;
   images: { jpg: { image_url: string } };
-  aired?: { from?: string };
   broadcast?: { day?: string; time?: string; timezone?: string };
   episodes?: number;
   score?: number;
@@ -30,40 +33,56 @@ interface ScheduleEntry {
   synopsis?: string;
 }
 
-// ─── Constants ─────────────────────────────────────────────────────────────────
-const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;
-const DAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
+// ─── Day helpers ───────────────────────────────────────────────────────────────
+const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'] as const;
+const DAY_SHORT = ['MON','TUE','WED','THU','FRI','SAT','SUN'] as const;
 
-const todayIndex = () => {
-  // JS getDay(): 0=Sun,1=Mon,...,6=Sat → map to our 0=Mon index
-  const d = new Date().getDay();
-  return d === 0 ? 6 : d - 1;
-};
+function getTodayIndex() {
+  const d = new Date().getDay(); // 0=Sun
+  return d === 0 ? 6 : d - 1;   // 0=Mon
+}
 
+/** Returns the date for each day of the current week (Mon=0 … Sun=6) */
+function getWeekDates() {
+  const today = new Date();
+  const todayIdx = getTodayIndex();
+  return DAYS.map((_, i) => {
+    const d = new Date(today);
+    d.setDate(today.getDate() + (i - todayIdx));
+    return d.getDate();
+  });
+}
+
+// ─── Screen ────────────────────────────────────────────────────────────────────
 export default function ScheduleScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
-  const [selectedDay, setSelectedDay] = useState(todayIndex());
-  const [schedule, setSchedule] = useState<Record<string, ScheduleEntry[]>>({});
+  const [selectedDay, setSelectedDay] = useState(getTodayIndex());
+  const [entries, setEntries] = useState<ScheduleEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const weekDates = getWeekDates();
+
   const fetchSchedule = useCallback(async () => {
     setError(null);
     try {
-      // Jikan v4 — free, no API key. Fetches currently airing schedule per day.
-      const results: Record<string, ScheduleEntry[]> = {};
       const day = DAYS[selectedDay].toLowerCase();
       const res = await fetch(
         `https://api.jikan.moe/v4/schedules?filter=${day}&limit=25`,
-        { headers: { 'Accept': 'application/json' } }
+        { headers: { Accept: 'application/json' } }
       );
-      if (!res.ok) throw new Error(`Jikan API error: ${res.status}`);
+      if (!res.ok) throw new Error(`API error ${res.status}`);
       const json = await res.json();
-      results[DAYS[selectedDay]] = json.data ?? [];
-      setSchedule(results);
+      // Sort by broadcast time
+      const sorted = (json.data ?? []).sort((a: ScheduleEntry, b: ScheduleEntry) => {
+        const ta = a.broadcast?.time ?? '99:99';
+        const tb = b.broadcast?.time ?? '99:99';
+        return ta.localeCompare(tb);
+      });
+      setEntries(sorted);
     } catch (e: any) {
       setError(e?.message ?? 'Failed to load schedule');
     } finally {
@@ -74,7 +93,7 @@ export default function ScheduleScreen() {
 
   useEffect(() => {
     setLoading(true);
-    setSchedule({});
+    setEntries([]);
     fetchSchedule();
   }, [fetchSchedule]);
 
@@ -83,36 +102,39 @@ export default function ScheduleScreen() {
     fetchSchedule();
   };
 
-  const entries: ScheduleEntry[] = schedule[DAYS[selectedDay]] ?? [];
-
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      {/* ── Gradient header bg ── */}
+      <LinearGradient
+        colors={['rgba(191,95,255,0.18)', 'transparent']}
+        style={styles.headerGradient}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
+      >
+        <View />
+      </LinearGradient>
 
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-          <Ionicons name="chevron-back" size={22} color={COLORS.text} />
-        </TouchableOpacity>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerLabel}>// AIRING SCHEDULE</Text>
-          <Text style={styles.headerTitle}>This Week</Text>
-        </View>
-        <View style={styles.liveBadge}>
-          <View style={styles.liveDot} />
-          <Text style={styles.liveText}>LIVE</Text>
-        </View>
+      {/* ── Back button ── */}
+      <TouchableOpacity style={[styles.backBtn, { top: insets.top + 8 }]} onPress={() => router.back()}>
+        <Ionicons name="chevron-back" size={20} color={COLORS.text} />
+      </TouchableOpacity>
+
+      {/* ── Title ── */}
+      <View style={styles.titleSection}>
+        <Text style={styles.titleMain}>Weekly Schedule</Text>
+        <Text style={styles.titleSub}>Keep track of your favorite anime airing times</Text>
       </View>
 
-      {/* Day selector */}
+      {/* ── Day selector ── */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.dayRow}
         style={styles.dayScroll}
-        contentContainerStyle={styles.dayScrollContent}
       >
         {DAYS.map((day, i) => {
-          const isToday = i === todayIndex();
           const isSelected = i === selectedDay;
+          const isToday = i === getTodayIndex();
           return (
             <TouchableOpacity
               key={day}
@@ -120,24 +142,19 @@ export default function ScheduleScreen() {
               onPress={() => setSelectedDay(i)}
               activeOpacity={0.7}
             >
-              {isSelected && (
-                <LinearGradient
-                  colors={['rgba(191,95,255,0.3)', 'rgba(191,95,255,0.05)']}
-                  style={StyleSheet.absoluteFill}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                />
-              )}
               <Text style={[styles.dayShort, isSelected && styles.dayShortActive]}>
                 {DAY_SHORT[i]}
               </Text>
-              {isToday && <View style={styles.todayDot} />}
+              <Text style={[styles.dayNum, isSelected && styles.dayNumActive]}>
+                {weekDates[i]}
+              </Text>
+              {isToday && !isSelected && <View style={styles.todayDot} />}
             </TouchableOpacity>
           );
         })}
       </ScrollView>
 
-      {/* Content */}
+      {/* ── Content ── */}
       {loading ? (
         <View style={styles.centered}>
           <ActivityIndicator color={COLORS.neon} size="large" />
@@ -151,11 +168,6 @@ export default function ScheduleScreen() {
             <Text style={styles.retryText}>Try Again</Text>
           </TouchableOpacity>
         </View>
-      ) : entries.length === 0 ? (
-        <View style={styles.centered}>
-          <Ionicons name="calendar-outline" size={48} color={COLORS.textMuted} />
-          <Text style={styles.errorText}>No anime airing on {DAYS[selectedDay]}</Text>
-        </View>
       ) : (
         <FlatList
           data={entries}
@@ -163,162 +175,207 @@ export default function ScheduleScreen() {
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={COLORS.neon}
-              colors={[COLORS.neon]}
-            />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.neon} />
           }
-          ListHeaderComponent={
-            <Text style={styles.sectionLabel}>
-              {entries.length} anime airing on {DAYS[selectedDay]}
-            </Text>
+          ListEmptyComponent={
+            <View style={styles.centered}>
+              <Ionicons name="calendar-outline" size={48} color={COLORS.textMuted} />
+              <Text style={styles.errorText}>No anime airing on {DAYS[selectedDay]}</Text>
+            </View>
           }
-          renderItem={({ item }) => (
-            <ScheduleCard entry={item} />
+          renderItem={({ item, index }) => (
+            <TimelineRow entry={item} index={index} />
           )}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
         />
       )}
     </View>
   );
 }
 
-// ─── Schedule Card ─────────────────────────────────────────────────────────────
-function ScheduleCard({ entry }: { entry: ScheduleEntry }) {
-  const airTime = entry.broadcast?.time;
-  const airDay = entry.broadcast?.day;
+// ─── Timeline row — left / right alternating ────────────────────────────────────
+function TimelineRow({ entry, index }: { entry: ScheduleEntry; index: number }) {
+  const isLeft = index % 2 === 0;
+  const airTime = formatTime(entry.broadcast?.time);
+  const epNum = entry.episodes;
 
   return (
-    <View style={styles.card}>
-      {/* Thumbnail */}
-      <Image
-        source={{ uri: entry.images.jpg.image_url }}
-        style={styles.cardThumb}
-        resizeMode="cover"
-      />
-
-      {/* Info */}
-      <View style={styles.cardInfo}>
-        <Text style={styles.cardTitle} numberOfLines={2}>
-          {entry.title_english || entry.title}
-        </Text>
-
-        {/* Air time badge */}
-        {airTime && (
-          <View style={styles.timeRow}>
-            <Ionicons name="time-outline" size={12} color={COLORS.neonCyan} />
-            <Text style={styles.timeText}>
-              {airDay} at {airTime} JST
-            </Text>
-          </View>
+    <View style={styles.row}>
+      {/* Left side */}
+      <View style={styles.rowSide}>
+        {isLeft ? (
+          <AnimeCard entry={entry} align="right" />
+        ) : (
+          <TimeLabel time={airTime} episode={epNum} align="right" />
         )}
+      </View>
 
-        {/* Score + episodes */}
-        <View style={styles.metaRow}>
-          {entry.score ? (
-            <View style={styles.scoreBadge}>
-              <Ionicons name="star" size={11} color={COLORS.neonGold} />
-              <Text style={styles.scoreText}>{entry.score.toFixed(1)}</Text>
-            </View>
-          ) : null}
-          {entry.episodes ? (
-            <Text style={styles.epCount}>{entry.episodes} eps</Text>
-          ) : (
-            <Text style={styles.epCount}>? eps</Text>
-          )}
-        </View>
+      {/* Center timeline */}
+      <View style={styles.timelineCenter}>
+        <View style={styles.timelineLine} />
+        <View style={styles.timelineDot} />
+        <View style={styles.timelineLine} />
+      </View>
 
-        {/* Genres */}
-        {entry.genres && entry.genres.length > 0 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.genreScroll}>
-            {entry.genres.slice(0, 3).map((g) => (
-              <View key={g.name} style={styles.genrePill}>
-                <Text style={styles.genreText}>{g.name}</Text>
-              </View>
-            ))}
-          </ScrollView>
+      {/* Right side */}
+      <View style={styles.rowSide}>
+        {isLeft ? (
+          <TimeLabel time={airTime} episode={epNum} align="left" />
+        ) : (
+          <AnimeCard entry={entry} align="left" />
         )}
       </View>
     </View>
   );
 }
 
+// ─── Anime card ────────────────────────────────────────────────────────────────
+function AnimeCard({ entry, align }: { entry: ScheduleEntry; align: 'left' | 'right' }) {
+  return (
+    <View style={[styles.card, align === 'right' ? styles.cardRight : styles.cardLeft]}>
+      <Image
+        source={{ uri: entry.images.jpg.image_url }}
+        style={styles.cardThumb}
+        resizeMode="cover"
+      />
+      <View style={styles.cardBody}>
+        <Text style={styles.cardTitle} numberOfLines={2}>
+          {entry.title_english || entry.title}
+        </Text>
+        {entry.synopsis ? (
+          <Text style={styles.cardSynopsis} numberOfLines={3}>
+            {entry.synopsis}
+          </Text>
+        ) : null}
+        {/* Genres */}
+        {entry.genres && entry.genres.length > 0 && (
+          <View style={styles.genreRow}>
+            {entry.genres.slice(0, 2).map((g) => (
+              <View key={g.name} style={styles.genrePill}>
+                <Text style={styles.genreText}>{g.name}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
+    </View>
+  );
+}
+
+// ─── Time label ────────────────────────────────────────────────────────────────
+function TimeLabel({ time, episode, align }: { time: string; episode?: number; align: 'left' | 'right' }) {
+  return (
+    <View style={[styles.timeLabel, align === 'right' ? { alignItems: 'flex-end' } : { alignItems: 'flex-start' }]}>
+      <Text style={styles.timeLabelTime}>{time}</Text>
+      {episode ? (
+        <Text style={styles.timeLabelEp}>EPISODE {episode}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+function formatTime(t?: string): string {
+  if (!t) return '??:??';
+  const [h, m] = t.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const hour = h % 12 || 12;
+  return `${hour}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
 // ─── Styles ────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.bg },
+  root: { flex: 1, backgroundColor: '#0a0a12' },
 
-  // Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SPACING.sm,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+  headerGradient: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 200,
+    zIndex: 0,
   },
+
   backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: COLORS.bgCard,
+    position: 'absolute',
+    left: SPACING.md,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    zIndex: 10,
   },
-  headerLabel: { fontSize: 10, color: COLORS.neon, letterSpacing: 2, fontWeight: '700' },
-  headerTitle: { fontSize: 18, color: COLORS.text, fontWeight: '800' },
-  liveBadge: {
-    flexDirection: 'row',
+
+  titleSection: {
     alignItems: 'center',
-    gap: 5,
-    backgroundColor: 'rgba(255,45,120,0.12)',
-    borderRadius: RADIUS.sm,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(255,45,120,0.4)',
+    paddingTop: 60,
+    paddingBottom: SPACING.lg,
+    paddingHorizontal: SPACING.xl,
+    zIndex: 1,
   },
-  liveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: COLORS.neonPink,
+  titleMain: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: COLORS.text,
+    textAlign: 'center',
+    letterSpacing: 0.5,
   },
-  liveText: { fontSize: 10, color: COLORS.neonPink, fontWeight: '800', letterSpacing: 1 },
+  titleSub: {
+    fontSize: 13,
+    color: COLORS.textMuted,
+    textAlign: 'center',
+    marginTop: 6,
+  },
 
   // Day selector
-  dayScroll: { flexGrow: 0, marginVertical: SPACING.sm },
-  dayScrollContent: { paddingHorizontal: SPACING.md, gap: 8 },
+  dayScroll: { flexGrow: 0, zIndex: 1 },
+  dayRow: {
+    paddingHorizontal: SPACING.md,
+    gap: 8,
+    paddingBottom: SPACING.lg,
+  },
   dayChip: {
-    minWidth: 52,
+    alignItems: 'center',
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: RADIUS.md,
-    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 1,
-    borderColor: COLORS.border,
-    overflow: 'hidden',
-    position: 'relative',
+    borderColor: 'rgba(255,255,255,0.08)',
+    minWidth: 52,
   },
-  dayChipActive: { borderColor: COLORS.neon },
-  dayShort: { fontSize: 13, color: COLORS.textMuted, fontWeight: '600' },
-  dayShortActive: { color: COLORS.neon, fontWeight: '800' },
+  dayChipActive: {
+    backgroundColor: COLORS.text,
+    borderColor: COLORS.text,
+  },
+  dayShort: { fontSize: 11, color: COLORS.textMuted, fontWeight: '700', letterSpacing: 1 },
+  dayShortActive: { color: '#0a0a12' },
+  dayNum: { fontSize: 20, color: COLORS.text, fontWeight: '800', marginTop: 2 },
+  dayNumActive: { color: '#0a0a12' },
   todayDot: {
     width: 4,
     height: 4,
     borderRadius: 2,
-    backgroundColor: COLORS.neonPink,
-    marginTop: 3,
+    backgroundColor: COLORS.neon,
+    marginTop: 4,
   },
 
   // Content
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: SPACING.md },
+  centered: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: SPACING.md,
+    paddingTop: 80,
+  },
   loadingText: { fontSize: 13, color: COLORS.textMuted },
-  errorText: { fontSize: 14, color: COLORS.textMuted, textAlign: 'center', paddingHorizontal: SPACING.xl },
+  errorText: {
+    fontSize: 14,
+    color: COLORS.textMuted,
+    textAlign: 'center',
+    paddingHorizontal: SPACING.xl,
+  },
   retryBtn: {
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.sm,
@@ -329,55 +386,102 @@ const styles = StyleSheet.create({
   },
   retryText: { color: COLORS.neon, fontWeight: '700' },
 
-  list: { paddingHorizontal: SPACING.md, paddingBottom: 100 },
-  sectionLabel: {
-    fontSize: 11,
-    color: COLORS.textMuted,
-    letterSpacing: 1,
-    marginBottom: SPACING.sm,
-    marginTop: SPACING.xs,
-  },
-  separator: { height: 1, backgroundColor: COLORS.border, marginVertical: 4 },
+  list: { paddingBottom: 120, paddingTop: SPACING.sm },
 
-  // Card
-  card: {
-    flexDirection: 'row',
-    gap: SPACING.sm,
-    paddingVertical: SPACING.sm,
-  },
-  cardThumb: {
-    width: 72,
-    height: 100,
-    borderRadius: RADIUS.md,
-    backgroundColor: COLORS.bgCard,
-  },
-  cardInfo: { flex: 1, justifyContent: 'center', gap: 6 },
-  cardTitle: { fontSize: 14, color: COLORS.text, fontWeight: '700', lineHeight: 20 },
-  timeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  timeText: { fontSize: 11, color: COLORS.neonCyan, fontWeight: '600' },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
-  scoreBadge: {
+  // Timeline row
+  row: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
-    backgroundColor: 'rgba(255,214,0,0.1)',
-    borderRadius: RADIUS.sm,
+    minHeight: 140,
+    paddingVertical: 0,
+  },
+  rowSide: {
+    flex: 1,
+    paddingHorizontal: 8,
+    justifyContent: 'center',
+  },
+
+  // Center timeline
+  timelineCenter: {
+    width: 24,
+    alignItems: 'center',
+    alignSelf: 'stretch',
+  },
+  timelineLine: {
+    flex: 1,
+    width: 1,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  timelineDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.5)',
+    marginVertical: 2,
+  },
+
+  // Anime card
+  card: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: RADIUS.md,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    marginVertical: 8,
+  },
+  cardLeft: { flexDirection: 'row' },
+  cardRight: { flexDirection: 'row' },
+  cardThumb: {
+    width: 60,
+    height: 85,
+    backgroundColor: COLORS.bgCard,
+  },
+  cardBody: {
+    flex: 1,
+    padding: 8,
+    gap: 4,
+  },
+  cardTitle: {
+    fontSize: 12,
+    color: COLORS.text,
+    fontWeight: '700',
+    lineHeight: 17,
+  },
+  cardSynopsis: {
+    fontSize: 10,
+    color: COLORS.textMuted,
+    lineHeight: 14,
+  },
+  genreRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: 2,
+  },
+  genrePill: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderWidth: 1,
-    borderColor: 'rgba(255,214,0,0.3)',
   },
-  scoreText: { fontSize: 11, color: COLORS.neonGold, fontWeight: '700' },
-  epCount: { fontSize: 11, color: COLORS.textMuted },
-  genreScroll: { flexGrow: 0 },
-  genrePill: {
-    backgroundColor: 'rgba(191,95,255,0.08)',
-    borderRadius: RADIUS.sm,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    marginRight: 4,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+  genreText: { fontSize: 9, color: COLORS.textSub, fontWeight: '600' },
+
+  // Time label
+  timeLabel: {
+    paddingHorizontal: 4,
   },
-  genreText: { fontSize: 10, color: COLORS.textSub, fontWeight: '600' },
+  timeLabelTime: {
+    fontSize: 16,
+    color: COLORS.text,
+    fontWeight: '800',
+  },
+  timeLabelEp: {
+    fontSize: 9,
+    color: COLORS.textMuted,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginTop: 2,
+  },
 });
