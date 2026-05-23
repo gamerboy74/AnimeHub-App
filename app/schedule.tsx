@@ -126,40 +126,43 @@ export default function ScheduleScreen() {
         <Ionicons name="chevron-back" size={20} color={COLORS.text} />
       </TouchableOpacity>
 
-      {/* ── Title ── */}
-      <View style={styles.titleSection}>
-        <Text style={styles.titleMain}>Weekly Schedule</Text>
-        <Text style={styles.titleSub}>Keep track of your favorite anime airing times</Text>
-      </View>
+      {/* ── Header block — never shrinks ── */}
+      <View style={styles.headerBlock}>
+        {/* ── Title ── */}
+        <View style={styles.titleSection}>
+          <Text style={styles.titleMain}>Weekly Schedule</Text>
+          <Text style={styles.titleSub}>Keep track of your favorite anime airing times</Text>
+        </View>
 
-      {/* ── Day selector ── */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.dayRow}
-        style={styles.dayScroll}
-      >
-        {DAYS.map((day, i) => {
-          const isSelected = i === selectedDay;
-          const isToday = i === getTodayIndex();
-          return (
-            <TouchableOpacity
-              key={day}
-              style={[styles.dayChip, isSelected && styles.dayChipActive]}
-              onPress={() => setSelectedDay(i)}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.dayShort, isSelected && styles.dayShortActive]}>
-                {DAY_SHORT[i]}
-              </Text>
-              <Text style={[styles.dayNum, isSelected && styles.dayNumActive]}>
-                {weekDates[i]}
-              </Text>
-              {isToday && !isSelected && <View style={styles.todayDot} />}
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
+        {/* ── Day selector ── */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.dayRow}
+          style={styles.dayScroll}
+        >
+          {DAYS.map((day, i) => {
+            const isSelected = i === selectedDay;
+            const isToday = i === getTodayIndex();
+            return (
+              <TouchableOpacity
+                key={day}
+                style={[styles.dayChip, isSelected && styles.dayChipActive]}
+                onPress={() => setSelectedDay(i)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.dayShort, isSelected && styles.dayShortActive]}>
+                  {DAY_SHORT[i]}
+                </Text>
+                <Text style={[styles.dayNum, isSelected && styles.dayNumActive]}>
+                  {weekDates[i]}
+                </Text>
+                {isToday && !isSelected && <View style={styles.todayDot} />}
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
 
       {/* ── Content ── */}
       {loading ? (
@@ -293,6 +296,10 @@ function formatTime(t?: string): string {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0a0a12' },
 
+  // Header block — flexShrink:0 prevents FlatList from squeezing it
+  headerBlock: { flexShrink: 0 },
+
+
   headerGradient: {
     position: 'absolute',
     top: 0,
@@ -336,10 +343,9 @@ const styles = StyleSheet.create({
   },
 
   // Day selector
-  dayScroll: { flexGrow: 0, zIndex: 1 },
+  dayScroll: { flexGrow: 0, flexShrink: 0 },
   dayRow: {
     paddingHorizontal: SPACING.md,
-    gap: 8,
     paddingBottom: SPACING.lg,
   },
   dayChip: {
@@ -350,7 +356,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
-    minWidth: 52,
+    minWidth: 56,
+    marginRight: 8,
   },
   dayChipActive: {
     backgroundColor: COLORS.text,
