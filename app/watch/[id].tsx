@@ -53,9 +53,25 @@ const buildInjectedJS = (resumeSeconds: number) => `
     var _style = document.createElement('style');
     _style.textContent = [
       'html, body { width:100% !important; height:100% !important; margin:0 !important; padding:0 !important; overflow:hidden !important; background:#000 !important; }',
-      'iframe, video, #player, .player, [id*="player"], [class*="player"] { width:100% !important; height:100% !important; max-width:100% !important; position:fixed !important; top:0 !important; left:0 !important; }',
+      // Fill all common player wrappers edge-to-edge
+      'iframe, #player, .player, [id*="player"], [class*="player"] { width:100% !important; height:100% !important; max-width:100% !important; position:fixed !important; top:0 !important; left:0 !important; border:none !important; }',
+      // Stretch the actual <video> tag — object-fit:fill ignores aspect ratio
+      'video { width:100vw !important; height:100vh !important; max-width:100vw !important; max-height:100vh !important; object-fit:fill !important; position:fixed !important; top:0 !important; left:0 !important; }',
     ].join('');
     (document.head || document.documentElement).appendChild(_style);
+
+    // Re-apply object-fit:fill whenever the player injects a new <video> element
+    var _videoObserver = new MutationObserver(function() {
+      document.querySelectorAll('video').forEach(function(v) {
+        v.style.setProperty('object-fit', 'fill', 'important');
+        v.style.setProperty('width', '100vw', 'important');
+        v.style.setProperty('height', '100vh', 'important');
+        v.style.setProperty('position', 'fixed', 'important');
+        v.style.setProperty('top', '0', 'important');
+        v.style.setProperty('left', '0', 'important');
+      });
+    });
+    _videoObserver.observe(document.documentElement, { childList: true, subtree: true });
 
     // Also ensure the viewport meta tag requests full width
     var _meta = document.querySelector('meta[name="viewport"]');
