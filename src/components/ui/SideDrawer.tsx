@@ -9,6 +9,7 @@ import {
   Pressable,
   Image,
   Modal,
+  ScrollView,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
@@ -119,7 +120,7 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
         {/* Right neon accent bar */}
         <View style={styles.accentBar} />
 
-        <View style={[styles.drawerInner, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
+        <View style={[styles.drawerInner, { paddingTop: insets.top + 16 }]}>
 
           {/* Profile header */}
           <View style={styles.profileSection}>
@@ -148,8 +149,12 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
 
           <View style={styles.divider} />
 
-          {/* Nav items */}
-          <View style={styles.navList}>
+          {/* Scrollable nav items — fills remaining space */}
+          <ScrollView
+            style={styles.navScroll}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.navScrollContent}
+          >
             <Text style={styles.navSection}>DISCOVER</Text>
             {NAV_ITEMS.filter(i => ['schedule','trending','seasonal'].includes((i.route as string).replace('/', ''))).map((item) => (
               <NavRow key={item.route} item={item} onPress={() => navigate(item.route)} />
@@ -162,10 +167,10 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
             {NAV_ITEMS.filter(i => ['notifications','settings'].includes((i.route as string).replace('/', ''))).map((item) => (
               <NavRow key={item.route} item={item} onPress={() => navigate(item.route)} />
             ))}
-          </View>
+          </ScrollView>
 
-          {/* Footer */}
-          <View style={styles.footer}>
+          {/* Footer — pinned below nav, above safe area */}
+          <View style={[styles.footer, { paddingBottom: insets.bottom + 8 }]}>
             <View style={styles.divider} />
             <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut} activeOpacity={0.7}>
               <Ionicons name="log-out-outline" size={20} color={COLORS.neonPink} />
@@ -264,7 +269,8 @@ const styles = StyleSheet.create({
   email: { fontSize: 11, color: COLORS.textMuted, marginTop: 1 },
   closeBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
   divider: { height: 1, backgroundColor: COLORS.border, marginVertical: SPACING.sm },
-  navList: { flex: 1 },
+  navScroll: { flex: 1 },
+  navScrollContent: { paddingBottom: 8 },
   navSection: {
     fontSize: 9,
     color: COLORS.textMuted,
@@ -302,7 +308,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,214,0,0.4)',
   },
   soonText: { fontSize: 9, color: COLORS.neonGold, fontWeight: '800', letterSpacing: 1 },
-  footer: { gap: 4 },
+  footer: {},
   signOutBtn: {
     flexDirection: 'row',
     alignItems: 'center',
