@@ -80,7 +80,13 @@ export default function AnimeListScreen({ type }: Props) {
       });
 
       setIdMap(localMap);
-      setData(unique);
+
+      // Only keep anime that exist in our app
+      const inApp = localMap.size > 0
+        ? unique.filter((e: JikanEntry) => localMap.has(e.mal_id))
+        : unique;
+
+      setData(inApp);
     } catch (e: any) {
       setError(e?.message ?? 'Failed to load');
     } finally {
@@ -92,8 +98,6 @@ export default function AnimeListScreen({ type }: Props) {
   useEffect(() => { setLoading(true); setData([]); fetchData(); }, [fetchData]);
 
   const onRefresh = () => { setRefreshing(true); fetchData(); };
-
-  const inAppCount = data.filter(e => idMap.has(e.mal_id)).length;
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -107,12 +111,7 @@ export default function AnimeListScreen({ type }: Props) {
           <Text style={styles.headerTitle}>{cfg.title}</Text>
         </View>
         {data.length > 0 && (
-          <View style={{ alignItems: 'flex-end' }}>
-            <Text style={styles.count}>{data.length} anime</Text>
-            {inAppCount > 0 && (
-              <Text style={styles.countSub}>{inAppCount} watchable</Text>
-            )}
-          </View>
+          <Text style={styles.count}>{data.length} anime</Text>
         )}
       </View>
 
@@ -141,29 +140,17 @@ export default function AnimeListScreen({ type }: Props) {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.neon} />
           }
           renderItem={({ item, index }) => {
-            const supabaseId = idMap.get(item.mal_id);
-            const inApp = !!supabaseId;
+            const supabaseId = idMap.get(item.mal_id)!;
             return (
               <TouchableOpacity
-                style={[styles.card, !inApp && styles.cardDimmed]}
-                onPress={() => inApp ? router.push(`/anime/${supabaseId}` as any) : null}
-                activeOpacity={inApp ? 0.75 : 0.95}
+                style={styles.card}
+                onPress={() => router.push(`/anime/${supabaseId}` as any)}
+                activeOpacity={0.75}
               >
                 {/* Rank badge */}
                 <View style={styles.rankBadge}>
                   <Text style={styles.rankText}>#{index + 1}</Text>
                 </View>
-
-                {/* Availability badge */}
-                {inApp ? (
-                  <View style={styles.availBadge}>
-                    <Ionicons name="play-circle" size={12} color={COLORS.neon} />
-                  </View>
-                ) : (
-                  <View style={[styles.availBadge, styles.unavailBadge]}>
-                    <Ionicons name="lock-closed" size={10} color={COLORS.textMuted} />
-                  </View>
-                )}
 
                 <Image
                   source={{ uri: item.images.jpg.large_image_url ?? item.images.jpg.image_url }}
@@ -205,10 +192,6 @@ export default function AnimeListScreen({ type }: Props) {
                         </View>
                       ))}
                     </View>
-                  )}
-
-                  {!inApp && (
-                    <Text style={styles.notAvail}>Not in app yet</Text>
                   )}
                 </View>
               </TouchableOpacity>
