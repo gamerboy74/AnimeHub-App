@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, FlatList, StyleSheet,
-  TouchableOpacity, ActivityIndicator, RefreshControl, Image, Dimensions,
+  TouchableOpacity, ActivityIndicator, RefreshControl, Dimensions,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -97,11 +98,30 @@ export default function AnimeListScreen({ type }: Props) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [type]);
+  // Depend on the URL specifically — stable primitive avoids re-running when cfg object ref changes
+  }, [cfg.url]);
 
-  useEffect(() => { setLoading(true); setData([]); fetchData(); }, [fetchData]);
+  useEffect(() => { setLoading(true); fetchData(); }, [fetchData]);
 
   const onRefresh = () => { setRefreshing(true); fetchData(); };
+
+  const handleCardPress = useCallback((id: string) => {
+    router.push(`/anime/${id}` as any);
+  }, [router]);
+
+  const renderItem = useCallback(({ item, index }: { item: JikanEntry; index: number }) => {
+    const supabaseId = idMap.get(item.mal_id);
+    return (
+      <AnimeCard
+        item={item}
+        index={index}
+        supabaseId={supabaseId}
+        onPress={handleCardPress}
+      />
+    );
+  }, [idMap, handleCardPress]);
+
+  const keyExtractor = useCallback((item: JikanEntry, i: number) => `${item.mal_id}_${i}`, []);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -135,77 +155,102 @@ export default function AnimeListScreen({ type }: Props) {
       ) : (
         <FlatList
           data={data}
-          keyExtractor={(item, i) => `${item.mal_id}_${i}`}
+          keyExtractor={keyExtractor}
           numColumns={2}
           contentContainerStyle={styles.list}
           columnWrapperStyle={styles.row}
           showsVerticalScrollIndicator={false}
+          removeClippedSubviews
+          windowSize={5}
+          maxToRenderPerBatch={8}
+          initialNumToRender={8}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.neon} />
           }
-          renderItem={({ item, index }) => {
-            const supabaseId = idMap.get(item.mal_id)!;
-            return (
-              <TouchableOpacity
-                style={styles.card}
-                onPress={() => router.push(`/anime/${supabaseId}` as any)}
-                activeOpacity={0.75}
-              >
-                {/* Rank badge */}
-                <View style={styles.rankBadge}>
-                  <Text style={styles.rankText}>#{index + 1}</Text>
-                </View>
-
-                <Image
-                  source={{ uri: item.images.jpg.large_image_url ?? item.images.jpg.image_url }}
-                  style={styles.poster}
-                  resizeMode="cover"
-                />
-
-                {/* Gradient overlay at bottom */}
-                <LinearGradient
-                  colors={['transparent', 'rgba(8,8,16,0.85)']}
-                  style={styles.posterGradient}
-                  start={{ x: 0.5, y: 0 }}
-                  end={{ x: 0.5, y: 1 }}
-                >
-                  <View />
-                </LinearGradient>
-
-                <View style={styles.cardInfo}>
-                  <Text style={styles.cardTitle} numberOfLines={2}>
-                    {item.title_english || item.title}
-                  </Text>
-                  <View style={styles.cardMeta}>
-                    {item.score ? (
-                      <View style={styles.ratingRow}>
-                        <Ionicons name="star" size={10} color={COLORS.neonGold} />
-                        <Text style={styles.ratingText}>{item.score.toFixed(1)}</Text>
-                      </View>
-                    ) : null}
-                    {item.type ? <Text style={styles.metaText}>{item.type}</Text> : null}
-                    {item.year  ? <Text style={styles.metaText}>{item.year}</Text> : null}
-                  </View>
-
-                  {/* Genre pills */}
-                  {item.genres && item.genres.length > 0 && (
-                    <View style={styles.genreRow}>
-                      {item.genres.slice(0, 2).map((g) => (
-                        <View key={g.name} style={styles.genrePill}>
-                          <Text style={styles.genreText}>{g.name}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  )}
-                </View>
-              </TouchableOpacity>
-            );
-          }}
+          renderItem={renderItem}
         />
       )}
     </View>
   );
 }
+
+// ─── Memoized AnimeCard Component ─────────────────────────────────────────────
+interface AnimeCardProps {
+  item: JikanEntry;
+  index: number;
+  supabaseId?: string;
+  onPress: (supabaseId: string) => void;
+}
+
+const AnimeCard = React.memo(
+  ({ item, index, supabaseId, onPress }: AnimeCardProps) => {
+    return (
+      <TouchableOpacity
+        style={styles.card}
+        onPress={() => supabaseId && onPress(supabaseId)}
+        activeOpacity={0.75}
+        disabled={!supabaseId}
+      >
+        {/* Rank badge */}
+        <View style={styles.rankBadge}>
+          <Text style={styles.rankText}>#{index + 1}</Text>
+        </View>
+
+        <Image
+          source={{ uri: item.images.jpg.large_image_url ?? item.images.jpg.image_url }}
+          style={styles.poster}
+          contentFit="cover"
+          transition={200}
+        />
+
+        {/* Gradient overlay at bottom */}
+        <LinearGradient
+          colors={['transparent', 'rgba(8,8,16,0.85)']}
+          style={styles.posterGradient}
+          start={{ x: 0.5, y: 0 }}
+          end={{ x: 0.5, y: 1 }}
+        >
+          <View />
+        </LinearGradient>
+
+        <View style={styles.cardInfo}>
+          <Text style={styles.cardTitle} numberOfLines={2}>
+            {item.title_english || item.title}
+          </Text>
+          <View style={styles.cardMeta}>
+            {item.score ? (
+              <View style={styles.ratingRow}>
+                <Ionicons name="star" size={10} color={COLORS.neonGold} />
+                <Text style={styles.ratingText}>{item.score.toFixed(1)}</Text>
+              </View>
+            ) : null}
+            {item.type ? <Text style={styles.metaText}>{item.type}</Text> : null}
+            {item.year ? <Text style={styles.metaText}>{item.year}</Text> : null}
+          </View>
+
+          {/* Genre pills */}
+          {item.genres && item.genres.length > 0 && (
+            <View style={styles.genreRow}>
+              {item.genres.slice(0, 2).map((g) => (
+                <View key={g.name} style={styles.genrePill}>
+                  <Text style={styles.genreText}>{g.name}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  },
+  (prevProps, nextProps) => {
+    // Prevent un-necessary re-renders by doing fine-grained comparison
+    return (
+      prevProps.item.mal_id === nextProps.item.mal_id &&
+      prevProps.index === nextProps.index &&
+      prevProps.supabaseId === nextProps.supabaseId
+    );
+  }
+);
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: COLORS.bg },

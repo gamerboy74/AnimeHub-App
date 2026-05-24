@@ -1,9 +1,11 @@
-import React from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
+import React, { useMemo } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
+import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, RADIUS, SPACING } from '../../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { Anime, AnimeWithStats } from '../../lib/supabase';
+import { usePrefetch } from '../../hooks/usePrefetch';
 
 const { width } = Dimensions.get('window');
 
@@ -15,19 +17,30 @@ type Props = {
 };
 
 const AnimeCard = React.memo(function AnimeCard({ anime, onPress, size = 'md', showStats = false }: Props) {
-  const cardWidth = size === 'sm' ? 120 : size === 'lg' ? width - 32 : 160;
-  const cardHeight = size === 'lg' ? 220 : cardWidth * 1.45;
+  const { prefetchAnime } = usePrefetch();
+  // Memoized per `size` — avoids recalculating on every render triggered by parent
+  const { cardWidth, cardHeight } = useMemo(() => {
+    const w = size === 'sm' ? 120 : size === 'lg' ? width - 32 : 160;
+    const h = size === 'lg' ? 220 : w * 1.45;
+    return { cardWidth: w, cardHeight: h };
+  }, [size]);
 
   const stats = anime as AnimeWithStats;
 
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.85} style={[styles.container, { width: cardWidth }]}>
+    <TouchableOpacity
+      onPress={onPress}
+      onLongPress={() => prefetchAnime(anime.id)}
+      activeOpacity={0.85}
+      style={[styles.container, { width: cardWidth }]}
+    >
       <View style={[styles.card, { width: cardWidth, height: cardHeight }]}>
         {/* Poster */}
         <Image
           source={{ uri: anime.poster_url || 'https://via.placeholder.com/160x230/0E0E1A/BF5FFF?text=?' }}
           style={StyleSheet.absoluteFill}
-          resizeMode="cover"
+          contentFit="cover"
+          transition={200}
         />
 
         {/* Gradient overlay */}
@@ -95,8 +108,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: '60%',
-    backgroundColor: 'transparent',
-    // RN doesn't have linear-gradient natively, use LinearGradient component
     borderBottomLeftRadius: RADIUS.md,
     borderBottomRightRadius: RADIUS.md,
   },

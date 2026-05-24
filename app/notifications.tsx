@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,19 +22,21 @@ export default function NotificationsScreen() {
     });
   }, [user]);
 
-  const markRead = async (id: string) => {
+  const markRead = useCallback(async (id: string) => {
     await userAPI.markNotificationRead(id);
     setNotifs(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
-  };
+  }, []);
 
-  const notifIcon = (type: string) => {
-    switch (type) {
-      case 'episode': return 'play-circle-outline';
-      case 'review': return 'chatbubble-outline';
-      case 'system': return 'information-circle-outline';
-      default: return 'notifications-outline';
-    }
-  };
+  const renderItem = useCallback(({ item }: { item: Notification }) => (
+    <NotificationItemRow
+      item={item}
+      onPress={markRead}
+    />
+  ), [markRead]);
+
+  const keyExtractor = useCallback((item: Notification) => item.id, []);
+
+  const ItemSeparator = useCallback(() => <View style={styles.separator} />, []);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -60,30 +62,59 @@ export default function NotificationsScreen() {
       ) : (
         <FlatList
           data={notifs}
-          keyExtractor={item => item.id}
+          keyExtractor={keyExtractor}
           contentContainerStyle={styles.list}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={[styles.notifRow, !item.read && styles.notifRowUnread]}
-              onPress={() => markRead(item.id)}
-            >
-              <View style={[styles.notifIcon, !item.read && styles.notifIconUnread]}>
-                <Ionicons name={notifIcon(item.type) as any} size={18} color={item.read ? COLORS.textMuted : COLORS.neon} />
-              </View>
-              <View style={styles.notifContent}>
-                <Text style={[styles.notifTitle, !item.read && styles.notifTitleUnread]}>{item.title}</Text>
-                <Text style={styles.notifMessage} numberOfLines={2}>{item.message}</Text>
-                <Text style={styles.notifTime}>{new Date(item.created_at).toLocaleDateString()}</Text>
-              </View>
-              {!item.read && <View style={styles.unreadDot} />}
-            </TouchableOpacity>
-          )}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          renderItem={renderItem}
+          ItemSeparatorComponent={ItemSeparator}
         />
       )}
     </View>
   );
 }
+
+// ─── MEMOIZED NOTIFICATION ITEM ROW ───────────────────────────────────────────
+interface NotificationItemRowProps {
+  item: Notification;
+  onPress: (id: string) => void;
+}
+
+const notifIcon = (type: string) => {
+  switch (type) {
+    case 'episode': return 'play-circle-outline';
+    case 'review': return 'chatbubble-outline';
+    case 'system': return 'information-circle-outline';
+    default: return 'notifications-outline';
+  }
+};
+
+const NotificationItemRow = React.memo(
+  ({ item, onPress }: NotificationItemRowProps) => {
+    return (
+      <TouchableOpacity
+        style={[styles.notifRow, !item.read && styles.notifRowUnread]}
+        onPress={() => onPress(item.id)}
+      >
+        <View style={[styles.notifIcon, !item.read && styles.notifIconUnread]}>
+          <Ionicons name={notifIcon(item.type) as any} size={18} color={item.read ? COLORS.textMuted : COLORS.neon} />
+        </View>
+        <View style={styles.notifContent}>
+          <Text style={[styles.notifTitle, !item.read && styles.notifTitleUnread]}>{item.title}</Text>
+          <Text style={styles.notifMessage} numberOfLines={2}>{item.message}</Text>
+          <Text style={styles.notifTime}>{new Date(item.created_at).toLocaleDateString()}</Text>
+        </View>
+        {!item.read && <View style={styles.unreadDot} />}
+      </TouchableOpacity>
+    );
+  },
+  (prevProps, nextProps) => {
+    return (
+      prevProps.item.id === nextProps.item.id &&
+      prevProps.item.read === nextProps.item.read &&
+      prevProps.item.title === nextProps.item.title &&
+      prevProps.item.message === nextProps.item.message
+    );
+  }
+);
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },

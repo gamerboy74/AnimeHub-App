@@ -1,10 +1,11 @@
 // src/hooks/useQueries.ts
-// CHANGED: useEpisodeDetails now resolves the stream URL via your Vercel proxy
-// Everything else is identical to your original.
+// Trending/top-rated/new-arrivals now fetch from Jikan (MAL) and cross-reference
+// with the local DB by mal_id — same source as the "See All" screens.
 
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { AnimeWithStats, Episode, UserActivitySummary, UserWatchProgressDetailed } from '../types/database';
+import { fetchJikanWithFallback } from '../lib/jikan';
 
 // ─── URL HELPER ────────────────────────────────────────────────────────────────
 // Returns the raw stream/embed URL. The WebView in watch/[id].tsx already handles
@@ -20,29 +21,56 @@ export function buildProxiedStreamUrl(rawUrl: string): string {
 export function useTrendingAnime() {
   return useQuery({
     queryKey: ['anime', 'trending'],
-    staleTime: 5 * 60 * 1000,   // 5 min — trending doesn't change per-second
-    gcTime: 10 * 60 * 1000,  // keep in memory 10 min after unmount
-    queryFn: async (): Promise<AnimeWithStats[]> => {
-      const { data, error } = await supabase
-        .from('anime_with_stats')
-        .select('*')
-        .order('total_watches', { ascending: false })
-        .limit(10);
-      if (error) throw error;
-      return data;
-    },
+    // Jikan trending doesn't change more than every ~15 min
+    staleTime: 15 * 60 * 1000,
+    gcTime: 20 * 60 * 1000,
+    retry: 2,
+    queryFn: (): Promise<AnimeWithStats[]> => fetchJikanWithFallback('trending', 15),
   });
 }
+
+/**
+ * Returns the first trending anime that has a banner_url.
+ * Used specifically for the Hero Banner on the home screen.
+ * Falls back to the first trending anime regardless of banner.
+ */
+export function useHeroAnime() {
+  const { data: trending = [], ...rest } = useTrendingAnime();
+  const hero = trending.find(a => !!a.banner_url) ?? trending[0] ?? null;
+  return { data: hero, ...rest };
+}
+
+export function useTopRatedAnime(limit = 10) {
+  return useQuery({
+    queryKey: ['anime', 'top-rated', limit],
+    staleTime: 15 * 60 * 1000,
+    gcTime: 20 * 60 * 1000,
+    retry: 2,
+    queryFn: (): Promise<AnimeWithStats[]> => fetchJikanWithFallback('top-rated', limit),
+  });
+}
+
+export function useRecentAnime(limit = 10) {
+  return useQuery({
+    queryKey: ['anime', 'new-arrivals', limit],
+    staleTime: 15 * 60 * 1000,
+    gcTime: 20 * 60 * 1000,
+    retry: 2,
+    queryFn: (): Promise<AnimeWithStats[]> => fetchJikanWithFallback('new-arrivals', limit),
+  });
+}
+
 
 export function useAnimeList(searchQuery?: string, genre?: string) {
   return useQuery({
     queryKey: ['anime', { search: searchQuery, genre }],
     staleTime: 3 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
+    retry: 1,
     queryFn: async (): Promise<AnimeWithStats[]> => {
       let query = supabase
         .from('anime_with_stats')
-        .select('*')
+        .select('id, title, title_japanese, poster_url, banner_url, rating, year, status, type, genres, total_episodes, user_rating_avg, review_count, total_watches')
         .order('rating', { ascending: false });
       if (searchQuery) query = query.ilike('title', `%${searchQuery}%`);
       if (genre) query = query.contains('genres', [genre]);
@@ -194,11 +222,12 @@ export function useSimilarAnime(genres: string[] = [], currentAnimeId?: string, 
     queryKey: ['anime', 'similar', currentAnimeId, genres],
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
+    retry: 1,
     queryFn: async (): Promise<AnimeWithStats[]> => {
       if (genres.length === 0) return [];
       const { data, error } = await supabase
         .from('anime_with_stats')
-        .select('*')
+        .select('id, title, poster_url, banner_url, rating, year, type, genres, user_rating_avg, total_watches')
         .overlaps('genres', genres)
         .neq('id', currentAnimeId || '')
         .order('rating', { ascending: false })

@@ -7,10 +7,11 @@ import {
   ActivityIndicator,
   StatusBar,
   StyleSheet,
-  Image,
   ScrollView,
   FlatList,
+  Animated,
 } from "react-native";
+import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { WebView } from "react-native-webview";
 import * as ScreenOrientation from "expo-screen-orientation";
@@ -28,6 +29,9 @@ import {
   useSimilarAnime,
   fetchEpisodeById,
 } from "../../src/hooks/useQueries";
+import { usePremium } from "../../src/hooks/usePremium";
+import { useAutoPlay } from "../../src/hooks/useAutoPlay";
+import { useAutoSkipIntro } from "../../src/hooks/useAutoSkipIntro";
 import { supabase, userAPI } from "../../src/lib/supabase";
 import { useAuth } from "../../src/context/AuthContext";
 import { COLORS } from "../../src/constants/theme";
@@ -42,10 +46,13 @@ const NEAR_END_THRESHOLD_FALLBACK = 60;
 // Minimum seconds watched before we bother saving progress
 const MIN_PROGRESS_SECONDS = 5;
 
+// Countdown seconds before auto-navigating to next episode
+const AUTO_PLAY_COUNTDOWN_SEC = 5;
+
 // ─── INJECTED JAVASCRIPT ───────────────────────────────────────────────────────
 // Runs inside the WebView. Polls JWPlayer/HTML5 video for state, forwards progress
 // and error events back to React Native, and applies seek-to-resume.
-const buildInjectedJS = (resumeSeconds: number) => `
+const buildInjectedJS = (resumeSeconds: number, autoSkipIntro: boolean) => `
   (function() {
     // ─── FORCE FULL-SCREEN LAYOUT ────────────────────────────────────────────
     // Eliminates blank bars on the left/right in landscape by ensuring the page
@@ -186,6 +193,16 @@ const buildInjectedJS = (resumeSeconds: number) => `
 
     function startPolling(p) {
       attachErrorListeners(p);
+
+      // ── Episode complete (JWPlayer 'complete' event) ────────────────────────
+      // Fire as soon as the player itself signals end — more reliable than
+      // polling because it fires even if the last poll missed the final frame.
+      try {
+        p.on('complete', function() {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'episode_complete' }));
+        });
+      } catch(e) {}
+
       pollInterval = setInterval(function() {
         try {
           if (!p || typeof p.getPosition !== 'function') return;
@@ -243,6 +260,11 @@ const buildInjectedJS = (resumeSeconds: number) => `
         vid.currentTime = ${resumeSeconds};
       }
 
+      // ── Episode complete (HTML5 'ended' event) ──────────────────────────────
+      vid.addEventListener('ended', function() {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'episode_complete' }));
+      });
+
       // Forward HTML5 video errors
       vid.addEventListener('error', function() {
         var code = vid.error ? vid.error.code : -1;
@@ -261,6 +283,77 @@ const buildInjectedJS = (resumeSeconds: number) => `
         }));
       }, ${POLL_INTERVAL_MS});
     }, 1000);
+
+    // ─── AUTO SKIP INTRO / OUTRO / CREDITS ──────────────────────────────────────
+    // Top-level: runs for ALL embed players (JWPlayer + HTML5).
+    // Uses MutationObserver + 500ms poll to detect skip buttons injected by the
+    // streaming site and auto-clicks them after a 400ms human-like delay.
+    // Covers: Zoro/HiAnime, Gogoanime, 9anime, Megacloud, Vidstream, Hanime, etc.
+    if (${autoSkipIntro}) {
+      var SKIP_TEXT_RE = /^skip(\s+|[_\-])?(intro|opening|op|outro|ending|ed|credits|recap|preview|filler|title)?\.?$/i;
+      var SKIP_PREFIX_RE = /^skip\s/i;
+      var SKIP_CLASS_KEYS = [
+        'skip-intro','skip-outro','skip-op','skip-ed','skip-btn','skip_btn',
+        'skip-opening','skip-ending','skip-credits','skip-title',
+        'btn-skip','introSkip','outroSkip','op-btn','ed-btn',
+      ];
+      var _debounce = false;
+
+      function _vis(el) {
+        try {
+          var r = el.getBoundingClientRect(), s = window.getComputedStyle(el);
+          return r.width > 0 && r.height > 0
+            && s.display !== 'none' && s.visibility !== 'hidden'
+            && parseFloat(s.opacity) > 0.05;
+        } catch(e) { return false; }
+      }
+      function _attrMatch(el) {
+        var c = (el.className || '').toString().toLowerCase();
+        var d = (el.id || '').toLowerCase();
+        return SKIP_CLASS_KEYS.some(function(k) { return c.indexOf(k) !== -1 || d.indexOf(k) !== -1; });
+      }
+      function _trySkip(el) {
+        if (!el || !_vis(el) || _debounce) return;
+        var t = ((el.textContent || el.innerText || el.getAttribute('aria-label') || '')
+          .trim().replace(/[\u200B-\u200D\uFEFF]/g, '').trim());
+        if (!SKIP_TEXT_RE.test(t) && !SKIP_PREFIX_RE.test(t) && !_attrMatch(el)) return;
+        _debounce = true;
+        setTimeout(function() { _debounce = false; }, 3000);
+        setTimeout(function() {
+          try {
+            el.click();
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'skip_intro', label: t || el.className || 'skip',
+            }));
+          } catch(e) {}
+        }, 400);
+      }
+      function _scan(root) {
+        ['button','a','div','span','p'].forEach(function(tag) {
+          try { root.querySelectorAll(tag).forEach(_trySkip); } catch(e) {}
+        });
+        _trySkip(root);
+      }
+      var _mo = new MutationObserver(function(ms) {
+        ms.forEach(function(m) {
+          m.addedNodes.forEach(function(n) { if (n.nodeType === 1) _scan(n); });
+          if (m.type === 'attributes' && m.target.nodeType === 1) _trySkip(m.target);
+        });
+      });
+      _mo.observe(document.documentElement, {
+        childList: true, subtree: true, attributes: true,
+        attributeFilter: ['class','style','hidden','aria-hidden'],
+      });
+      setInterval(function() {
+        try {
+          document.querySelectorAll(
+            'button,[class*="skip"],[id*="skip"],[class*="Skip"],[id*="Skip"],'
+            + '[aria-label*="skip" i],[aria-label*="Skip" i]'
+          ).forEach(_trySkip);
+        } catch(e) {}
+      }, 500);
+    }
+
     // ─── TAP → TOGGLE HUD ───────────────────────────────────────────────────
     // Listen for any click/tap inside the WebView page. The event is NOT
     // cancelled so the player's own controls still fire normally. We just
@@ -285,13 +378,18 @@ export default function WatchScreen() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
   const { user } = useAuth();
+  const { isPremium, canWatch } = usePremium();
+  const { autoPlayEnabled } = useAutoPlay();
+  const { autoSkipIntroEnabled } = useAutoSkipIntro();
   const queryClient = useQueryClient();
-  const insets = useSafeAreaInsets(); // landscape: left/right insets for notch/cutout
+  const insets = useSafeAreaInsets();
 
   // UI state
   const [showSelector, setShowSelector] = useState(false);
   const [showNextUp, setShowNextUp] = useState(false);
   const [resumeToast, setResumeToast] = useState(false);
+  const [skipToast, setSkipToast] = useState(false);
+  const [skipLabel, setSkipLabel] = useState("intro");
   const [playerReady, setPlayerReady] = useState(false);
   const [playerError, setPlayerError] = useState(false);
   const [playerState, setPlayerState] = useState({
@@ -299,12 +397,17 @@ export default function WatchScreen() {
     current: 0,
     duration: 0,
   });
+  const [autoPlayCountdown, setAutoPlayCountdown] = useState<number | null>(null);
+  // Index into the servers array — 0 = primary server
+  const [selectedServer, setSelectedServer] = useState(0);
 
   const webviewRef = useRef<any>(null);
   const nearEndFired = useRef(false);
-  const lastSavedRef = useRef(0); // timestamp of last Supabase write
-  const spinnerTimeoutRef = useRef<any>(null); // auto-dismiss loading spinner
-  const hudTimerRef = useRef<any>(null); // HUD auto-hide timer
+  const lastSavedRef = useRef(0);
+  const spinnerTimeoutRef = useRef<any>(null);
+  const hudTimerRef = useRef<any>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null); // auto-play timer
+  const skipToastTimeoutRef = useRef<any>(null);
 
   // HUD visibility — driven by WebView click events (injected JS fires player_tap)
   const [showHud, setShowHud] = useState(true);
@@ -404,7 +507,6 @@ export default function WatchScreen() {
       const { error } = await userAPI.upsertProgress(uid, eid, current, isCompleted);
 
       if (error) {
-        // Print the full error so RLS failures are visible in Metro terminal
         console.error('[Watch] Progress save failed:', JSON.stringify(error));
       } else {
         console.log(`[Watch] ✓ Progress saved: ${current}s / ${duration}s (ep: ${eid})`);
@@ -412,6 +514,41 @@ export default function WatchScreen() {
     },
     [], // no deps — reads from refs only, never stale
   );
+
+  // ── Episode complete — start auto-play countdown ─────────────────────────────
+  const handleEpisodeComplete = useCallback(() => {
+    if (!nextEpisode) return;
+    setShowNextUp(true);
+    if (!autoPlayEnabled) return; // setting off — just show the card, no countdown
+
+    setAutoPlayCountdown(AUTO_PLAY_COUNTDOWN_SEC);
+    let remaining = AUTO_PLAY_COUNTDOWN_SEC;
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    countdownRef.current = setInterval(() => {
+      remaining -= 1;
+      setAutoPlayCountdown(remaining);
+      if (remaining <= 0) {
+        clearInterval(countdownRef.current!);
+        countdownRef.current = null;
+        router.replace(`/watch/${nextEpisode.id}`);
+      }
+    }, 1000);
+  }, [nextEpisode, autoPlayEnabled, router]);
+
+  // Cancel the running countdown (user tapped ✕ or chose episode manually)
+  const cancelAutoPlay = useCallback(() => {
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current);
+      countdownRef.current = null;
+    }
+    setAutoPlayCountdown(null);
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => () => {
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    if (skipToastTimeoutRef.current) clearTimeout(skipToastTimeoutRef.current);
+  }, []);
 
   // ── WebView message handler ───────────────────────────────────────────────
   const handleWebViewMessage = useCallback(
@@ -440,8 +577,20 @@ export default function WatchScreen() {
         }
 
         if (msg.type === "player_not_found") {
-          // Not JWPlayer — HTML5 fallback is still running, no action needed
           setPlayerReady(true);
+        }
+
+        if (msg.type === "episode_complete") {
+          // JS fired native 'complete'/'ended' — start auto-play countdown
+          handleEpisodeComplete();
+        }
+
+        if (msg.type === "skip_intro") {
+          const label = msg.label || "credits";
+          setSkipLabel(label);
+          setSkipToast(true);
+          if (skipToastTimeoutRef.current) clearTimeout(skipToastTimeoutRef.current);
+          skipToastTimeoutRef.current = setTimeout(() => setSkipToast(false), 3500);
         }
 
         if (msg.type === "progress") {
@@ -450,7 +599,8 @@ export default function WatchScreen() {
           setPlayerState({ isPlaying: playing, current, duration });
           handleProgress(current, duration);
 
-          // Near-end detection — fire once per episode
+          // Near-end: show the "Up Next" card early so user sees it coming.
+          // The countdown itself only starts on episode_complete (more reliable).
           if (!nearEndFired.current && duration > 0) {
             const threshold = Math.min(
               NEAR_END_THRESHOLD_FALLBACK,
@@ -464,7 +614,7 @@ export default function WatchScreen() {
         }
       } catch (_) { }
     },
-    [handleProgress, nextEpisode, resetHudTimer],
+    [handleProgress, handleEpisodeComplete, nextEpisode, resetHudTimer],
   );
 
   // ── Orientation + nav bar ─────────────────────────────────────────────────
@@ -507,6 +657,8 @@ export default function WatchScreen() {
     setShowNextUp(false);
     setPlayerReady(false);
     setPlayerError(false);
+    setSelectedServer(0); // reset to primary server on episode change
+    cancelAutoPlay();
 
     // Show HUD briefly then auto-hide — restarts the timer on every episode switch
     resetHudTimer();
@@ -518,19 +670,47 @@ export default function WatchScreen() {
     return () => {
       if (spinnerTimeoutRef.current) clearTimeout(spinnerTimeoutRef.current);
     };
-  }, [id, resetHudTimer]);
+  }, [id, resetHudTimer, cancelAutoPlay]);
 
   // NOTE: clearOtherProgress was removed — it was wiping all episode history
   // on every mount which caused the watch tracker to lose progress.
 
-  // ── Derived render values (must be before any early returns — Rules of Hooks) ─
-  // embedUrl / embedOrigin / injectedJS depend on episode which may be null;
-  // use safe fallbacks so the hooks always run in the same order.
-  const embedUrl = episode?.video_url?.trim() ?? '';
+  // ── Derived render values ────────────────────────────────────────────────────
+  // Build server list: prefer video_servers JSONB, fallback to bare video_url.
+  // This must run before any early returns (Rules of Hooks).
+  const servers = useMemo(() => {
+    const raw = (episode as any)?.video_servers;
+    if (Array.isArray(raw) && raw.length > 0) return raw as { name: string; url: string }[];
+    const fallback = episode?.video_url?.trim();
+    if (fallback) return [{ name: 'Server 1', url: fallback }];
+    return [];
+  }, [episode]);
+
+  // Active server URL (used by WebView source)
+  const embedUrl = servers[selectedServer]?.url?.trim() ?? '';
   const embedOrigin = useMemo(() => {
     try { return new URL(embedUrl).origin; } catch { return ''; }
   }, [embedUrl]);
-  const injectedJS = useMemo(() => buildInjectedJS(resumeSeconds), [resumeSeconds]);
+  const injectedJS = useMemo(
+    () => buildInjectedJS(resumeSeconds, autoSkipIntroEnabled),
+    [resumeSeconds, autoSkipIntroEnabled]
+  );
+
+  const handleEpisodeSelect = useCallback((epId: string) => {
+    setShowSelector(false);
+    router.replace(`/watch/${epId}`);
+  }, [router]);
+
+  const renderEpisodeItem = useCallback(({ item: ep }: { item: any }) => (
+    <EpisodeSelectorItem
+      ep={ep}
+      isActive={ep.id === id}
+      posterUrl={anime?.poster_url}
+      onPress={handleEpisodeSelect}
+    />
+  ), [id, anime?.poster_url, handleEpisodeSelect]);
+
+  const episodeKeyExtractor = useCallback((ep: any) => ep.id, []);
 
   // ── Guards ────────────────────────────────────────────────────────────────
   if (loadingEp || loadingAnime) {
@@ -548,6 +728,33 @@ export default function WatchScreen() {
         <Text style={styles.errorTitle}>Episode Not Found</Text>
         <TouchableOpacity onPress={() => router.back()} style={styles.errorBtn}>
           <Text style={styles.errorBtnText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // ── Premium episode guard ────────────────────────────────────────────────────
+  // Block free users from watching premium episodes even if they navigate directly.
+  if (episode.is_premium && !isPremium) {
+    return (
+      <View style={styles.fullCenter}>
+        <Ionicons name="star" size={56} color={COLORS.neonGold} />
+        <Text style={[styles.errorTitle, { color: COLORS.neonGold }]}>Premium Episode</Text>
+        <Text style={styles.errorSubtitle}>
+          Upgrade to Premium to unlock{"\n"}this episode and many more.
+        </Text>
+        <TouchableOpacity
+          style={[styles.errorBtn, { backgroundColor: COLORS.neonGold }]}
+          onPress={() => router.push('/premium' as any)}
+        >
+          <Ionicons name="star" size={16} color="#000" />
+          <Text style={[styles.errorBtnText, { color: '#000' }]}>UPGRADE TO PREMIUM</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.errorBtn, styles.errorBtnSecondary, { marginTop: 8 }]}
+          onPress={() => router.back()}
+        >
+          <Text style={[styles.errorBtnText, { color: COLORS.neon }]}>Go Back</Text>
         </TouchableOpacity>
       </View>
     );
@@ -697,15 +904,56 @@ export default function WatchScreen() {
         </View>
       )}
 
-      {/* ── STREAM ERROR ── */}
+      {/* ── STREAM ERROR OVERLAY ─ sits above WebView, fully opaque dark bg ── */}
       {playerError && (
-        <View style={styles.fullCenter}>
-          <Ionicons
-            name="cloud-offline-outline"
-            size={56}
-            color={COLORS.neonPink}
-          />
+        <View style={styles.errorOverlay}>
+          {/* Icon + headline */}
+          <Ionicons name="cloud-offline-outline" size={52} color={COLORS.neonPink} />
           <Text style={styles.errorTitle}>Stream Unavailable</Text>
+          <Text style={styles.errorSubtitle}>
+            {servers.length > 1
+              ? 'This server failed. Try switching to another.'
+              : 'Could not load the stream. Try retrying or go back.'}
+          </Text>
+
+          {/* Server selector pills (only shown when >1 server exists) */}
+          {servers.length > 1 && (
+            <>
+              <Text style={styles.errorServerLabel}>SELECT SERVER</Text>
+              <View style={styles.serverGrid}>
+                {servers.map((srv, i) => (
+                  <TouchableOpacity
+                    key={i}
+                    style={[
+                      styles.serverPill,
+                      i === selectedServer && styles.serverPillActive,
+                    ]}
+                    onPress={() => {
+                      setSelectedServer(i);
+                      setPlayerError(false);
+                      setPlayerReady(false);
+                    }}
+                  >
+                    <Ionicons
+                      name={i === selectedServer ? 'radio-button-on' : 'radio-button-off'}
+                      size={14}
+                      color={i === selectedServer ? COLORS.neonCyan : COLORS.textMuted}
+                    />
+                    <Text
+                      style={[
+                        styles.serverPillText,
+                        i === selectedServer && { color: COLORS.neonCyan },
+                      ]}
+                    >
+                      {srv.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          )}
+
+          {/* Action buttons */}
           <View style={styles.errorBtnRow}>
             <TouchableOpacity
               style={styles.errorBtn}
@@ -723,9 +971,7 @@ export default function WatchScreen() {
               onPress={() => router.back()}
             >
               <Ionicons name="arrow-back" size={16} color={COLORS.neon} />
-              <Text style={[styles.errorBtnText, { color: COLORS.neon }]}>
-                Go Back
-              </Text>
+              <Text style={[styles.errorBtnText, { color: COLORS.neon }]}>Go Back</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -782,6 +1028,37 @@ export default function WatchScreen() {
                     </Text>
                   </View>
                 )}
+
+                {/* Server picker — only if >1 server available */}
+                {servers.length > 1 && (
+                  <View style={styles.hudServerRow} pointerEvents="box-none">
+                    {servers.map((srv, i) => (
+                      <TouchableOpacity
+                        key={i}
+                        style={[
+                          styles.hudServerPill,
+                          i === selectedServer && styles.hudServerPillActive,
+                        ]}
+                        onPress={() => {
+                          if (i === selectedServer) return;
+                          setSelectedServer(i);
+                          setPlayerError(false);
+                          setPlayerReady(false);
+                        }}
+                      >
+                        <Text
+                          style={[
+                            styles.hudServerPillText,
+                            i === selectedServer && { color: COLORS.neonCyan },
+                          ]}
+                        >
+                          {srv.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
                 <TouchableOpacity
                   style={styles.selectorBtn}
                   onPress={() => setShowSelector(true)}
@@ -817,35 +1094,66 @@ export default function WatchScreen() {
                   </BlurView>
                 </View>
               )}
+              {skipToast && (
+                <View style={styles.skipToast} pointerEvents="none">
+                  <BlurView intensity={40} style={styles.skipToastBlur}>
+                    <Ionicons name="play-forward" size={14} color={COLORS.neonCyan} />
+                    <Text style={styles.skipToastText}>
+                      Auto-skipped {skipLabel}
+                    </Text>
+                  </BlurView>
+                </View>
+              )}
             </>
           )}
 
-          {/* Up Next Card */}
+          {/* Up Next Card — shows near end OR on episode_complete with countdown */}
           {showNextUp && nextEpisode && (
-            <TouchableOpacity
-              style={styles.nextUpCard}
-              onPress={() => router.replace(`/watch/${nextEpisode.id}`)}
-            >
-              <BlurView intensity={30} style={styles.nextUpBlur}>
-                <Image
-                  source={{
-                    uri: nextEpisode.thumbnail_url || anime?.poster_url,
+            <View style={styles.nextUpCard}>
+              <BlurView intensity={40} style={styles.nextUpBlur}>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  style={styles.nextUpClickableArea}
+                  onPress={() => {
+                    cancelAutoPlay();
+                    router.replace(`/watch/${nextEpisode.id}`);
                   }}
-                  style={styles.nextUpThumb}
-                />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.nextUpLabel}>UP NEXT</Text>
-                  <Text style={styles.nextUpTitle} numberOfLines={1}>
-                    Episode {nextEpisode.episode_number}: {nextEpisode.title}
-                  </Text>
-                </View>
-                <Ionicons
-                  name="play-skip-forward"
-                  size={18}
-                  color={COLORS.neonCyan}
-                />
+                >
+                  <Image
+                    source={{ uri: nextEpisode.thumbnail_url || anime?.poster_url }}
+                    style={styles.nextUpThumb}
+                    contentFit="cover"
+                    transition={200}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.nextUpLabel}>
+                      {autoPlayCountdown !== null
+                        ? `AUTO-PLAYING IN ${autoPlayCountdown}s`
+                        : 'UP NEXT'
+                      }
+                    </Text>
+                    <Text style={styles.nextUpTitle} numberOfLines={1}>
+                      Episode {nextEpisode.episode_number}: {nextEpisode.title}
+                    </Text>
+                  </View>
+
+                  {/* Play now */}
+                  <View style={styles.nextUpPlayBtn}>
+                    <Ionicons name="play" size={16} color="#000" />
+                  </View>
+                </TouchableOpacity>
+
+                {/* Cancel (only shown during countdown) */}
+                {autoPlayCountdown !== null && (
+                  <TouchableOpacity
+                    style={styles.nextUpCancelBtn}
+                    onPress={cancelAutoPlay}
+                  >
+                    <Ionicons name="close" size={14} color={COLORS.text} />
+                  </TouchableOpacity>
+                )}
               </BlurView>
-            </TouchableOpacity>
+            </View>
           )}
         </View>
       )}
@@ -877,7 +1185,7 @@ export default function WatchScreen() {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.selectorList}
               data={streamableEpisodes}
-              keyExtractor={(ep) => ep.id}
+              keyExtractor={episodeKeyExtractor}
               initialScrollIndex={activeIndex >= 0 ? activeIndex : 0}
               // Item width = 180, gap = 16 => 196
               getItemLayout={(data, index) => ({
@@ -885,41 +1193,7 @@ export default function WatchScreen() {
                 offset: 196 * index,
                 index,
               })}
-              renderItem={({ item: ep }) => (
-                <TouchableOpacity
-                  style={[
-                    styles.selectorItem,
-                    ep.id === id && styles.activeItem,
-                  ]}
-                  onPress={() => {
-                    setShowSelector(false);
-                    router.replace(`/watch/${ep.id}`);
-                  }}
-                >
-                  <Image
-                    source={{ uri: ep.thumbnail_url || anime?.poster_url }}
-                    style={styles.selectorThumb}
-                  />
-                  <View style={styles.selectorInfo}>
-                    <Text style={styles.selectorEpNum}>
-                      EP {ep.episode_number}
-                    </Text>
-                    <Text style={styles.selectorEpTitle} numberOfLines={1}>
-                      {ep.title}
-                    </Text>
-                    {ep.duration ? (
-                      <Text style={styles.selectorEpDur}>
-                        {Math.round(ep.duration / 60)}m
-                      </Text>
-                    ) : null}
-                  </View>
-                  {ep.id === id && (
-                    <View style={styles.nowPlayingBadge}>
-                      <Text style={styles.nowPlayingText}>NOW PLAYING</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              )}
+              renderItem={renderEpisodeItem}
             />
           </BlurView>
         </View>
@@ -927,6 +1201,60 @@ export default function WatchScreen() {
     </View>
   );
 }
+
+// ─── MEMOIZED EPISODE SELECTOR ITEM ───────────────────────────────────────────
+interface EpisodeSelectorItemProps {
+  ep: any;
+  isActive: boolean;
+  posterUrl?: string;
+  onPress: (id: string) => void;
+}
+
+const EpisodeSelectorItem = React.memo(
+  ({ ep, isActive, posterUrl, onPress }: EpisodeSelectorItemProps) => {
+    return (
+      <TouchableOpacity
+        style={[
+          styles.selectorItem,
+          isActive && styles.activeItem,
+        ]}
+        onPress={() => onPress(ep.id)}
+      >
+        <Image
+          source={{ uri: ep.thumbnail_url || posterUrl }}
+          style={styles.selectorThumb}
+          contentFit="cover"
+          transition={200}
+        />
+        <View style={styles.selectorInfo}>
+          <Text style={styles.selectorEpNum}>
+            EP {ep.episode_number}
+          </Text>
+          <Text style={styles.selectorEpTitle} numberOfLines={1}>
+            {ep.title}
+          </Text>
+          {ep.duration ? (
+            <Text style={styles.selectorEpDur}>
+              {Math.round(ep.duration / 60)}m
+            </Text>
+          ) : null}
+        </View>
+        {isActive && (
+          <View style={styles.nowPlayingBadge}>
+            <Text style={styles.nowPlayingText}>NOW PLAYING</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+    );
+  },
+  (prevProps, nextProps) => {
+    return (
+      prevProps.ep.id === nextProps.ep.id &&
+      prevProps.isActive === nextProps.isActive &&
+      prevProps.posterUrl === nextProps.posterUrl
+    );
+  }
+);
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 function formatTime(seconds: number = 0) {
@@ -967,6 +1295,13 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginTop: 12,
   },
+  errorSubtitle: {
+    color: COLORS.textMuted,
+    fontSize: 13,
+    textAlign: "center",
+    lineHeight: 20,
+    paddingHorizontal: 32,
+  },
 
   errorBtn: {
     flexDirection: "row",
@@ -994,10 +1329,80 @@ const styles = StyleSheet.create({
   // Loading overlay sits over WebView while player boots
   playerLoadingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "#000",
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  // ── Error overlay — fully opaque so the white WebView page is hidden ────
+  errorOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#0E0E11",
     justifyContent: "center",
     alignItems: "center",
     gap: 12,
+    paddingHorizontal: 32,
+  },
+  errorServerLabel: {
+    fontSize: 9,
+    fontWeight: "900",
+    color: COLORS.textMuted,
+    letterSpacing: 2,
+    marginTop: 8,
+  },
+  serverGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    justifyContent: "center",
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  serverPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 100,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.1)",
+    backgroundColor: "rgba(255,255,255,0.05)",
+  },
+  serverPillActive: {
+    borderColor: COLORS.neonCyan,
+    backgroundColor: "rgba(0,229,255,0.08)",
+  },
+  serverPillText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: COLORS.textMuted,
+  },
+
+  // ── HUD top-bar server pills (compact, no icon) ──────────────────────
+  hudServerRow: {
+    flexDirection: "row",
+    gap: 6,
+    alignItems: "center",
+  },
+  hudServerPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 100,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(0,0,0,0.3)",
+  },
+  hudServerPillActive: {
+    borderColor: COLORS.neonCyan,
+    backgroundColor: "rgba(0,229,255,0.1)",
+  },
+  hudServerPillText: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: COLORS.textMuted,
+    letterSpacing: 0.5,
   },
 
   // HUD layer — floats over WebView, box-none so touches pass through to WebView
@@ -1105,6 +1510,19 @@ const styles = StyleSheet.create({
   },
   resumeToastText: { color: COLORS.text, fontSize: 12, fontWeight: "700" },
 
+  skipToast: { position: "absolute", top: 140, alignSelf: "center" },
+  skipToastBlur: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    overflow: "hidden",
+  },
+  skipToastText: { color: COLORS.text, fontSize: 12, fontWeight: "700" },
+
   nextUpCard: {
     position: "absolute",
     bottom: 28,
@@ -1117,6 +1535,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     padding: 10,
+    gap: 12,
+  },
+  nextUpClickableArea: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
     gap: 12,
   },
   nextUpThumb: {
@@ -1136,6 +1560,25 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: COLORS.text,
     marginTop: 2,
+  },
+  // Play now button (gold circle)
+  nextUpPlayBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.neonGold,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  // Cancel countdown (X) button
+  nextUpCancelBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: -4,
   },
 
   modalBg: {

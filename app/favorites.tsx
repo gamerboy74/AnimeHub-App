@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  View, Text, FlatList, StyleSheet, TouchableOpacity, Image,
+  View, Text, FlatList, StyleSheet, TouchableOpacity,
   RefreshControl, ActivityIndicator,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -35,11 +36,27 @@ export default function FavoritesScreen() {
 
   const onRefresh = () => { setRefreshing(true); fetchData(); };
 
-  const removeItem = async (animeId: string) => {
+  const removeItem = useCallback(async (animeId: string) => {
     if (!user) return;
     await userAPI.removeFavorite(user.id, animeId);
     setFavorites(prev => prev.filter(f => f.anime_id !== animeId));
-  };
+  }, [user]);
+
+  const handleCardPress = useCallback((id: string) => {
+    router.push(`/anime/${id}`);
+  }, [router]);
+
+  const renderItem = useCallback(({ item }: { item: any }) => (
+    <FavoriteItemRow
+      item={item}
+      onPress={handleCardPress}
+      onRemove={removeItem}
+    />
+  ), [handleCardPress, removeItem]);
+
+  const keyExtractor = useCallback((item: any) => item.id, []);
+
+  const ItemSeparator = useCallback(() => <View style={styles.separator} />, []);
 
   if (!user) {
     return (
@@ -79,47 +96,69 @@ export default function FavoritesScreen() {
       ) : (
         <FlatList
           data={favorites}
-          keyExtractor={item => item.id}
+          keyExtractor={keyExtractor}
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.neon} />}
-          renderItem={({ item }) => {
-            const anime = item.anime;
-            if (!anime) return null;
-            return (
-              <TouchableOpacity
-                style={styles.animeRow}
-                onPress={() => router.push(`/anime/${anime.id}`)}
-              >
-                <Image
-                  source={{ uri: anime.poster_url || '' }}
-                  style={styles.poster}
-                  resizeMode="cover"
-                />
-                <View style={styles.animeInfo}>
-                  <Text style={styles.animeTitle} numberOfLines={2}>{anime.title}</Text>
-                  <Text style={styles.animeGenres} numberOfLines={1}>
-                    {anime.genres?.slice(0, 3).join(' · ')}
-                  </Text>
-                  <View style={styles.ratingRow}>
-                    <Ionicons name="star" size={12} color={COLORS.neonGold} />
-                    <Text style={styles.ratingText}>{Number(anime.rating || 0).toFixed(1)}</Text>
-                  </View>
-                </View>
-                <TouchableOpacity
-                  style={styles.removeBtn}
-                  onPress={() => removeItem(anime.id)}
-                >
-                  <Ionicons name="heart" size={18} color={COLORS.neonPink} />
-                </TouchableOpacity>
-              </TouchableOpacity>
-            );
-          }}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          renderItem={renderItem}
+          ItemSeparatorComponent={ItemSeparator}
         />
       )}
     </View>
   );
 }
+
+// ─── MEMOIZED FAVORITE ITEM ROW ───────────────────────────────────────────────
+interface FavoriteItemRowProps {
+  item: any;
+  onPress: (id: string) => void;
+  onRemove: (id: string) => void;
+}
+
+const FavoriteItemRow = React.memo(
+  ({ item, onPress, onRemove }: FavoriteItemRowProps) => {
+    const anime = item.anime;
+    if (!anime) return null;
+    return (
+      <TouchableOpacity
+        style={styles.animeRow}
+        onPress={() => onPress(anime.id)}
+      >
+        <Image
+          source={{ uri: anime.poster_url || '' }}
+          style={styles.poster}
+          contentFit="cover"
+          transition={200}
+        />
+        <View style={styles.animeInfo}>
+          <Text style={styles.animeTitle} numberOfLines={2}>{anime.title}</Text>
+          <Text style={styles.animeGenres} numberOfLines={1}>
+            {anime.genres?.slice(0, 3).join(' · ')}
+          </Text>
+          <View style={styles.ratingRow}>
+            <Ionicons name="star" size={12} color={COLORS.neonGold} />
+            <Text style={styles.ratingText}>{Number(anime.rating || 0).toFixed(1)}</Text>
+          </View>
+        </View>
+        <TouchableOpacity
+          style={styles.removeBtn}
+          onPress={() => onRemove(anime.id)}
+        >
+          <Ionicons name="heart" size={18} color={COLORS.neonPink} />
+        </TouchableOpacity>
+      </TouchableOpacity>
+    );
+  },
+  (prevProps, nextProps) => {
+    return (
+      prevProps.item.id === nextProps.item.id &&
+      prevProps.item.anime_id === nextProps.item.anime_id &&
+      prevProps.item.anime?.id === nextProps.item.anime?.id &&
+      prevProps.item.anime?.poster_url === nextProps.item.anime?.poster_url &&
+      prevProps.item.anime?.title === nextProps.item.anime?.title &&
+      prevProps.item.anime?.rating === nextProps.item.anime?.rating
+    );
+  }
+);
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },

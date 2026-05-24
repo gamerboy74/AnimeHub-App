@@ -6,11 +6,11 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  Image,
   ScrollView,
   RefreshControl,
   Dimensions,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -129,6 +129,12 @@ export default function ScheduleScreen() {
     fetchSchedule();
   };
 
+  const renderItem = useCallback(({ item, index }: { item: ScheduleEntry; index: number }) => (
+    <TimelineRow entry={item} index={index} idMap={idMap} />
+  ), [idMap]);
+
+  const keyExtractor = useCallback((item: ScheduleEntry, index: number) => `${item.mal_id}_${index}`, []);
+
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       {/* ── Gradient header bg ── */}
@@ -201,7 +207,7 @@ export default function ScheduleScreen() {
       ) : (
         <FlatList
           data={entries}
-          keyExtractor={(item, index) => `${item.mal_id}_${index}`}
+          keyExtractor={keyExtractor}
           contentContainerStyle={styles.list}
           showsVerticalScrollIndicator={false}
           refreshControl={
@@ -215,9 +221,7 @@ export default function ScheduleScreen() {
               </Text>
             </View>
           }
-          renderItem={({ item, index }) => (
-            <TimelineRow entry={item} index={index} idMap={idMap} />
-          )}
+          renderItem={renderItem}
         />
       )}
     </View>
@@ -225,112 +229,140 @@ export default function ScheduleScreen() {
 }
 
 // ─── Timeline row — left / right alternating ────────────────────────────────────
-function TimelineRow({
-  entry,
-  index,
-  idMap,
-}: {
-  entry: ScheduleEntry;
-  index: number;
-  idMap: Map<number, string>;
-}) {
-  const isLeft = index % 2 === 0;
-  const airTime = formatTime(entry.broadcast?.time);
-  const epNum = entry.episodes;
+const TimelineRow = React.memo(
+  ({
+    entry,
+    index,
+    idMap,
+  }: {
+    entry: ScheduleEntry;
+    index: number;
+    idMap: Map<number, string>;
+  }) => {
+    const isLeft = index % 2 === 0;
+    const airTime = formatTime(entry.broadcast?.time);
+    const epNum = entry.episodes;
 
-  return (
-    <View style={styles.row}>
-      {/* Left side */}
-      <View style={styles.rowSide}>
-        {isLeft ? (
-          <AnimeCard entry={entry} align="right" idMap={idMap} />
-        ) : (
-          <TimeLabel time={airTime} episode={epNum} align="right" />
-        )}
-      </View>
+    return (
+      <View style={styles.row}>
+        {/* Left side */}
+        <View style={styles.rowSide}>
+          {isLeft ? (
+            <AnimeCard entry={entry} align="right" idMap={idMap} />
+          ) : (
+            <TimeLabel time={airTime} episode={epNum} align="right" />
+          )}
+        </View>
 
-      {/* Center timeline */}
-      <View style={styles.timelineCenter}>
-        <View style={styles.timelineLine} />
-        <View style={styles.timelineDot} />
-        <View style={styles.timelineLine} />
-      </View>
+        {/* Center timeline */}
+        <View style={styles.timelineCenter}>
+          <View style={styles.timelineLine} />
+          <View style={styles.timelineDot} />
+          <View style={styles.timelineLine} />
+        </View>
 
-      {/* Right side */}
-      <View style={styles.rowSide}>
-        {isLeft ? (
-          <TimeLabel time={airTime} episode={epNum} align="left" />
-        ) : (
-          <AnimeCard entry={entry} align="left" idMap={idMap} />
-        )}
+        {/* Right side */}
+        <View style={styles.rowSide}>
+          {isLeft ? (
+            <TimeLabel time={airTime} episode={epNum} align="left" />
+          ) : (
+            <AnimeCard entry={entry} align="left" idMap={idMap} />
+          )}
+        </View>
       </View>
-    </View>
-  );
-}
+    );
+  },
+  (prevProps, nextProps) => {
+    return (
+      prevProps.entry.mal_id === nextProps.entry.mal_id &&
+      prevProps.index === nextProps.index &&
+      prevProps.idMap === nextProps.idMap
+    );
+  }
+);
 
 // ─── Anime card ────────────────────────────────────────────────────────────────
-function AnimeCard({
-  entry,
-  align,
-  idMap,
-}: {
-  entry: ScheduleEntry;
-  align: 'left' | 'right';
-  idMap: Map<number, string>;
-}) {
-  const router = useRouter();
-  const supabaseId = idMap.get(entry.mal_id);
+const AnimeCard = React.memo(
+  ({
+    entry,
+    align,
+    idMap,
+  }: {
+    entry: ScheduleEntry;
+    align: 'left' | 'right';
+    idMap: Map<number, string>;
+  }) => {
+    const router = useRouter();
+    const supabaseId = idMap.get(entry.mal_id);
 
-  const handlePress = () => {
-    if (supabaseId) router.push(`/anime/${supabaseId}` as any);
-  };
+    const handlePress = () => {
+      if (supabaseId) router.push(`/anime/${supabaseId}` as any);
+    };
 
-  return (
-    <TouchableOpacity
-      style={[styles.card, align === 'right' ? styles.cardRight : styles.cardLeft]}
-      onPress={handlePress}
-      activeOpacity={supabaseId ? 0.7 : 1}
-      disabled={!supabaseId}
-    >
-      <Image
-        source={{ uri: entry.images.jpg.image_url }}
-        style={styles.cardThumb}
-        resizeMode="cover"
-      />
-      <View style={styles.cardBody}>
-        <Text style={styles.cardTitle} numberOfLines={2}>
-          {entry.title_english || entry.title}
-        </Text>
-        {entry.synopsis ? (
-          <Text style={styles.cardSynopsis} numberOfLines={3}>
-            {entry.synopsis}
+    return (
+      <TouchableOpacity
+        style={[styles.card, align === 'right' ? styles.cardRight : styles.cardLeft]}
+        onPress={handlePress}
+        activeOpacity={supabaseId ? 0.7 : 1}
+        disabled={!supabaseId}
+      >
+        <Image
+          source={{ uri: entry.images.jpg.image_url }}
+          style={styles.cardThumb}
+          contentFit="cover"
+          transition={200}
+        />
+        <View style={styles.cardBody}>
+          <Text style={styles.cardTitle} numberOfLines={2}>
+            {entry.title_english || entry.title}
           </Text>
-        ) : null}
-        {entry.genres && entry.genres.length > 0 && (
-          <View style={styles.genreRow}>
-            {entry.genres.slice(0, 2).map((g) => (
-              <View key={g.name} style={styles.genrePill}>
-                <Text style={styles.genreText}>{g.name}</Text>
-              </View>
-            ))}
-          </View>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
-}
+          {entry.synopsis ? (
+            <Text style={styles.cardSynopsis} numberOfLines={3}>
+              {entry.synopsis}
+            </Text>
+          ) : null}
+          {entry.genres && entry.genres.length > 0 && (
+            <View style={styles.genreRow}>
+              {entry.genres.slice(0, 2).map((g) => (
+                <View key={g.name} style={styles.genrePill}>
+                  <Text style={styles.genreText}>{g.name}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      </TouchableOpacity>
+    );
+  },
+  (prevProps, nextProps) => {
+    return (
+      prevProps.entry.mal_id === nextProps.entry.mal_id &&
+      prevProps.align === nextProps.align &&
+      prevProps.idMap === nextProps.idMap
+    );
+  }
+);
 
 // ─── Time label ────────────────────────────────────────────────────────────────
-function TimeLabel({ time, episode, align }: { time: string; episode?: number; align: 'left' | 'right' }) {
-  return (
-    <View style={[styles.timeLabel, align === 'right' ? { alignItems: 'flex-end' } : { alignItems: 'flex-start' }]}>
-      <Text style={styles.timeLabelTime}>{time}</Text>
-      {episode ? (
-        <Text style={styles.timeLabelEp}>EPISODE {episode}</Text>
-      ) : null}
-    </View>
-  );
-}
+const TimeLabel = React.memo(
+  ({ time, episode, align }: { time: string; episode?: number; align: 'left' | 'right' }) => {
+    return (
+      <View style={[styles.timeLabel, align === 'right' ? { alignItems: 'flex-end' } : { alignItems: 'flex-start' }]}>
+        <Text style={styles.timeLabelTime}>{time}</Text>
+        {episode ? (
+          <Text style={styles.timeLabelEp}>EPISODE {episode}</Text>
+        ) : null}
+      </View>
+    );
+  },
+  (prevProps, nextProps) => {
+    return (
+      prevProps.time === nextProps.time &&
+      prevProps.episode === nextProps.episode &&
+      prevProps.align === nextProps.align
+    );
+  }
+);
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 function formatTime(t?: string): string {

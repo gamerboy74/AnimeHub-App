@@ -8,8 +8,16 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Create a client
-const queryClient = new QueryClient();
+// Singleton — must live outside the component so the cache is never wiped on re-renders
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 2,
+      staleTime: 2 * 60 * 1000,   // 2-min global default (overridden per-query)
+      gcTime: 5 * 60 * 1000,      // 5-min global default
+    },
+  },
+});
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();

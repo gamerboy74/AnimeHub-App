@@ -30,6 +30,12 @@ export interface AnimeWithStats extends Anime {
   recent_activity?: number;
 }
 
+/** A single streaming server entry stored in episodes.video_servers */
+export interface VideoServer {
+  name: string;  // 'Server 1' | 'Server 2' | 'Backup' | etc.
+  url: string;   // full embed URL
+}
+
 export interface Episode {
   id: string;
   anime_id: string;
@@ -39,18 +45,16 @@ export interface Episode {
   thumbnail_url?: string;
   video_url?: string;
   duration?: number;
-  is_premium?: boolean;
+  is_premium: boolean;   // always present in DB — not optional
   air_date?: string;
+  /** Ordered list of stream servers. Falls back to [{name:'Server 1', url: video_url}] */
+  video_servers?: VideoServer[];
 }
 
-export interface User {
-  id: string;
-  email: string;
-  username: string;
-  avatar_url?: string;
-  subscription_type?: string;
-  role?: string;
-}
+// ⚠️  User type has been moved to src/lib/supabase.ts
+// Import from there to get the authoritative type that matches the DB columns.
+// Re-exporting here for backwards compatibility:
+export type { User } from '../lib/supabase';
 
 export interface UserActivitySummary {
   user_id?: string;

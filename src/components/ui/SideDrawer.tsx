@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,10 +7,10 @@ import {
   Animated,
   Dimensions,
   Pressable,
-  Image,
   Modal,
   ScrollView,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -85,18 +85,18 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
     }
   }, [visible]);
 
-  const navigate = (route: string) => {
+  const navigate = useCallback((route: string) => {
     onClose();
     setTimeout(() => router.push(route as any), 220);
-  };
+  }, [onClose, router]);
 
-  const handleSignOut = async () => {
+  const handleSignOut = useCallback(async () => {
     onClose();
     setTimeout(async () => {
       await signOut();
       router.replace('/auth/login' as any);
     }, 220);
-  };
+  }, [onClose, signOut, router]);
 
   const initials = user?.username?.substring(0, 2).toUpperCase() ?? '??';
 
@@ -126,7 +126,7 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
           <View style={styles.profileSection}>
             <View style={styles.avatarWrap}>
               {user?.avatar_url ? (
-                <Image source={{ uri: user.avatar_url }} style={styles.avatarImage} />
+                <Image source={{ uri: user.avatar_url }} style={styles.avatarImage} contentFit="cover" transition={200} />
               ) : (
                 <View style={styles.avatarPlaceholder}>
                   <Text style={styles.avatarInitials}>{initials}</Text>
@@ -185,23 +185,32 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
 }
 
 // ─── Reusable nav row ─────────────────────────────────────────────────────────
-function NavRow({ item, onPress }: { item: any; onPress: () => void }) {
-  return (
-    <TouchableOpacity style={styles.navItem} onPress={onPress} activeOpacity={0.7}>
-      <View style={styles.navIconWrap}>
-        <Ionicons name={item.icon as any} size={20} color={COLORS.neon} />
-      </View>
-      <Text style={styles.navLabel}>{item.label}</Text>
-      {item.badge ? (
-        <View style={styles.soonBadge}>
-          <Text style={styles.soonText}>{item.badge}</Text>
+const NavRow = React.memo(
+  ({ item, onPress }: { item: any; onPress: () => void }) => {
+    return (
+      <TouchableOpacity style={styles.navItem} onPress={onPress} activeOpacity={0.7}>
+        <View style={styles.navIconWrap}>
+          <Ionicons name={item.icon as any} size={20} color={COLORS.neon} />
         </View>
-      ) : (
-        <Ionicons name="chevron-forward" size={14} color={COLORS.textMuted} />
-      )}
-    </TouchableOpacity>
-  );
-}
+        <Text style={styles.navLabel}>{item.label}</Text>
+        {item.badge ? (
+          <View style={styles.soonBadge}>
+            <Text style={styles.soonText}>{item.badge}</Text>
+          </View>
+        ) : (
+          <Ionicons name="chevron-forward" size={14} color={COLORS.textMuted} />
+        )}
+      </TouchableOpacity>
+    );
+  },
+  (prevProps, nextProps) => {
+    return (
+      prevProps.item.label === nextProps.item.label &&
+      prevProps.item.icon === nextProps.item.icon &&
+      prevProps.item.badge === nextProps.item.badge
+    );
+  }
+);
 
 const styles = StyleSheet.create({
   overlay: {

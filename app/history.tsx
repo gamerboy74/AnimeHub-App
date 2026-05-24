@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, Image, ActivityIndicator } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,6 +22,21 @@ export default function WatchHistoryScreen() {
       setLoading(false);
     });
   }, [user]);
+
+  const handleCardPress = useCallback((id: string) => {
+    router.push(`/anime/${id}`);
+  }, [router]);
+
+  const renderItem = useCallback(({ item }: { item: any }) => (
+    <HistoryItemRow
+      item={item}
+      onPress={handleCardPress}
+    />
+  ), [handleCardPress]);
+
+  const keyExtractor = useCallback((item: any) => item.progress_id || item.episode_id, []);
+
+  const ItemSeparator = useCallback(() => <View style={styles.separator} />, []);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -48,51 +64,70 @@ export default function WatchHistoryScreen() {
       ) : (
         <FlatList
           data={history}
-          keyExtractor={item => item.progress_id || item.episode_id}
+          keyExtractor={keyExtractor}
           contentContainerStyle={styles.list}
-          renderItem={({ item }) => {
-            const progress = item.episode_duration > 0
-              ? Math.round((item.progress_seconds / (item.episode_duration * 60)) * 100)
-              : item.progress_percentage || 0;
-            return (
-              <TouchableOpacity
-                style={styles.histRow}
-                onPress={() => router.push(`/anime/${item.anime_id}`)}
-              >
-                <Image
-                  source={{ uri: item.poster_url || '' }}
-                  style={styles.poster}
-                  resizeMode="cover"
-                />
-                <View style={styles.histInfo}>
-                  <Text style={styles.animeTitle} numberOfLines={1}>{item.anime_title}</Text>
-                  <Text style={styles.epTitle} numberOfLines={1}>
-                    EP {item.episode_number} — {item.episode_title || `Episode ${item.episode_number}`}
-                  </Text>
-                  <View style={styles.progressBg}>
-                    <View style={[styles.progressFill, { width: `${Math.min(progress, 100)}%` }]} />
-                  </View>
-                  <Text style={styles.progressText}>
-                    {item.is_completed ? '✓ Completed' : `${progress}% watched`}
-                  </Text>
-                  <Text style={styles.watchedAt}>
-                    {new Date(item.last_watched).toLocaleDateString()}
-                  </Text>
-                </View>
-                {item.is_completed ? (
-                  <Ionicons name="checkmark-circle" size={22} color={COLORS.success} />
-                ) : (
-                  <Ionicons name="play-circle-outline" size={22} color={COLORS.neon} />
-                )}
-              </TouchableOpacity>
-            );
-          }}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          renderItem={renderItem}
+          ItemSeparatorComponent={ItemSeparator}
         />
       )}
     </View>
   );
 }
+
+// ─── MEMOIZED HISTORY ITEM ROW ────────────────────────────────────────────────
+interface HistoryItemRowProps {
+  item: any;
+  onPress: (id: string) => void;
+}
+
+const HistoryItemRow = React.memo(
+  ({ item, onPress }: HistoryItemRowProps) => {
+    const progress = item.episode_duration > 0
+      ? Math.round((item.progress_seconds / (item.episode_duration * 60)) * 100)
+      : item.progress_percentage || 0;
+    return (
+      <TouchableOpacity
+        style={styles.histRow}
+        onPress={() => onPress(item.anime_id)}
+      >
+        <Image
+          source={{ uri: item.poster_url || '' }}
+          style={styles.poster}
+          contentFit="cover"
+          transition={200}
+        />
+        <View style={styles.histInfo}>
+          <Text style={styles.animeTitle} numberOfLines={1}>{item.anime_title}</Text>
+          <Text style={styles.epTitle} numberOfLines={1}>
+            EP {item.episode_number} — {item.episode_title || `Episode ${item.episode_number}`}
+          </Text>
+          <View style={styles.progressBg}>
+            <View style={[styles.progressFill, { width: `${Math.min(progress, 100)}%` }]} />
+          </View>
+          <Text style={styles.progressText}>
+            {item.is_completed ? '✓ Completed' : `${progress}% watched`}
+          </Text>
+          <Text style={styles.watchedAt}>
+            {new Date(item.last_watched).toLocaleDateString()}
+          </Text>
+        </View>
+        {item.is_completed ? (
+          <Ionicons name="checkmark-circle" size={22} color={COLORS.success} />
+        ) : (
+          <Ionicons name="play-circle-outline" size={22} color={COLORS.neon} />
+        )}
+      </TouchableOpacity>
+    );
+  },
+  (prevProps, nextProps) => {
+    return (
+      (prevProps.item.progress_id || prevProps.item.episode_id) === (nextProps.item.progress_id || nextProps.item.episode_id) &&
+      prevProps.item.progress_seconds === nextProps.item.progress_seconds &&
+      prevProps.item.is_completed === nextProps.item.is_completed &&
+      prevProps.item.last_watched === nextProps.item.last_watched
+    );
+  }
+);
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },

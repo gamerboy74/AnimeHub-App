@@ -1,16 +1,19 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useMemo } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity, Image,
-  Dimensions, RefreshControl, ActivityIndicator, FlatList,
+  View, Text, ScrollView, StyleSheet, TouchableOpacity,
+  Dimensions, RefreshControl, ActivityIndicator, FlatList, Alert,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { userAPI } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
 import AnimeCard from '../../src/components/ui/AnimeCard';
+
 
 const { width } = Dimensions.get('window');
 
@@ -20,58 +23,114 @@ export default function LibraryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const userId = user?.id;
+  const queryClient = useQueryClient();
 
   const [activeTab, setActiveTab] = useState<LibraryTab>('watchlist');
-  const [continueWatching, setContinueWatching] = useState<any[]>([]);
-  const [watchlist, setWatchlist] = useState<any[]>([]);
-  const [completed, setCompleted] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   const scrollOffset = useRef(0);
 
   const cardWidth = width * 0.75 + SPACING.md;
 
-  const fetchData = useCallback(async () => {
-    if (!user) { setLoading(false); return; }
-    try {
-      const [progRes, wlRes] = await Promise.all([
-        userAPI.getProgress(user.id),
-        userAPI.getWatchlist(user.id),
-      ]);
-      
-      const allProgress = progRes.data || [];
-      
-      // Keep only the most recently watched episode per anime
-      const uniqueProgress = allProgress.filter((p, index, self) => 
-        index === self.findIndex(t => t.anime_id === p.anime_id)
-      );
+  // Cached — shared with Profile and Watchlist screens
+  const { data: progressData = [], isLoading: loadingProgress } = useQuery({
+    queryKey: ['user', userId, 'history'],
+    staleTime: 30 * 1000,
+    gcTime: 5 * 60 * 1000,
+    enabled: !!userId,
+    queryFn: async () => {
+      const { data, error } = await userAPI.getProgress(userId!);
+      if (error) {
+        Alert.alert('Error', 'Could not load watch history.');
+        throw error;
+      }
+      return data || [];
+    },
+  });
 
-      const isAnimeCompleted = (p: any) => 
-        p.is_completed && p.total_episodes && p.episode_number === p.total_episodes;
+  const { data: watchlistData = [], isLoading: loadingWatchlist } = useQuery({
+    queryKey: ['user', userId, 'watchlist'],
+    staleTime: 60 * 1000,
+    gcTime: 5 * 60 * 1000,
+    enabled: !!userId,
+    queryFn: async () => {
+      const { data, error } = await userAPI.getWatchlist(userId!);
+      if (error) {
+        Alert.alert('Error', 'Could not load watchlist.');
+        throw error;
+      }
+      return data || [];
+    },
+  });
 
-      // Continue Watching: anime that are not completely finished
-      setContinueWatching(uniqueProgress.filter(p => !isAnimeCompleted(p)).slice(0, 15));
-      // Completed: fully finished anime
-      setCompleted(uniqueProgress.filter(p => isAnimeCompleted(p)));
-      // Watchlist
-      setWatchlist(wlRes.data || []);
-      
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+  const loading = loadingProgress || loadingWatchlist;
+
+  // Memoized — avoids recomputing on each render triggered by tab switch
+  const uniqueProgress = useMemo(
+    () => progressData.filter((p, index, self) =>
+      index === self.findIndex(t => t.anime_id === p.anime_id)
+    ),
+    [progressData],
+  );
+  const isAnimeCompleted = useCallback(
+    (p: any) => p.is_completed && p.total_episodes && p.episode_number === p.total_episodes,
+    [],
+  );
+  const continueWatching = useMemo(
+    () => uniqueProgress.filter(p => !isAnimeCompleted(p)).slice(0, 15),
+    [uniqueProgress, isAnimeCompleted],
+  );
+  const completed = useMemo(
+    () => uniqueProgress.filter(p => isAnimeCompleted(p)),
+    [uniqueProgress, isAnimeCompleted],
+  );
+  const watchlist = watchlistData;
+
+  const tabData = useMemo(() => {
+    switch (activeTab) {
+      case 'watchlist': return watchlist.map((item: any) => item.anime);
+      case 'completed': return completed;
+      case 'dropped':   return [];
+      default:           return [];
     }
-  }, [user]);
+  }, [activeTab, watchlist, completed]);
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['user', userId, 'history'] }),
+      queryClient.invalidateQueries({ queryKey: ['user', userId, 'watchlist'] }),
+    ]);
+    setRefreshing(false);
+  }, [queryClient, userId]);
+
+  // Only invalidate on focus if the cached data is already stale.
+  // This prevents a network round-trip every single time the user taps
+  // the Library tab when the data is still fresh.
   useFocusEffect(
     useCallback(() => {
-      fetchData();
-    }, [fetchData])
+      if (!userId) return;
+      const STALE_MS = 30 * 1000; // must match query staleTime
+      const historyState = queryClient.getQueryState(['user', userId, 'history']);
+      const wlState     = queryClient.getQueryState(['user', userId, 'watchlist']);
+      const now = Date.now();
+      if (!historyState?.dataUpdatedAt || now - historyState.dataUpdatedAt > STALE_MS) {
+        queryClient.invalidateQueries({ queryKey: ['user', userId, 'history'] });
+      }
+      if (!wlState?.dataUpdatedAt || now - wlState.dataUpdatedAt > STALE_MS) {
+        queryClient.invalidateQueries({ queryKey: ['user', userId, 'watchlist'] });
+      }
+    }, [queryClient, userId])
   );
 
-  const onRefresh = () => { setRefreshing(true); fetchData(); };
+  const handleContinueWatchingPress = useCallback((episodeId: string) => {
+    router.push(`/watch/${episodeId}`);
+  }, [router]);
+
+  const handleGridItemPress = useCallback((animeId: string) => {
+    router.push(`/anime/${animeId}`);
+  }, [router]);
 
   const getTabData = () => {
     switch (activeTab) {
@@ -152,53 +211,13 @@ export default function LibraryScreen() {
               }}
               scrollEventThrottle={16}
             >
-              {continueWatching.map((item, idx) => {
-                const progress = item.episode_duration > 0
-                  ? (item.progress_seconds / item.episode_duration) * 100
-                  : item.progress_percentage || 0;
-                
-                return (
-                  <TouchableOpacity 
-                    key={item.id || item.episode_id || `cw-${idx}`} 
-                    style={styles.continueCard}
-                    onPress={() => router.push(`/watch/${item.episode_id}`)}
-                  >
-                    <View style={styles.continueThumbBox}>
-                      <Image 
-                        source={{ uri: item.thumbnail_url || item.poster_url }} 
-                        style={styles.continueThumb}
-                        resizeMode="cover"
-                      />
-                      {/* Subtle full-image dim so image doesn't blow out */}
-                      <View style={styles.continueOverlay} />
-                      {/* Heavy bottom gradient — makes progress bar + labels crystal clear */}
-                      <LinearGradient
-                        colors={['transparent', 'rgba(8,8,16,0.7)', 'rgba(8,8,16,0.95)']}
-                        locations={[0.3, 0.7, 1]}
-                        style={styles.bottomGradient}
-                      />
-                      <View style={styles.continueProgressBox}>
-                        <View style={styles.progressBg}>
-                          <View style={[styles.progressFill, { width: `${Math.min(progress, 100)}%` }]} />
-                        </View>
-                        <View style={styles.progressLabels}>
-                          <Text style={styles.progressLabel}>EP {item.episode_number.toString().padStart(2, '0')} / {item.total_episodes || '??'}</Text>
-                          <Text style={styles.progressLabel}>
-                            {item.episode_duration 
-                              ? `${Math.max(0, Math.round((item.episode_duration - item.progress_seconds) / 60))}M LEFT` 
-                              : `${Math.floor(item.progress_seconds / 60)}M WATCHED`}
-                          </Text>
-                        </View>
-                      </View>
-                      <View style={styles.playIconBox}>
-                        <Ionicons name="play" size={24} color={COLORS.bg} style={{ marginLeft: 3 }} />
-                      </View>
-                    </View>
-                    <Text style={styles.continueCardTitle} numberOfLines={1}>{item.anime_title}</Text>
-                    <Text style={styles.continueCardSub}>{item.genres?.[0] || 'Anime'} • Episode {item.episode_number}</Text>
-                  </TouchableOpacity>
-                );
-              })}
+              {continueWatching.map((item, idx) => (
+                <ContinueWatchingItem
+                  key={item.id || item.episode_id || `cw-${idx}`}
+                  item={item}
+                  onPress={handleContinueWatchingPress}
+                />
+              ))}
             </ScrollView>
           </View>
         )}
@@ -233,39 +252,19 @@ export default function LibraryScreen() {
 
           {loading ? (
             <ActivityIndicator color={COLORS.neon} style={{ marginTop: SPACING.xl }} />
-          ) : getTabData().length === 0 ? (
+          ) : tabData.length === 0 ? (
             <View style={styles.emptyGrid}>
               <Ionicons name="cube-outline" size={48} color={COLORS.textMuted} />
               <Text style={styles.emptyGridText}>NO DATA IN {activeTab.toUpperCase()}</Text>
             </View>
           ) : (
             <View style={styles.grid}>
-              {getTabData().map((anime, idx) => (
-                <TouchableOpacity 
-                  key={anime?.id || anime?.anime_id || `grid-${idx}`} 
-                  style={styles.gridItem}
-                  onPress={() => router.push(`/anime/${anime?.id || anime?.anime_id}`)}
-                >
-                  <View style={styles.posterBox}>
-                    <Image 
-                      source={{ uri: anime.poster_url }} 
-                      style={styles.gridPoster} 
-                      resizeMode="cover"
-                    />
-                    {anime.type && (
-                      <View style={styles.typeBadge}>
-                        <Text style={styles.typeBadgeText}>{anime.type.toUpperCase()}</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={styles.gridTitle} numberOfLines={1}>{anime.title}</Text>
-                  <View style={styles.gridMeta}>
-                    <Ionicons name="star" size={10} color={COLORS.neonCyan} />
-                    <Text style={styles.gridRating}>{Number(anime.rating || 0).toFixed(1)}</Text>
-                    <Text style={styles.gridSeparator}>•</Text>
-                    <Text style={styles.gridType}>{anime.type || 'Series'}</Text>
-                  </View>
-                </TouchableOpacity>
+              {tabData.map((anime: any, idx: number) => (
+                <LibraryGridItem
+                  key={anime?.id || anime?.anime_id || `grid-${idx}`}
+                  anime={anime}
+                  onPress={handleGridItemPress}
+                />
               ))}
             </View>
           )}
@@ -380,3 +379,117 @@ const styles = StyleSheet.create({
   emptyGrid: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 60, gap: SPACING.md },
   emptyGridText: { fontSize: 11, color: COLORS.textMuted, fontWeight: '800', letterSpacing: 2 },
 });
+
+// ─── MEMOIZED CONTINUE WATCHING ITEM ───────────────────────────────────────────
+interface ContinueWatchingItemProps {
+  item: any;
+  onPress: (episodeId: string) => void;
+}
+
+const ContinueWatchingItem = React.memo(
+  ({ item, onPress }: ContinueWatchingItemProps) => {
+    const progress = item.episode_duration > 0
+      ? (item.progress_seconds / item.episode_duration) * 100
+      : item.progress_percentage || 0;
+
+    return (
+      <TouchableOpacity 
+        style={styles.continueCard}
+        onPress={() => onPress(item.episode_id)}
+      >
+        <View style={styles.continueThumbBox}>
+          <Image 
+            source={{ uri: item.thumbnail_url || item.poster_url }} 
+            style={styles.continueThumb}
+            contentFit="cover"
+            transition={200}
+          />
+          {/* Subtle full-image dim so image doesn't blow out */}
+          <View style={styles.continueOverlay} />
+          {/* Heavy bottom gradient — makes progress bar + labels crystal clear */}
+          <LinearGradient
+            colors={['transparent', 'rgba(8,8,16,0.7)', 'rgba(8,8,16,0.95)']}
+            locations={[0.3, 0.7, 1]}
+            style={styles.bottomGradient}
+          />
+          <View style={styles.continueProgressBox}>
+            <View style={styles.progressBg}>
+              <View style={[styles.progressFill, { width: `${Math.min(progress, 100)}%` }]} />
+            </View>
+            <View style={styles.progressLabels}>
+              <Text style={styles.progressLabel}>EP {item.episode_number.toString().padStart(2, '0')} / {item.total_episodes || '??'}</Text>
+              <Text style={styles.progressLabel}>
+                {item.episode_duration 
+                  ? `${Math.max(0, Math.round((item.episode_duration - item.progress_seconds) / 60))}M LEFT` 
+                  : `${Math.floor(item.progress_seconds / 60)}M WATCHED`}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.playIconBox}>
+            <Ionicons name="play" size={24} color={COLORS.bg} style={{ marginLeft: 3 }} />
+          </View>
+        </View>
+        <Text style={styles.continueCardTitle} numberOfLines={1}>{item.anime_title}</Text>
+        <Text style={styles.continueCardSub}>{item.genres?.[0] || 'Anime'} • Episode {item.episode_number}</Text>
+      </TouchableOpacity>
+    );
+  },
+  (prevProps, nextProps) => {
+    return (
+      prevProps.item.id === nextProps.item.id &&
+      prevProps.item.episode_id === nextProps.item.episode_id &&
+      prevProps.item.progress_seconds === nextProps.item.progress_seconds &&
+      prevProps.item.progress_percentage === nextProps.item.progress_percentage &&
+      prevProps.item.episode_number === nextProps.item.episode_number
+    );
+  }
+);
+
+// ─── MEMOIZED LIBRARY GRID ITEM ────────────────────────────────────────────────
+interface LibraryGridItemProps {
+  anime: any;
+  onPress: (animeId: string) => void;
+}
+
+const LibraryGridItem = React.memo(
+  ({ anime, onPress }: LibraryGridItemProps) => {
+    if (!anime) return null;
+    return (
+      <TouchableOpacity 
+        style={styles.gridItem}
+        onPress={() => onPress(anime.id || anime.anime_id)}
+      >
+        <View style={styles.posterBox}>
+          <Image 
+            source={{ uri: anime.poster_url }} 
+            style={styles.gridPoster} 
+            contentFit="cover"
+            transition={200}
+          />
+          {anime.type && (
+            <View style={styles.typeBadge}>
+              <Text style={styles.typeBadgeText}>{anime.type.toUpperCase()}</Text>
+            </View>
+          )}
+        </View>
+        <Text style={styles.gridTitle} numberOfLines={1}>{anime.title}</Text>
+        <View style={styles.gridMeta}>
+          <Ionicons name="star" size={10} color={COLORS.neonCyan} />
+          <Text style={styles.gridRating}>{Number(anime.rating || 0).toFixed(1)}</Text>
+          <Text style={styles.gridSeparator}>•</Text>
+          <Text style={styles.gridType}>{anime.type || 'Series'}</Text>
+        </View>
+      </TouchableOpacity>
+    );
+  },
+  (prevProps, nextProps) => {
+    const idA = prevProps.anime?.id || prevProps.anime?.anime_id;
+    const idB = nextProps.anime?.id || nextProps.anime?.anime_id;
+    return (
+      idA === idB &&
+      prevProps.anime?.poster_url === nextProps.anime?.poster_url &&
+      prevProps.anime?.title === nextProps.anime?.title &&
+      prevProps.anime?.rating === nextProps.anime?.rating
+    );
+  }
+);

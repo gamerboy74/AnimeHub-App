@@ -1,115 +1,117 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
-  View, Text, ScrollView, Image, StyleSheet,
+  View, Text, ScrollView, StyleSheet,
   TouchableOpacity, Dimensions, ActivityIndicator, Alert,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
-import { supabase, animeAPI, episodeAPI, reviewAPI, userAPI, AnimeWithStats, Episode, Review } from '../../src/lib/supabase';
+import { supabase, userAPI, AnimeWithStats, Episode, Review } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
+import { useAnimeDetails, useEpisodes } from '../../src/hooks/useQueries';
+import { useToggleFavorite, useToggleWatchlist } from '../../src/hooks/useOptimisticMutations';
 
 const { width, height } = Dimensions.get('window');
 
 export default function AnimeDetailScreen() {
   const params = useLocalSearchParams();
-  const animeId = typeof params.id === 'string' ? params.id : (Array.isArray(params.id) ? params.id[0] : '');
+  const animeId = useMemo(() => {
+    const raw = params.id;
+    if (typeof raw === 'string') return raw;
+    if (Array.isArray(raw)) return raw[0] ?? '';
+    return '';
+  }, [params.id]);
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user, session } = useAuth();
+  const { user } = useAuth();
 
-  const [anime, setAnime] = useState<AnimeWithStats | null>(null);
-  const [episodes, setEpisodes] = useState<Episode[]>([]);
+  // ── Cached data via TanStack Query (survives tab switches within staleTime) ──
+  const { data: anime = null, isLoading: loadingAnime } = useAnimeDetails(animeId);
+  const { data: allEpisodes = [], isLoading: loadingEpisodes } = useEpisodes(animeId);
+  const episodes = useMemo(
+    () => allEpisodes.filter(ep => !!ep.video_url?.trim()),
+    [allEpisodes],
+  );
+
+  // ── User-specific state (not cached globally — per-user) ──────────────────
   const [reviews, setReviews] = useState<Review[]>([]);
-  const [loading, setLoading] = useState(true);
   const [isFav, setIsFav] = useState(false);
   const [inWatchlist, setInWatchlist] = useState(false);
   const [activeTab, setActiveTab] = useState<'episodes' | 'reviews' | 'info'>('episodes');
-  // Resume state — set when the user has watch progress for this anime
   const [resumeEpisodeId, setResumeEpisodeId] = useState<string | null>(null);
   const [resumeProgress, setResumeProgress] = useState<{ epNum: number; seconds: number } | null>(null);
+  const [loadingUser, setLoadingUser] = useState(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      if (animeId) {
-        loadData();
-      }
-    }, [animeId])
-  );
+  const loading = loadingAnime || loadingEpisodes;
 
-  async function loadData() {
-    setLoading(true);
-    try {
-      const [animeRes, epRes, revRes] = await Promise.all([
-        animeAPI.getById(animeId),
-        episodeAPI.getByAnime(animeId),
-        reviewAPI.getByAnime(animeId),
-      ]);
-      if (animeRes.data) setAnime(animeRes.data);
-      // Only keep episodes that have a working stream URL
-      if (epRes.data) setEpisodes(epRes.data.filter(ep => !!ep.video_url?.trim()));
-      if (revRes.data) setReviews(revRes.data as any);
+  // Fetch user-specific data (reviews + fav/watchlist/progress) separately
+  useEffect(() => {
+    if (!animeId) return;
+    let cancelled = false;
 
-      // Check user state with targeted queries (no full-table scan)
-      if (user) {
-        const [favRes, wlRes, progressRes] = await Promise.all([
-          supabase
-            .from('user_favorites')
-            .select('id')
-            .eq('user_id', user.id)
-            .eq('anime_id', animeId)
-            .maybeSingle(),
-          supabase
-            .from('user_watchlist')
-            .select('id')
-            .eq('user_id', user.id)
-            .eq('anime_id', animeId)
-            .maybeSingle(),
-          userAPI.getAnimeProgress(user.id, animeId),
-        ]);
-        setIsFav(!!favRes.data);
-        setInWatchlist(!!wlRes.data);
+    const loadUserData = async () => {
+      setLoadingUser(true);
+      try {
+        const { data: revData } = await supabase
+          .from('reviews')
+          .select('*, users(username, avatar_url)')
+          .eq('anime_id', animeId)
+          .order('created_at', { ascending: false });
+        if (!cancelled && revData) setReviews(revData as any);
 
-        if (progressRes.data) {
-          const prog = progressRes.data as any;
-          setResumeEpisodeId(prog.episode_id);
-          setResumeProgress({
-            epNum: prog.episodes?.episode_number ?? 0,
-            seconds: prog.progress_seconds ?? 0,
-          });
-        } else {
-          setResumeEpisodeId(null);
-          setResumeProgress(null);
+        if (user) {
+          const [favRes, wlRes, progressRes] = await Promise.all([
+            supabase.from('user_favorites').select('id').eq('user_id', user.id).eq('anime_id', animeId).maybeSingle(),
+            supabase.from('user_watchlist').select('id').eq('user_id', user.id).eq('anime_id', animeId).maybeSingle(),
+            userAPI.getAnimeProgress(user.id, animeId),
+          ]);
+          if (cancelled) return;
+          setIsFav(!!favRes.data);
+          setInWatchlist(!!wlRes.data);
+          if (progressRes.data) {
+            const prog = progressRes.data as any;
+            setResumeEpisodeId(prog.episode_id);
+            setResumeProgress({ epNum: prog.episodes?.episode_number ?? 0, seconds: prog.progress_seconds ?? 0 });
+          } else {
+            setResumeEpisodeId(null);
+            setResumeProgress(null);
+          }
         }
+      } catch (e) {
+        console.error('[AnimeDetail] loadUserData error:', e);
+      } finally {
+        if (!cancelled) setLoadingUser(false);
       }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }
+    };
 
-  const toggleFav = async () => {
+    loadUserData();
+    return () => { cancelled = true; };
+  }, [animeId, user?.id]);
+
+  // ── Optimistic toggle mutations (UI updates instantly, DB writes in background) ──
+  const favMutation = useToggleFavorite({
+    userId: user?.id ?? '',
+    animeId,
+  });
+  const wlMutation = useToggleWatchlist({
+    userId: user?.id ?? '',
+    animeId,
+  });
+
+  const toggleFav = () => {
     if (!user) { router.push('/auth/login'); return; }
-    if (isFav) {
-      await userAPI.removeFavorite(user.id, animeId);
-      setIsFav(false);
-    } else {
-      await userAPI.addFavorite(user.id, animeId);
-      setIsFav(true);
-    }
+    const next = !isFav;
+    setIsFav(next);
+    favMutation.mutate(next);
   };
 
-  const toggleWatchlist = async () => {
+  const toggleWatchlist = () => {
     if (!user) { router.push('/auth/login'); return; }
-    if (inWatchlist) {
-      await userAPI.removeFromWatchlist(user.id, animeId);
-      setInWatchlist(false);
-    } else {
-      await userAPI.addToWatchlist(user.id, animeId);
-      setInWatchlist(true);
-    }
+    const next = !inWatchlist;
+    setInWatchlist(next);
+    wlMutation.mutate(next);
   };
 
   if (loading) {
@@ -130,7 +132,8 @@ export default function AnimeDetailScreen() {
           <Image
             source={{ uri: anime.banner_url || anime.poster_url || '' }}
             style={styles.banner}
-            resizeMode="cover"
+            contentFit="cover"
+            transition={200}
           />
           <View style={styles.bannerOverlay} />
 
@@ -147,7 +150,8 @@ export default function AnimeDetailScreen() {
             <Image
               source={{ uri: anime.poster_url || '' }}
               style={styles.poster}
-              resizeMode="cover"
+              contentFit="cover"
+              transition={200}
             />
             <View style={styles.posterInfo}>
               <Text style={styles.title}>{anime.title}</Text>
@@ -267,15 +271,15 @@ export default function AnimeDetailScreen() {
   );
 }
 
-function MetaBadge({ label, color }: { label: string; color?: string }) {
+const MetaBadge = React.memo(function MetaBadge({ label, color }: { label: string; color?: string }) {
   return (
     <View style={styles.metaBadge}>
       <Text style={[styles.metaBadgeText, color ? { color } : {}]}>{label}</Text>
     </View>
   );
-}
+});
 
-function StatItem({ icon, value, label }: any) {
+const StatItem = React.memo(function StatItem({ icon, value, label }: { icon: any; value: string; label: string }) {
   return (
     <View style={styles.statItem}>
       <Ionicons name={icon} size={16} color={COLORS.neon} />
@@ -283,9 +287,10 @@ function StatItem({ icon, value, label }: any) {
       <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
-}
+});
 
-function EpisodesTab({ episodes, anime, router, user }: any) {
+const EpisodesTab = React.memo(function EpisodesTab({ episodes, anime, router, user }: any) {
+  const isPremiumUser = user?.subscription_type === 'premium';
   return (
     <View style={styles.tabContent}>
       {episodes.length === 0 ? (
@@ -340,9 +345,9 @@ function EpisodesTab({ episodes, anime, router, user }: any) {
       )}
     </View>
   );
-}
+});
 
-function ReviewsTab({ reviews, anime, router, user }: any) {
+const ReviewsTab = React.memo(function ReviewsTab({ reviews, anime, router, user }: any) {
   return (
     <View style={styles.tabContent}>
       {reviews.length === 0 ? (
@@ -410,9 +415,9 @@ function ReviewsTab({ reviews, anime, router, user }: any) {
       )}
     </View>
   );
-}
+});
 
-function InfoTab({ anime }: { anime: AnimeWithStats }) {
+const InfoTab = React.memo(function InfoTab({ anime }: { anime: AnimeWithStats }) {
   return (
     <View style={styles.tabContent}>
       {anime.description && (
@@ -445,7 +450,7 @@ function InfoTab({ anime }: { anime: AnimeWithStats }) {
       ) : null}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },

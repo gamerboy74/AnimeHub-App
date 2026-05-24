@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
-  View, Text, TextInput, FlatList, StyleSheet, Modal,
-  TouchableOpacity, ActivityIndicator, ScrollView, Image, Pressable,
+  View, Text, TextInput, FlatList, StyleSheet, Modal, Alert,
+  TouchableOpacity, ActivityIndicator, ScrollView, Pressable,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -130,6 +131,7 @@ export default function SearchScreen() {
       setResults(res.data || []);
     } catch (e) {
       console.error(e);
+      Alert.alert('Search Error', 'Could not complete search. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -142,9 +144,43 @@ export default function SearchScreen() {
     debounceRef.current = setTimeout(() => doSearch(text), 400);
   };
 
-  const onGenrePress = (genre: string) => {
+  const onGenrePress = useCallback((genre: string) => {
     router.push(`/genre/${genre}`);
-  };
+  }, [router]);
+
+  const handleCardPress = useCallback((id: string) => {
+    router.push(`/anime/${id}`);
+  }, [router]);
+
+  const renderSearchResultItem = useCallback(({ item }: { item: Anime }) => (
+    <AnimeCard
+      anime={item}
+      onPress={() => handleCardPress(item.id)}
+      showStats
+    />
+  ), [handleCardPress]);
+
+  const renderRecommendationItem = useCallback(({ item }: { item: AnimeWithStats }) => (
+    <AnimeCard
+      anime={item}
+      onPress={() => router.push(`/anime/${item.id}`)}
+      showStats
+    />
+  ), [router]);
+
+  const recommendationKeyExtractor = useCallback((item: AnimeWithStats) => item.id, []);
+
+  const searchResultKeyExtractor = useCallback((item: Anime) => item.id, []);
+
+  const SearchResultsHeader = useCallback(() => (
+    <TouchableOpacity 
+      onPress={() => { setResults([]); setQuery(''); }}
+      style={styles.backButton}
+    >
+      <Ionicons name="arrow-back" size={20} color={COLORS.neon} />
+      <Text style={styles.backButtonText}>BACK TO EXPLORE</Text>
+    </TouchableOpacity>
+  ), []);
 
   const renderContent = () => {
     if (loading) {
@@ -160,27 +196,13 @@ export default function SearchScreen() {
       return (
         <FlatList
           data={results}
-          keyExtractor={(item) => item.id}
+          keyExtractor={searchResultKeyExtractor}
           numColumns={2}
           contentContainerStyle={styles.grid}
           columnWrapperStyle={styles.gridRow}
-          renderItem={({ item }) => (
-            <AnimeCard
-              anime={item}
-              onPress={() => router.push(`/anime/${item.id}`)}
-              showStats
-            />
-          )}
+          renderItem={renderSearchResultItem}
           showsVerticalScrollIndicator={false}
-          ListHeaderComponent={() => (
-            <TouchableOpacity 
-              onPress={() => { setResults([]); setQuery(''); }}
-              style={styles.backButton}
-            >
-              <Ionicons name="arrow-back" size={20} color={COLORS.neon} />
-              <Text style={styles.backButtonText}>BACK TO EXPLORE</Text>
-            </TouchableOpacity>
-          )}
+          ListHeaderComponent={SearchResultsHeader}
         />
       );
     }
@@ -240,7 +262,7 @@ export default function SearchScreen() {
               style={[styles.bentoTile, styles.bentoTileWide]} 
               onPress={() => onGenrePress('Action')}
             >
-              <Image source={{ uri: genreImages['action'] ?? BENTO_GENRES[0].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+              <Image source={{ uri: genreImages['action'] ?? BENTO_GENRES[0].img }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
               <View style={styles.bentoDim} />
               <LinearGradient colors={['transparent', 'rgba(255,115,70,0.5)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
               <View style={styles.bentoContent}>
@@ -252,7 +274,7 @@ export default function SearchScreen() {
             <View style={styles.bentoRow}>
               {/* Sci-Fi - Square */}
               <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Sci-Fi')}>
-                <Image source={{ uri: genreImages['sci-fi'] ?? BENTO_GENRES[1].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                <Image source={{ uri: genreImages['sci-fi'] ?? BENTO_GENRES[1].img }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
                 <View style={styles.bentoDim} />
                 <LinearGradient colors={['transparent', 'rgba(0,245,255,0.5)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
@@ -262,7 +284,7 @@ export default function SearchScreen() {
 
               {/* Fantasy - Square */}
               <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Fantasy')}>
-                <Image source={{ uri: genreImages['fantasy'] ?? BENTO_GENRES[2].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                <Image source={{ uri: genreImages['fantasy'] ?? BENTO_GENRES[2].img }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
                 <View style={styles.bentoDim} />
                 <LinearGradient colors={['transparent', 'rgba(191,95,255,0.5)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
@@ -274,7 +296,7 @@ export default function SearchScreen() {
             <View style={[styles.bentoRow, { marginTop: SPACING.md }]}>
               {/* Adventure - Square */}
               <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Adventure')}>
-                <Image source={{ uri: genreImages['adventure'] ?? BENTO_GENRES[3].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                <Image source={{ uri: genreImages['adventure'] ?? BENTO_GENRES[3].img }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
                 <View style={styles.bentoDim} />
                 <LinearGradient colors={['transparent', 'rgba(255,184,48,0.5)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
@@ -284,7 +306,7 @@ export default function SearchScreen() {
 
               {/* Romance - Square */}
               <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Romance')}>
-                <Image source={{ uri: genreImages['romance'] ?? BENTO_GENRES[4].img }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                <Image source={{ uri: genreImages['romance'] ?? BENTO_GENRES[4].img }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
                 <View style={styles.bentoDim} />
                 <LinearGradient colors={['transparent', 'rgba(255,45,120,0.5)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
@@ -298,16 +320,16 @@ export default function SearchScreen() {
         {/* Popular Recommendations */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Popular Recommendations</Text>
-          <View style={styles.recommendationsGrid}>
-            {recommendations.map((item) => (
-              <AnimeCard
-                key={item.id}
-                anime={item}
-                onPress={() => router.push(`/anime/${item.id}`)}
-                showStats
-              />
-            ))}
-          </View>
+          <FlatList
+            data={recommendations}
+            keyExtractor={recommendationKeyExtractor}
+            renderItem={renderRecommendationItem}
+            numColumns={2}
+            columnWrapperStyle={styles.gridRow}
+            contentContainerStyle={{ gap: SPACING.md }}
+            scrollEnabled={false}
+            showsVerticalScrollIndicator={false}
+          />
         </View>
 
         {/* Top Studios */}

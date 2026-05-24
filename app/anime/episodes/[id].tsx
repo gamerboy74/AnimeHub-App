@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, FlatList, StyleSheet, TouchableOpacity, Alert, ActivityIndicator,
 } from 'react-native';
@@ -6,38 +6,54 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { COLORS, SPACING, RADIUS } from '../../../src/constants/theme';
-import { episodeAPI, Episode } from '../../../src/lib/supabase';
+import { Episode } from '../../../src/lib/supabase';
 import { useAuth } from '../../../src/context/AuthContext';
+import { useEpisodes } from '../../../src/hooks/useQueries';
+
+// Row height must match epRow.paddingVertical + content height + separator
+const ITEM_HEIGHT = 56; // paddingVertical * 2 + ~24 content
+const SEPARATOR_HEIGHT = 1;
 
 export default function EpisodesListScreen() {
   const params = useLocalSearchParams();
-  const animeId = typeof params.id === 'string' ? params.id : (Array.isArray(params.id) ? params.id[0] : '');
+  const animeId = useMemo(() => {
+    const raw = params.id;
+    if (typeof raw === 'string') return raw;
+    if (Array.isArray(raw)) return raw[0] ?? '';
+    return '';
+  }, [params.id]);
   const animeTitle = typeof params.animeTitle === 'string' ? params.animeTitle : '';
-  
+
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  
-  const [episodes, setEpisodes] = useState<Episode[]>([]);
-  const [loading, setLoading] = useState(true);
+
   const [filter, setFilter] = useState<'all' | 'free' | 'premium'>('all');
 
-  useEffect(() => {
-    if (animeId) {
-      setLoading(true);
-      episodeAPI.getByAnime(animeId).then(({ data }) => {
-        // Only show episodes that have a working stream URL
-        setEpisodes((data || []).filter(ep => !!ep.video_url?.trim()));
-        setLoading(false);
-      });
-    }
-  }, [animeId]);
+  // Cached — navigating back and re-entering won't re-fetch within staleTime
+  const { data: allEpisodes = [], isLoading: loading, isError } = useEpisodes(animeId);
 
-  const filtered = episodes.filter(ep =>
-    filter === 'all' ? true : filter === 'free' ? !ep.is_premium : ep.is_premium
+  // Alert only when error status actually changes (not on every render)
+  useEffect(() => {
+    if (isError) {
+      Alert.alert('Error', 'Could not load episodes. Please go back and try again.');
+    }
+  }, [isError]);
+
+  // Only show episodes that have a working stream URL
+  const episodes = useMemo(
+    () => allEpisodes.filter(ep => !!ep.video_url?.trim()),
+    [allEpisodes],
   );
 
-  const handleEpPress = (ep: Episode) => {
+  const filtered = useMemo(
+    () => episodes.filter(ep =>
+      filter === 'all' ? true : filter === 'free' ? !ep.is_premium : ep.is_premium
+    ),
+    [episodes, filter],
+  );
+
+  const handleEpPress = useCallback((ep: Episode) => {
     if (ep.is_premium && user?.subscription_type !== 'premium') {
       Alert.alert('Premium Content', 'Upgrade to premium to watch this episode.', [
         { text: 'Cancel', style: 'cancel' },
@@ -46,7 +62,29 @@ export default function EpisodesListScreen() {
       return;
     }
     router.push(`/watch/${ep.id}?animeTitle=${encodeURIComponent(animeTitle)}`);
-  };
+  }, [router, animeTitle, user?.subscription_type]);
+
+  const renderItem = useCallback(({ item: ep }: { item: Episode }) => (
+    <EpisodeRow
+      ep={ep}
+      userSubscription={user?.subscription_type}
+      onPress={handleEpPress}
+    />
+  ), [user?.subscription_type, handleEpPress]);
+
+  const keyExtractor = useCallback((item: Episode) => item.id, []);
+
+  // Static component — no deps, no need for useCallback
+  const ItemSeparator = () => <View style={styles.separator} />;
+
+  const getItemLayout = useCallback(
+    (_: any, index: number) => ({
+      length: ITEM_HEIGHT,
+      offset: (ITEM_HEIGHT + SEPARATOR_HEIGHT) * index,
+      index,
+    }),
+    [],
+  );
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -81,40 +119,68 @@ export default function EpisodesListScreen() {
       ) : (
         <FlatList
           data={filtered}
-          keyExtractor={item => item.id}
+          keyExtractor={keyExtractor}
           contentContainerStyle={styles.list}
-          renderItem={({ item: ep }) => (
-            <TouchableOpacity style={styles.epRow} onPress={() => handleEpPress(ep)}>
-              <View style={styles.epLeft}>
-                <View style={[styles.epNumBox, ep.is_premium && styles.epNumBoxPremium]}>
-                  {ep.is_premium
-                    ? <Ionicons name="star" size={14} color={COLORS.neonGold} />
-                    : <Text style={styles.epNumText}>{ep.episode_number}</Text>
-                  }
-                </View>
-              </View>
-              <View style={styles.epMid}>
-                <Text style={styles.epTitle} numberOfLines={1}>
-                  {ep.title || `Episode ${ep.episode_number}`}
-                </Text>
-                <View style={styles.epMetaRow}>
-                  {ep.duration && <Text style={styles.epMeta}>{Math.round(ep.duration / 60)}m</Text>}
-                  {ep.air_date && <Text style={styles.epMeta}>• {ep.air_date}</Text>}
-                  {ep.is_premium && <Text style={[styles.epMeta, { color: COLORS.neonGold }]}>• PREMIUM</Text>}
-                </View>
-              </View>
-              {ep.is_premium && user?.subscription_type !== 'premium'
-                ? <Ionicons name="lock-closed-outline" size={18} color={COLORS.neonGold} />
-                : <Ionicons name="play-circle-outline" size={24} color={COLORS.neon} />
-              }
-            </TouchableOpacity>
-          )}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          renderItem={renderItem}
+          ItemSeparatorComponent={ItemSeparator}
+          getItemLayout={getItemLayout}
+          removeClippedSubviews
+          windowSize={5}
+          maxToRenderPerBatch={8}
+          initialNumToRender={10}
         />
       )}
     </View>
   );
 }
+
+// ─── MEMOIZED EPISODE ROW ─────────────────────────────────────────────────────
+interface EpisodeRowProps {
+  ep: Episode;
+  userSubscription?: string;
+  onPress: (ep: Episode) => void;
+}
+
+const EpisodeRow = React.memo(
+  ({ ep, userSubscription, onPress }: EpisodeRowProps) => {
+    const isLocked = ep.is_premium && userSubscription !== 'premium';
+    return (
+      <TouchableOpacity style={styles.epRow} onPress={() => onPress(ep)}>
+        <View style={styles.epLeft}>
+          <View style={[styles.epNumBox, ep.is_premium && styles.epNumBoxPremium]}>
+            {ep.is_premium
+              ? <Ionicons name="star" size={14} color={COLORS.neonGold} />
+              : <Text style={styles.epNumText}>{ep.episode_number}</Text>
+            }
+          </View>
+        </View>
+        <View style={styles.epMid}>
+          <Text style={styles.epTitle} numberOfLines={1}>
+            {ep.title || `Episode ${ep.episode_number}`}
+          </Text>
+          <View style={styles.epMetaRow}>
+            {ep.duration && <Text style={styles.epMeta}>{Math.round(ep.duration / 60)}m</Text>}
+            {ep.air_date && <Text style={styles.epMeta}>• {ep.air_date}</Text>}
+            {ep.is_premium && <Text style={[styles.epMeta, { color: COLORS.neonGold }]}>• PREMIUM</Text>}
+          </View>
+        </View>
+        {isLocked
+          ? <Ionicons name="lock-closed-outline" size={18} color={COLORS.neonGold} />
+          : <Ionicons name="play-circle-outline" size={24} color={COLORS.neon} />
+        }
+      </TouchableOpacity>
+    );
+  },
+  (prevProps, nextProps) => {
+    return (
+      prevProps.ep.id === nextProps.ep.id &&
+      prevProps.userSubscription === nextProps.userSubscription &&
+      prevProps.ep.episode_number === nextProps.ep.episode_number &&
+      prevProps.ep.title === nextProps.ep.title &&
+      prevProps.ep.is_premium === nextProps.ep.is_premium
+    );
+  }
+);
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },

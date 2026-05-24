@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import React, { useCallback } from 'react';
+import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useQuery } from '@tanstack/react-query';
 import { COLORS, SPACING } from '../../src/constants/theme';
 import { animeAPI, Anime } from '../../src/lib/supabase';
 import AnimeCard from '../../src/components/ui/AnimeCard';
@@ -12,17 +13,35 @@ export default function GenreBrowseScreen() {
   const genre = name as string;
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [anime, setAnime] = useState<Anime[]>([]);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (genre) {
-      animeAPI.getByGenre(genre, 50).then(({ data }) => {
-        setAnime(data || []);
-        setLoading(false);
-      });
-    }
-  }, [genre]);
+  const { data: anime = [], isLoading: loading } = useQuery({
+    queryKey: ['anime', 'genre', genre],
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    enabled: !!genre,
+    queryFn: async (): Promise<Anime[]> => {
+      const { data, error } = await animeAPI.getByGenre(genre, 50);
+      if (error) {
+        Alert.alert('Error', `Could not load ${genre} anime. Please try again.`);
+        throw error;
+      }
+      return data || [];
+    },
+  });
+
+  const handleCardPress = useCallback((id: string) => {
+    router.push(`/anime/${id}`);
+  }, [router]);
+
+  const renderItem = useCallback(({ item }: { item: Anime }) => (
+    <AnimeCard
+      anime={item}
+      size="sm"
+      onPress={() => handleCardPress(item.id)}
+    />
+  ), [handleCardPress]);
+
+  const keyExtractor = useCallback((item: Anime) => item.id, []);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -46,17 +65,11 @@ export default function GenreBrowseScreen() {
       ) : (
         <FlatList
           data={anime}
-          keyExtractor={item => item.id}
+          keyExtractor={keyExtractor}
           numColumns={3}
           contentContainerStyle={styles.grid}
           columnWrapperStyle={styles.row}
-          renderItem={({ item }) => (
-            <AnimeCard
-              anime={item}
-              size="sm"
-              onPress={() => router.push(`/anime/${item.id}`)}
-            />
-          )}
+          renderItem={renderItem}
           showsVerticalScrollIndicator={false}
         />
       )}

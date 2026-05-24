@@ -35,6 +35,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
+  // ── Realtime: watch users table for subscription_type changes ──────────────
+  // When the user upgrades to premium (or is changed via Supabase dashboard),
+  // the context user object updates instantly — no manual refresh needed.
+  useEffect(() => {
+    if (!session?.user?.id) return;
+
+    const channel = supabase
+      .channel(`user-profile-${session.user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'users',
+          filter: `id=eq.${session.user.id}`,
+        },
+        (payload) => {
+          // Merge only the changed fields — don't replace the whole user object
+          setUser(prev => prev ? { ...prev, ...(payload.new as Partial<User>) } : prev);
+        },
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [session?.user?.id]);
+
   async function fetchUserProfile(userId: string) {
     try {
       const { data } = await userAPI.getProfile(userId);

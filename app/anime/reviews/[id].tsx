@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   FlatList, KeyboardAvoidingView, Platform, Alert, ActivityIndicator,
@@ -66,6 +66,18 @@ export default function ReviewsScreen() {
     }
   };
 
+  const renderItem = useCallback(({ item }: { item: any }) => (
+    <ReviewCard item={item} />
+  ), []);
+
+  const keyExtractor = useCallback((item: any) => item.id, []);
+
+  const ListEmpty = useCallback(() => (
+    <View style={styles.empty}>
+      <Text style={styles.emptyText}>No reviews yet. Be the first!</Text>
+    </View>
+  ), []);
+
   return (
     <KeyboardAvoidingView
       style={[styles.container, { paddingTop: insets.top }]}
@@ -127,43 +139,59 @@ export default function ReviewsScreen() {
       ) : (
         <FlatList
           data={reviews}
-          keyExtractor={item => item.id}
+          keyExtractor={keyExtractor}
           contentContainerStyle={styles.list}
-          renderItem={({ item }) => (
-            <View style={styles.reviewCard}>
-              <View style={styles.reviewTop}>
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>{item.users?.username?.[0]?.toUpperCase() || '?'}</Text>
-                </View>
-                <View style={styles.reviewMeta}>
-                  <Text style={styles.reviewUser}>{item.users?.username || 'Anonymous'}</Text>
-                  <View style={styles.stars}>
-                    {[1, 2, 3, 4, 5].map(i => (
-                      <Ionicons key={i} name={i <= (item.rating || 0) ? 'star' : 'star-outline'} size={11} color={COLORS.neonGold} />
-                    ))}
-                  </View>
-                </View>
-                <Text style={styles.reviewDate}>{new Date(item.created_at).toLocaleDateString()}</Text>
-              </View>
-              {item.is_spoiler && (
-                <View style={styles.spoilerWarn}>
-                  <Ionicons name="warning-outline" size={12} color={COLORS.neonPink} />
-                  <Text style={styles.spoilerWarnText}>CONTAINS SPOILERS</Text>
-                </View>
-              )}
-              <Text style={styles.reviewText}>{item.review_text}</Text>
-            </View>
-          )}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <Text style={styles.emptyText}>No reviews yet. Be the first!</Text>
-            </View>
-          }
+          renderItem={renderItem}
+          ListEmptyComponent={ListEmpty}
         />
       )}
     </KeyboardAvoidingView>
   );
 }
+
+// ─── MEMOIZED REVIEW CARD ─────────────────────────────────────────────────────
+interface ReviewCardProps {
+  item: any;
+}
+
+const ReviewCard = React.memo(
+  ({ item }: ReviewCardProps) => {
+    return (
+      <View style={styles.reviewCard}>
+        <View style={styles.reviewTop}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{item.users?.username?.[0]?.toUpperCase() || '?'}</Text>
+          </View>
+          <View style={styles.reviewMeta}>
+            <Text style={styles.reviewUser}>{item.users?.username || 'Anonymous'}</Text>
+            <View style={styles.stars}>
+              {[1, 2, 3, 4, 5].map(i => (
+                <Ionicons key={i} name={i <= (item.rating || 0) ? 'star' : 'star-outline'} size={11} color={COLORS.neonGold} />
+              ))}
+            </View>
+          </View>
+          <Text style={styles.reviewDate}>{new Date(item.created_at).toLocaleDateString()}</Text>
+        </View>
+        {item.is_spoiler && (
+          <View style={styles.spoilerWarn}>
+            <Ionicons name="warning-outline" size={12} color={COLORS.neonPink} />
+            <Text style={styles.spoilerWarnText}>CONTAINS SPOILERS</Text>
+          </View>
+        )}
+        <Text style={styles.reviewText}>{item.review_text}</Text>
+      </View>
+    );
+  },
+  (prevProps, nextProps) => {
+    return (
+      prevProps.item.id === nextProps.item.id &&
+      prevProps.item.rating === nextProps.item.rating &&
+      prevProps.item.review_text === nextProps.item.review_text &&
+      prevProps.item.is_spoiler === nextProps.item.is_spoiler &&
+      prevProps.item.users?.username === nextProps.item.users?.username
+    );
+  }
+);
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },

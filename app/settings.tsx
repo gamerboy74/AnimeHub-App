@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, Switch, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert,
   Modal, TextInput, KeyboardAvoidingView, Platform,
@@ -7,6 +7,7 @@ import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
 import { userAPI, supabase } from '../src/lib/supabase';
 import { useAuth } from '../src/context/AuthContext';
@@ -21,6 +22,10 @@ export default function SettingsScreen() {
   const [prefs, setPrefs] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  // Re-fetch user profile every time this screen is focused.
+  // Ensures subscription_type is current even if it was changed externally.
+  useFocusEffect(useCallback(() => { refreshUser(); }, [refreshUser]));
+
   // Dynamic lists and modal states
   const [cards, setCards] = useState<any[]>([
     { id: '1', brand: 'VISA', last4: '4242', expiry: '12/26', primary: true }
@@ -29,6 +34,7 @@ export default function SettingsScreen() {
   const [avatarInputUrl, setAvatarInputUrl] = useState('');
   const [passwordModalVisible, setPasswordModalVisible] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
   const [cardModalVisible, setCardModalVisible] = useState(false);
   const [cardNumInput, setCardNumInput] = useState('');
   const [cardExpiryInput, setCardExpiryInput] = useState('');
@@ -45,6 +51,7 @@ export default function SettingsScreen() {
     userAPI.getPreferences(user.id).then(({ data }) => {
       setPrefs(data || { 
         auto_play_next: true, 
+        auto_skip_intro: true,
         quality_preference: 'auto', 
         theme_preference: 'dark', 
         notification_settings: { push: true, email: true, recommendations: true },
@@ -106,6 +113,8 @@ export default function SettingsScreen() {
             <Image 
               source={{ uri: user.avatar_url || 'https://images.unsplash.com/photo-1511367461989-f85a21fda167?q=80&w=200' }} 
               style={styles.avatar} 
+              contentFit="cover"
+              transition={200}
             />
             <TouchableOpacity
               style={styles.editAvatarBtn}
@@ -169,20 +178,78 @@ export default function SettingsScreen() {
           )}
           <View style={styles.bentoActions}>
             {user.subscription_type === 'premium' ? (
-              <TouchableOpacity style={styles.secondaryAction} onPress={() => Alert.alert('Manage Plan', 'Subscription management coming soon!')}>  
-                <Text style={styles.secondaryActionText}>Manage Plan</Text>
-              </TouchableOpacity>
+              <>
+                <TouchableOpacity style={styles.primaryAction} onPress={() => router.push('/manage-plan' as any)}>
+                  <LinearGradient
+                    colors={[COLORS.neonGold, '#ff7346']}
+                    start={{x:0, y:0}} end={{x:1, y:0}}
+                    style={styles.actionGradient}
+                  >
+                    <Text style={styles.primaryActionText}>⚙️ Manage Plan</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.secondaryAction} onPress={() => router.push('/plans' as any)}>
+                  <Text style={styles.secondaryActionText}>View All Plans</Text>
+                </TouchableOpacity>
+              </>
             ) : (
-              <TouchableOpacity style={styles.primaryAction} onPress={() => Alert.alert('Upgrade to Premium', 'Premium plans coming soon! Stay tuned.')}>
-                <LinearGradient
-                  colors={[COLORS.neonGold, '#ff7346']}
-                  start={{x:0, y:0}} end={{x:1, y:0}}
-                  style={styles.actionGradient}
-                >
-                  <Text style={styles.primaryActionText}>⚡ Upgrade to Premium</Text>
-                </LinearGradient>
-              </TouchableOpacity>
+              <>
+                <TouchableOpacity style={styles.primaryAction} onPress={() => router.push('/premium' as any)}>
+                  <LinearGradient
+                    colors={[COLORS.neonGold, '#ff7346']}
+                    start={{x:0, y:0}} end={{x:1, y:0}}
+                    style={styles.actionGradient}
+                  >
+                    <Text style={styles.primaryActionText}>⚡ Upgrade to Premium</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.secondaryAction} onPress={() => router.push('/plans' as any)}>
+                  <Text style={styles.secondaryActionText}>Compare Plans</Text>
+                </TouchableOpacity>
+              </>
             )}
+          </View>
+        </BlurView>
+
+        {/* Playback Card */}
+        <BlurView intensity={30} style={styles.bentoCard}>
+          <View style={styles.cardHeader}>
+            <Ionicons name="play-circle" size={20} color={COLORS.neonCyan} />
+            <Text style={styles.cardTitle}>Playback</Text>
+          </View>
+          <View style={styles.cardBody}>
+            {/* Auto-play next episode toggle */}
+            <View style={styles.toggleRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.toggleLabel}>Auto-play Next Episode</Text>
+                <Text style={styles.toggleSub}>
+                  Automatically starts the next episode when the current one ends (5 second countdown)
+                </Text>
+              </View>
+              <Switch
+                value={prefs?.auto_play_next !== false}
+                onValueChange={(v) => updatePref('auto_play_next', v)}
+                trackColor={{ false: COLORS.border, true: COLORS.neonCyan }}
+                thumbColor={prefs?.auto_play_next !== false ? COLORS.bg : COLORS.textMuted}
+                ios_backgroundColor={COLORS.border}
+              />
+            </View>
+            {/* Auto-skip intro & outro toggle */}
+            <View style={[styles.toggleRow, { marginTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.04)', paddingTop: 16 }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.toggleLabel}>Auto-skip Intro &amp; Outro</Text>
+                <Text style={styles.toggleSub}>
+                  Automatically skips opening/ending credits when a skip button is available in the player
+                </Text>
+              </View>
+              <Switch
+                value={prefs?.auto_skip_intro !== false}
+                onValueChange={(v) => updatePref('auto_skip_intro', v)}
+                trackColor={{ false: COLORS.border, true: COLORS.neonCyan }}
+                thumbColor={prefs?.auto_skip_intro !== false ? COLORS.bg : COLORS.textMuted}
+                ios_backgroundColor={COLORS.border}
+              />
+            </View>
           </View>
         </BlurView>
 
@@ -351,12 +418,6 @@ export default function SettingsScreen() {
               value={prefs?.notification_settings?.email ?? false}
               onToggle={(v: boolean) => updatePref('notification_settings', { ...prefs?.notification_settings, email: v })}
             />
-            <PreferenceToggle 
-              label="Auto-Next Play" 
-              sub="Continuous viewing" 
-              value={prefs?.auto_play_next ?? true}
-              onToggle={(v: boolean) => updatePref('auto_play_next', v)}
-            />
           </View>
         </BlurView>
 
@@ -415,11 +476,25 @@ export default function SettingsScreen() {
                 secureTextEntry
                 autoCapitalize="none"
               />
+              <Text style={styles.modalLabel}>Confirm New Password</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={confirmPasswordInput}
+                onChangeText={setConfirmPasswordInput}
+                placeholder="Re-enter your new password"
+                placeholderTextColor={COLORS.textMuted}
+                secureTextEntry
+                autoCapitalize="none"
+              />
               <TouchableOpacity 
                 style={styles.modalSaveBtn} 
                 onPress={async () => {
                   if (!passwordInput.trim() || passwordInput.length < 6) {
                     Alert.alert('Error', 'Password must be at least 6 characters.');
+                    return;
+                  }
+                  if (passwordInput !== confirmPasswordInput) {
+                    Alert.alert('Error', 'Passwords do not match. Please try again.');
                     return;
                   }
                   const { error } = await supabase.auth.updateUser({ password: passwordInput.trim() });
@@ -428,6 +503,8 @@ export default function SettingsScreen() {
                   } else {
                     Alert.alert('Success', 'Password changed successfully!');
                     setPasswordModalVisible(false);
+                    setPasswordInput('');
+                    setConfirmPasswordInput('');
                   }
                 }}
               >
@@ -487,8 +564,13 @@ export default function SettingsScreen() {
               <TouchableOpacity 
                 style={styles.modalSaveBtn} 
                 onPress={async () => {
-                  if (cardNumInput.trim().length < 4 || !cardExpiryInput.trim()) {
-                    Alert.alert('Error', 'Please fill in all card details.');
+                  if (cardNumInput.trim().length < 4) {
+                    Alert.alert('Error', 'Please enter the last 4 digits of your card.');
+                    return;
+                  }
+                  const expiryPattern = /^(0[1-9]|1[0-2])\/(\d{2})$/;
+                  if (!expiryPattern.test(cardExpiryInput.trim())) {
+                    Alert.alert('Error', 'Expiry must be in MM/YY format (e.g. 08/27).');
                     return;
                   }
                   const newCard = {
@@ -674,6 +756,14 @@ const styles = StyleSheet.create({
   prefItem: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   prefLabel: { fontSize: 15, fontWeight: '700', color: COLORS.text },
   prefSub: { fontSize: 12, color: COLORS.textSub, marginTop: 2 },
+
+  // Playback toggle row
+  toggleRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 16,
+    paddingVertical: 4,
+  },
+  toggleLabel: { fontSize: 14, fontWeight: '700', color: COLORS.text },
+  toggleSub: { fontSize: 11, color: COLORS.textMuted, marginTop: 3, lineHeight: 16 },
 
   signOutBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12,

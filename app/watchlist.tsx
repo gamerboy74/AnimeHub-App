@@ -1,11 +1,13 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
-  View, Text, FlatList, StyleSheet, TouchableOpacity, Image,
-  RefreshControl, ActivityIndicator,
+  View, Text, FlatList, StyleSheet, TouchableOpacity,
+  RefreshControl, ActivityIndicator, Alert,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
 import { userAPI } from '../src/lib/supabase';
 import { useAuth } from '../src/context/AuthContext';
@@ -14,32 +16,63 @@ export default function WatchlistScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const [watchlist, setWatchlist] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const userId = user?.id;
+  const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchData = useCallback(async () => {
-    if (!user) { setLoading(false); return; }
+  const { data: watchlist = [], isLoading: loading } = useQuery({
+    queryKey: ['user', userId, 'watchlist'],
+    staleTime: 60 * 1000,
+    gcTime: 5 * 60 * 1000,
+    enabled: !!userId,
+    queryFn: async () => {
+      const { data, error } = await userAPI.getWatchlist(userId!);
+      if (error) {
+        Alert.alert('Error', 'Could not load watchlist. Please try again.');
+        throw error;
+      }
+      return data || [];
+    },
+  });
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await queryClient.invalidateQueries({ queryKey: ['user', userId, 'watchlist'] });
+    setRefreshing(false);
+  }, [queryClient, userId]);
+
+  // Optimistic remove — instant UI update, reverts on failure
+  const removeItem = useCallback(async (animeId: string) => {
+    if (!userId) return;
+    const prev = queryClient.getQueryData<any[]>(['user', userId, 'watchlist']);
+    queryClient.setQueryData<any[]>(
+      ['user', userId, 'watchlist'],
+      (old = []) => old.filter(w => w.anime_id !== animeId && w.anime?.id !== animeId)
+    );
     try {
-      const { data } = await userAPI.getWatchlist(user.id);
-      setWatchlist(data || []);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+      await userAPI.removeFromWatchlist(userId, animeId);
+    } catch {
+      queryClient.setQueryData(['user', userId, 'watchlist'], prev);
+      Alert.alert('Error', 'Could not remove item. Please try again.');
     }
-  }, [user]);
+  }, [userId, queryClient]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
 
-  const onRefresh = () => { setRefreshing(true); fetchData(); };
+  const handleCardPress = useCallback((id: string) => {
+    router.push(`/anime/${id}`);
+  }, [router]);
 
-  const removeItem = async (animeId: string) => {
-    if (!user) return;
-    await userAPI.removeFromWatchlist(user.id, animeId);
-    setWatchlist(prev => prev.filter(w => w.anime_id !== animeId));
-  };
+  const renderItem = useCallback(({ item }: { item: any }) => (
+    <WatchlistItemRow
+      item={item}
+      onPress={handleCardPress}
+      onRemove={removeItem}
+    />
+  ), [handleCardPress, removeItem]);
+
+  const keyExtractor = useCallback((item: any) => item.id, []);
+
+  const ItemSeparator = useCallback(() => <View style={styles.separator} />, []);
 
   if (!user) {
     return (
@@ -79,53 +112,75 @@ export default function WatchlistScreen() {
       ) : (
         <FlatList
           data={watchlist}
-          keyExtractor={item => item.id}
+          keyExtractor={keyExtractor}
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.neon} />}
-          renderItem={({ item }) => {
-            const anime = item.anime;
-            if (!anime) return null;
-            return (
-              <TouchableOpacity
-                style={styles.animeRow}
-                onPress={() => router.push(`/anime/${anime.id}`)}
-              >
-                <Image
-                  source={{ uri: anime.poster_url || '' }}
-                  style={styles.poster}
-                  resizeMode="cover"
-                />
-                <View style={styles.animeInfo}>
-                  <Text style={styles.animeTitle} numberOfLines={2}>{anime.title}</Text>
-                  {anime.title_japanese && (
-                    <Text style={styles.animeTitleJp} numberOfLines={1}>{anime.title_japanese}</Text>
-                  )}
-                  <View style={styles.animeMeta}>
-                    {anime.year && <Text style={styles.animeMetaText}>{anime.year}</Text>}
-                    {anime.type && <Text style={styles.animeMetaText}>• {anime.type}</Text>}
-                    {anime.status && <Text style={styles.animeMetaText}>• {anime.status}</Text>}
-                  </View>
-                  {anime.genres?.length > 0 && (
-                    <Text style={styles.animeGenres} numberOfLines={1}>
-                      {anime.genres.slice(0, 3).join(' · ')}
-                    </Text>
-                  )}
-                </View>
-                <TouchableOpacity
-                  style={styles.removeBtn}
-                  onPress={() => removeItem(anime.id)}
-                >
-                  <Ionicons name="close" size={18} color={COLORS.textMuted} />
-                </TouchableOpacity>
-              </TouchableOpacity>
-            );
-          }}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
+          renderItem={renderItem}
+          ItemSeparatorComponent={ItemSeparator}
         />
       )}
     </View>
   );
 }
+
+// ─── MEMOIZED WATCHLIST ITEM ROW ──────────────────────────────────────────────
+interface WatchlistItemRowProps {
+  item: any;
+  onPress: (id: string) => void;
+  onRemove: (id: string) => void;
+}
+
+const WatchlistItemRow = React.memo(
+  ({ item, onPress, onRemove }: WatchlistItemRowProps) => {
+    const anime = item.anime;
+    if (!anime) return null;
+    return (
+      <TouchableOpacity
+        style={styles.animeRow}
+        onPress={() => onPress(anime.id)}
+      >
+        <Image
+          source={{ uri: anime.poster_url || '' }}
+          style={styles.poster}
+          contentFit="cover"
+          transition={200}
+        />
+        <View style={styles.animeInfo}>
+          <Text style={styles.animeTitle} numberOfLines={2}>{anime.title}</Text>
+          {anime.title_japanese && (
+            <Text style={styles.animeTitleJp} numberOfLines={1}>{anime.title_japanese}</Text>
+          )}
+          <View style={styles.animeMeta}>
+            {anime.year && <Text style={styles.animeMetaText}>{anime.year}</Text>}
+            {anime.type && <Text style={styles.animeMetaText}>• {anime.type}</Text>}
+            {anime.status && <Text style={styles.animeMetaText}>• {anime.status}</Text>}
+          </View>
+          {anime.genres?.length > 0 && (
+            <Text style={styles.animeGenres} numberOfLines={1}>
+              {anime.genres.slice(0, 3).join(' · ')}
+            </Text>
+          )}
+        </View>
+        <TouchableOpacity
+          style={styles.removeBtn}
+          onPress={() => onRemove(anime.id)}
+        >
+          <Ionicons name="close" size={18} color={COLORS.textMuted} />
+        </TouchableOpacity>
+      </TouchableOpacity>
+    );
+  },
+  (prevProps, nextProps) => {
+    return (
+      prevProps.item.id === nextProps.item.id &&
+      prevProps.item.anime_id === nextProps.item.anime_id &&
+      prevProps.item.anime?.id === nextProps.item.anime?.id &&
+      prevProps.item.anime?.poster_url === nextProps.item.anime?.poster_url &&
+      prevProps.item.anime?.title === nextProps.item.anime?.title &&
+      prevProps.item.anime?.status === nextProps.item.anime?.status
+    );
+  }
+);
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },

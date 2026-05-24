@@ -13,6 +13,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { userAPI } from '../../src/lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '../../src/lib/supabase';
 
 const BADGE_DEFS = [
   { id: '1', name: 'FIRST EP', icon: 'play-circle', color: COLORS.neon, check: (p: any[], s: number, w: any[]) => p.length >= 1 },
@@ -80,11 +82,63 @@ export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user, signOut, refreshUser } = useAuth();
-  const [recentActivity, setRecentActivity] = useState<any[]>([]);
-  const [allProgress, setAllProgress] = useState<any[]>([]);
-  const [watchlist, setWatchlist] = useState<any[]>([]);
-  const [favorites, setFavorites] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const userId = user?.id;
+
+  // ── TanStack Query — shared cache with Library / History screens ────────────
+  const { data: allProgress = [], isLoading: loadingProgress } = useQuery({
+    queryKey: ['user', userId, 'history'],
+    staleTime: 30 * 1000,
+    gcTime: 5 * 60 * 1000,
+    enabled: !!userId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('user_watch_progress_detailed')
+        .select('*')
+        .eq('user_id', userId!)
+        .order('last_watched', { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const { data: watchlistRaw = [], isLoading: loadingWatchlist } = useQuery({
+    queryKey: ['user', userId, 'watchlist'],
+    staleTime: 60 * 1000,
+    gcTime: 5 * 60 * 1000,
+    enabled: !!userId,
+    queryFn: async () => {
+      const { data, error } = await userAPI.getWatchlist(userId!);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const { data: favoritesRaw = [], isLoading: loadingFavorites } = useQuery({
+    queryKey: ['user', userId, 'favorites'],
+    staleTime: 60 * 1000,
+    gcTime: 5 * 60 * 1000,
+    enabled: !!userId,
+    queryFn: async () => {
+      const { data, error } = await userAPI.getFavorites(userId!);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const loading = loadingProgress || loadingWatchlist || loadingFavorites;
+  const watchlist = useMemo(() => watchlistRaw.map((item: any) => item.anime).filter(Boolean), [watchlistRaw]);
+  const favorites = useMemo(() => favoritesRaw.map((item: any) => item.anime).filter(Boolean), [favoritesRaw]);
+  const recentActivity = useMemo(() => allProgress.slice(0, 3), [allProgress]);
+
+  // Bio from AsyncStorage (no DB column yet)
+  const [bio, setBio] = useState('');
+  useEffect(() => {
+    if (userId) {
+      AsyncStorage.getItem(`user_bio_${userId}`).then(cached => {
+        setBio(cached || user?.bio || '');
+      });
+    }
+  }, [userId, user?.bio]);
 
   // Edit profile modal state
   const [editVisible, setEditVisible] = useState(false);
@@ -93,32 +147,7 @@ export default function ProfileScreen() {
   const [editAvatarUrl, setEditAvatarUrl] = useState('');
   const [editSaving, setEditSaving] = useState(false);
 
-  // Local bio (survives modal cancel)
-  const [bio, setBio] = useState('');
-
-  // Load bio from local cache as fallback if database column is missing
-  useEffect(() => {
-    if (user) {
-      setLoading(true);
-      Promise.all([
-        userAPI.getProgress(user.id),
-        userAPI.getWatchlist(user.id),
-        userAPI.getFavorites(user.id),
-        AsyncStorage.getItem(`user_bio_${user.id}`),
-      ]).then(([progressRes, watchlistRes, favoritesRes, cachedBio]) => {
-        setBio(cachedBio || user.bio || '');
-        const prog = progressRes.data || [];
-        const wl = watchlistRes.data?.map((item: any) => item.anime) || [];
-        setAllProgress(prog);
-        setRecentActivity(prog.slice(0, 3));
-        setWatchlist(wl);
-        setFavorites(favoritesRes.data?.map((item: any) => item.anime) || []);
-        setLoading(false);
-      });
-    }
-  }, [user]);
-
-  // ── Derived values — only recompute when allProgress/watchlist change ──
+  // ── Derived values — only recompute when dependencies change ─────────────────
   const streak    = useMemo(() => computeStreak(allProgress), [allProgress]);
   const genreStats = useMemo(() => computeGenres(allProgress), [allProgress]);
   const badges    = useMemo(

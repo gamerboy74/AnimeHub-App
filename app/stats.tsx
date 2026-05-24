@@ -225,8 +225,8 @@ export default function StatsScreen() {
     if (!user) return;
     try {
       const [progressRes, watchlistRes, statsRes, badgesRes] = await Promise.all([
-        userAPI.getProgress(user.id),
-        userAPI.getWatchlist(user.id),
+        userAPI.getProgressLight(user.id),
+        userAPI.getWatchlistLight(user.id),
         userAPI.getUserStats(user.id),
         userAPI.getUserBadges(user.id),
       ]);
@@ -239,7 +239,7 @@ export default function StatsScreen() {
       }
 
       setAllProgress(progressRes.data || []);
-      setWatchlist(watchlistRes.data?.map((i: any) => i.anime).filter(Boolean) || []);
+      setWatchlist(watchlistRes.data || []);
       
       if (statsRes && !statsRes.error && statsRes.data) {
         setDbStats(statsRes.data);

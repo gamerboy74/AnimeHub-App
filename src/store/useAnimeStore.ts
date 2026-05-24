@@ -1,36 +1,34 @@
+/**
+ * useAnimeStore — lightweight Zustand store for ephemeral UI state.
+ *
+ * NOTE: Trending data is owned by TanStack Query (useTrendingAnime hook).
+ * This store no longer maintains its own copy; fetchTrending is a no-op
+ * placeholder kept for backward compatibility. Use useTrendingAnime() directly
+ * in new screens.
+ */
 import { create } from 'zustand';
-import { supabase } from '../lib/supabase';
 
 interface AnimeState {
-  trending: any[];
   featured: any | null;
+  setFeatured: (anime: any) => void;
+  // Deprecated — kept for backward compat. Use useTrendingAnime() instead.
+  trending: any[];
   isLoading: boolean;
   error: string | null;
   fetchTrending: () => Promise<void>;
-  setFeatured: (anime: any) => void;
 }
 
 export const useAnimeStore = create<AnimeState>((set) => ({
-  trending: [],
   featured: null,
+  trending: [],
   isLoading: false,
   error: null,
 
-  fetchTrending: async () => {
-    set({ isLoading: true, error: null });
-    try {
-      const { data, error } = await supabase
-        .from('anime')
-        .select('*')
-        .order('score', { ascending: false })
-        .limit(10);
-
-      if (error) throw error;
-      set({ trending: data || [], isLoading: false });
-    } catch (err: any) {
-      set({ error: err.message, isLoading: false });
-    }
-  },
-
   setFeatured: (anime) => set({ featured: anime }),
+
+  // No-op: trending is now managed by TanStack Query (useTrendingAnime).
+  // Remove callers of this function and use useTrendingAnime() directly.
+  fetchTrending: async () => {
+    console.warn('[useAnimeStore] fetchTrending is deprecated. Use useTrendingAnime() from src/hooks/useQueries.ts');
+  },
 }));

@@ -54,18 +54,8 @@ export type AnimeWithStats = Anime & {
   user_rating_avg?: number;
 };
 
-export type Episode = {
-  id: string;
-  anime_id: string;
-  episode_number: number;
-  title?: string;
-  description?: string;
-  thumbnail_url?: string;
-  video_url?: string;
-  duration?: number;
-  is_premium: boolean;
-  air_date?: string;
-};
+// Episode is defined (and owned) in src/types/database.ts — re-exported here for convenience
+export type { Episode } from '../types/database';
 
 export type UserProgress = {
   id: string;
@@ -112,10 +102,56 @@ export type Notification = {
   created_at: string;
 };
 
+export type SubscriptionPlan = {
+  id: string;
+  name: string;            // 'free' | 'premium_monthly' | 'premium_yearly'
+  display_name: string;    // 'Monthly' | 'Yearly'
+  tier: 'free' | 'premium';
+  price_paise: number;     // 0 for free, 14900 for ₹149
+  currency: string;
+  billing_cycle: 'monthly' | 'yearly' | null;
+  badge: string | null;    // 'BEST VALUE' | null
+  savings_text: string | null;
+  sort_order: number;
+};
+
+export type PlanFeature = {
+  id: string;
+  label: string;
+  sub_label: string | null;
+  free_value: string;      // '✓' | '✗' | descriptive text
+  premium_value: string;
+  is_highlighted: boolean;
+  sort_order: number;
+};
+
 // ─── API Helpers ──────────────────────────────────────────────
 
 // In-memory cache to prevent redundant database queries for static mapping
 let malIdMapCache: Map<number, string> | null = null;
+
+export const plansAPI = {
+  /** Fetch all active plans + feature rows in one round trip.
+   *  Returns sorted arrays ready to render — no transforms needed in UI. */
+  getAll: async (): Promise<{ plans: SubscriptionPlan[]; features: PlanFeature[] }> => {
+    const [plansRes, featuresRes] = await Promise.all([
+      supabase
+        .from('subscription_plans')
+        .select('id,name,display_name,tier,price_paise,currency,billing_cycle,badge,savings_text,sort_order')
+        .eq('is_active', true)
+        .order('sort_order'),
+      supabase
+        .from('plan_features')
+        .select('id,label,sub_label,free_value,premium_value,is_highlighted,sort_order')
+        .eq('is_active', true)
+        .order('sort_order'),
+    ]);
+    return {
+      plans:    (plansRes.data    ?? []) as SubscriptionPlan[],
+      features: (featuresRes.data ?? []) as PlanFeature[],
+    };
+  },
+};
 
 export const animeAPI = {
   getAll: (limit = 20, offset = 0) =>
@@ -195,6 +231,9 @@ export const userAPI = {
   getWatchlist: (userId: string) =>
     supabase.from('user_watchlist').select('*, anime(*)').eq('user_id', userId),
 
+  getWatchlistLight: (userId: string) =>
+    supabase.from('user_watchlist').select('id').eq('user_id', userId),
+
   addToWatchlist: (userId: string, animeId: string) =>
     supabase.from('user_watchlist').insert({ user_id: userId, anime_id: animeId }),
 
@@ -203,6 +242,12 @@ export const userAPI = {
 
   getProgress: (userId: string) =>
     supabase.from('user_watch_progress_detailed').select('*').eq('user_id', userId).order('last_watched', { ascending: false }),
+
+  getProgressLight: (userId: string) =>
+    supabase.from('user_watch_progress_detailed')
+      .select('anime_id, last_watched, progress_seconds, is_completed, genres')
+      .eq('user_id', userId)
+      .order('last_watched', { ascending: false }),
 
   // Returns the most recently watched episode for a specific anime (for "Continue Watching")
   getAnimeProgress: (userId: string, animeId: string) =>
@@ -240,10 +285,22 @@ export const userAPI = {
     supabase.from('notifications').update({ read: true }).eq('id', id),
 
   getPreferences: (userId: string) =>
-    supabase.from('user_preferences').select('*').eq('user_id', userId).single(),
+    // maybeSingle() returns null (not error) when no preferences row exists yet
+    supabase.from('user_preferences').select('*').eq('user_id', userId).maybeSingle(),
 
   updatePreferences: (userId: string, data: any) =>
     supabase.from('user_preferences').upsert({ user_id: userId, ...data }),
+
+  /** Safely update ONLY subscription_meta — never touches other pref columns.
+   *  Use this instead of updatePreferences when writing billing data,
+   *  so a settings toggle can never accidentally wipe the subscription_meta field. */
+  updateSubscriptionMeta: (userId: string, meta: any) =>
+    supabase
+      .from('user_preferences')
+      .upsert(
+        { user_id: userId, subscription_meta: meta },
+        { onConflict: 'user_id', ignoreDuplicates: false },
+      ),
 };
 
 export const reviewAPI = {

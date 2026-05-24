@@ -1,14 +1,18 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, FlatList,
-  TouchableOpacity, Image, Dimensions, RefreshControl, ActivityIndicator,
+  TouchableOpacity, Dimensions, RefreshControl, ActivityIndicator,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
-import { animeAPI, AnimeWithStats } from '../../src/lib/supabase';
+import { AnimeWithStats } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
+import { useTrendingAnime, useTopRatedAnime, useRecentAnime, useHeroAnime } from '../../src/hooks/useQueries';
+import { usePrefetch } from '../../src/hooks/usePrefetch';
 import AnimeCard from '../../src/components/ui/AnimeCard';
 
 const { width } = Dimensions.get('window');
@@ -19,39 +23,41 @@ export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const [trending, setTrending] = useState<AnimeWithStats[]>([]);
-  const [topRated, setTopRated] = useState<AnimeWithStats[]>([]);
-  const [recent, setRecent] = useState<AnimeWithStats[]>([]);
-  const [hero, setHero] = useState<AnimeWithStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { prefetchAnimeList } = usePrefetch();
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchData = useCallback(async () => {
-    try {
-      const [trendRes, ratedRes, recentRes] = await Promise.all([
-        animeAPI.getTrending(10),
-        animeAPI.getTopRated(10),
-        animeAPI.getRecent(10),
-      ]);
-      if (trendRes.data?.length) {
-        setTrending(trendRes.data);
-        setHero(trendRes.data[0]);
-      }
-      if (ratedRes.data) setTopRated(ratedRes.data);
-      if (recentRes.data) setRecent(recentRes.data as AnimeWithStats[]);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+  // ── TanStack Query — cached; no re-fetch on tab switch within staleTime ────────────
+  const { data: trending = [], isLoading: loadingTrend } = useTrendingAnime();
+  const { data: topRated = [], isLoading: loadingRated } = useTopRatedAnime();
+  const { data: recent = [], isLoading: loadingRecent } = useRecentAnime();
+
+  // Hero: first trending item that has a banner_url (guaranteed by useHeroAnime)
+  const { data: hero } = useHeroAnime();
+
+  const loading = loadingTrend || loadingRated || loadingRecent;
+
+  // Silently warm the cache for the top 5 visible cards while the user
+  // looks at the hero section — navigation feels instant afterward
+  useEffect(() => {
+    if (trending.length > 0) {
+      prefetchAnimeList(trending.map(a => a.id), 5);
     }
-  }, []);
+  }, [trending, prefetchAnimeList]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['anime', 'trending'] }),
+      queryClient.invalidateQueries({ queryKey: ['anime', 'top-rated'] }),
+      queryClient.invalidateQueries({ queryKey: ['anime', 'new-arrivals'] }),
+    ]);
+    setRefreshing(false);
+  }, [queryClient]);
 
-  const onRefresh = () => { setRefreshing(true); fetchData(); };
-
-  if (loading) {
+  // Only block full render on trending (needed for hero section).
+  // Top-rated and recent render progressively via AnimeRow (returns null if empty).
+  if (loadingTrend) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator color={COLORS.neon} size="large" />
@@ -79,7 +85,8 @@ export default function HomeScreen() {
           <Image
             source={{ uri: hero.banner_url || hero.poster_url || '' }}
             style={styles.heroBg}
-            resizeMode="cover"
+            contentFit="cover"
+            transition={200}
           />
           <View style={styles.heroOverlay} />
           {/* Scan line effect */}
@@ -176,36 +183,82 @@ export default function HomeScreen() {
   );
 }
 
-function AnimeRow({ title, subtitle, data, router, showStats = false, seeAllRoute }: any) {
-  if (!data?.length) return null;
-  return (
-    <View style={styles.section}>
-      <View style={styles.sectionHeader}>
-        <View>
-          <Text style={styles.sectionLabel}>{title}</Text>
-          <Text style={styles.sectionSub}>{subtitle}</Text>
-        </View>
-        <TouchableOpacity onPress={() => seeAllRoute && router.push(seeAllRoute)}>
-          <Text style={styles.seeAll}>SEE ALL →</Text>
-        </TouchableOpacity>
-      </View>
-      <FlatList
-        horizontal
-        data={data}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <AnimeCard
-            anime={item}
-            onPress={() => router.push(`/anime/${item.id}`)}
-            showStats={showStats}
-          />
-        )}
-        contentContainerStyle={{ paddingLeft: SPACING.md, paddingRight: SPACING.sm }}
-        showsHorizontalScrollIndicator={false}
-      />
-    </View>
-  );
+// ─── MEMOIZED LOCAL ANIME CARD WRAPPER ─────────────────────────────────────────
+interface HomeAnimeCardProps {
+  item: AnimeWithStats;
+  router: any;
+  showStats: boolean;
 }
+
+const HomeAnimeCard = React.memo(
+  ({ item, router, showStats }: HomeAnimeCardProps) => {
+    return (
+      <AnimeCard
+        anime={item}
+        onPress={() => router.push(`/anime/${item.id}`)}
+        showStats={showStats}
+      />
+    );
+  },
+  (prevProps, nextProps) => {
+    return (
+      prevProps.item.id === nextProps.item.id &&
+      prevProps.showStats === nextProps.showStats
+    );
+  }
+);
+
+// ─── MEMOIZED ANIME ROW ────────────────────────────────────────────────────────
+const AnimeRow = React.memo(
+  ({ title, subtitle, data, router, showStats = false, seeAllRoute }: any) => {
+    if (!data?.length) return null;
+
+    const renderItem = useCallback(({ item }: { item: any }) => (
+      <HomeAnimeCard
+        item={item}
+        router={router}
+        showStats={showStats}
+      />
+    ), [router, showStats]);
+
+    const keyExtractor = useCallback((item: any) => item.id, []);
+
+    return (
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <View>
+            <Text style={styles.sectionLabel}>{title}</Text>
+            <Text style={styles.sectionSub}>{subtitle}</Text>
+          </View>
+          <TouchableOpacity onPress={() => seeAllRoute && router.push(seeAllRoute)}>
+            <Text style={styles.seeAll}>SEE ALL →</Text>
+          </TouchableOpacity>
+        </View>
+        <FlatList
+          horizontal
+          data={data}
+          keyExtractor={keyExtractor}
+          renderItem={renderItem}
+          contentContainerStyle={{ paddingLeft: SPACING.md, paddingRight: SPACING.sm }}
+          showsHorizontalScrollIndicator={false}
+          removeClippedSubviews
+          windowSize={3}
+          maxToRenderPerBatch={5}
+          initialNumToRender={5}
+        />
+      </View>
+    );
+  },
+  (prevProps, nextProps) => {
+    return (
+      prevProps.title === nextProps.title &&
+      prevProps.subtitle === nextProps.subtitle &&
+      prevProps.data === nextProps.data &&
+      prevProps.showStats === nextProps.showStats &&
+      prevProps.seeAllRoute === nextProps.seeAllRoute
+    );
+  }
+);
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
