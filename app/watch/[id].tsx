@@ -34,6 +34,8 @@ import { useAutoPlay } from "../../src/hooks/useAutoPlay";
 import { useAutoSkipIntro } from "../../src/hooks/useAutoSkipIntro";
 import { useServerSelection } from "../../src/hooks/useServerSelection";
 import ServerPickerSheet from "../../src/components/ui/ServerPickerSheet";
+import DownloadButton from "../../src/components/ui/DownloadButton";
+import { useHlsDownloader } from "../../src/hooks/useHlsDownloader";
 import { supabase, userAPI } from "../../src/lib/supabase";
 import { useAuth } from "../../src/context/AuthContext";
 import { COLORS } from "../../src/constants/theme";
@@ -54,7 +56,117 @@ const AUTO_PLAY_COUNTDOWN_SEC = 5;
 // ─── INJECTED JAVASCRIPT ───────────────────────────────────────────────────────
 // Runs inside the WebView. Polls JWPlayer/HTML5 video for state, forwards progress
 // and error events back to React Native, and applies seek-to-resume.
-const buildInjectedJS = (resumeSeconds: number, autoSkipIntro: boolean) => `
+// Also injects a network sniffer that intercepts fetch/XHR to capture .m3u8 URLs.
+
+/** Part 1: Network sniffer — intercepts fetch/XHR to detect .m3u8 URLs */
+const buildSnifferJS = () => `
+  (function() {
+    var _mediaReported = {};
+    function _reportMedia(url) {
+      try {
+        if (!url || typeof url !== 'string') return;
+        if (_mediaReported[url]) return;
+        var lc = url.toLowerCase();
+        if (!lc.includes('.m3u8') && !lc.includes('.mp4') && !lc.includes('.mkv')) return;
+        _mediaReported[url] = true;
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'MEDIA_URL_DETECTED',
+          mediaUrl: url,
+          referer: window.location.href,
+          origin: window.location.origin,
+        }));
+      } catch(e) {}
+    }
+    var _origFetch = window.fetch;
+    window.fetch = function() {
+      var args = arguments;
+      var url = args[0];
+      var actualUrl = typeof url === 'string' ? url : (url && typeof url.url === 'string' ? url.url : '');
+      var promise = _origFetch.apply(this, args);
+      
+      if (actualUrl && actualUrl.toLowerCase().includes('.m3u8')) {
+        promise.then(function(res) {
+          try {
+            res.clone().text().then(function(text) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'MEDIA_MANIFEST_READY',
+                mediaUrl: actualUrl,
+                referer: window.location.href,
+                manifestContent: text,
+                cookies: document.cookie,
+              }));
+            }).catch(function(e) {});
+          } catch(e) {}
+        }).catch(function(e) {});
+      }
+      
+      if (actualUrl) _reportMedia(actualUrl);
+      return promise;
+    };
+    var _origOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url) {
+      var actualUrl = url;
+      if (actualUrl && typeof actualUrl === 'string' && actualUrl.toLowerCase().includes('.m3u8')) {
+        this.addEventListener('readystatechange', function() {
+          if (this.readyState === 4 && this.status >= 200 && this.status < 300) {
+            try {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'MEDIA_MANIFEST_READY',
+                mediaUrl: actualUrl,
+                referer: window.location.href,
+                manifestContent: this.responseText,
+                cookies: document.cookie,
+              }));
+            } catch(e) {}
+          }
+        });
+      }
+      _reportMedia(url);
+      return _origOpen.apply(this, arguments);
+    };
+    setTimeout(function() {
+      try {
+        document.querySelectorAll('source[src],video[src]').forEach(function(el) {
+          _reportMedia(el.src || el.getAttribute('src'));
+        });
+      } catch(e) {}
+    }, 3000);
+
+    // Segment download helper — runs within the WebView's TLS/session context
+    window.__rn_download_segment = function(url, index) {
+      fetch(url)
+        .then(function(res) {
+          if (!res.ok) throw new Error("Status " + res.status);
+          return res.blob();
+        })
+        .then(function(blob) {
+          var reader = new FileReader();
+          reader.onloadend = function() {
+            var base64data = reader.result.split(',')[1];
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'DOWNLOAD_SEGMENT_CHUNK',
+              index: index,
+              url: url,
+              base64: base64data
+            }));
+          };
+          reader.readAsDataURL(blob);
+        })
+        .catch(function(err) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'DOWNLOAD_SEGMENT_ERROR',
+            index: index,
+            url: url,
+            error: err ? err.message : 'Unknown WebView segment fetch error'
+          }));
+        });
+    };
+  })();
+`;
+
+/** Part 2: Main player script — polling, resume, skip-intro, HUD tap */
+const buildMainInjectedJS = (resumeSeconds: number, autoSkipIntro: boolean) => `
+
   (function() {
     // ─── FORCE FULL-SCREEN LAYOUT ────────────────────────────────────────────
     // Eliminates blank bars on the left/right in landscape by ensuring the page
@@ -370,6 +482,12 @@ const buildInjectedJS = (resumeSeconds: number, autoSkipIntro: boolean) => `
   true;
 `;
 
+// Compose: sniffer first, then main player script
+const buildCombinedJS = (resumeSeconds: number, autoSkipIntro: boolean) =>
+  buildSnifferJS() +
+  '\n' +
+  buildMainInjectedJS(resumeSeconds, autoSkipIntro);
+
 // Module-level flag: true while a WatchScreen instance is actively mounting.
 // Used to skip portrait restoration when switching between episodes — the new
 // instance sets this flag before the old one's cleanup runs its portrait lock.
@@ -401,6 +519,13 @@ export default function WatchScreen() {
   });
   const [autoPlayCountdown, setAutoPlayCountdown] = useState<number | null>(null);
   const [showServerPicker, setShowServerPicker] = useState(false);
+
+  // ── Download state ────────────────────────────────────────────────────────
+  const [sniffedMediaUrl, setSniffedMediaUrl] = useState<string | null>(null);
+  const [sniffedReferer, setSniffedReferer] = useState<string>('');
+  const [sniffedManifestCache, setSniffedManifestCache] = useState<Record<string, string>>({});
+  const [sniffedCookies, setSniffedCookies] = useState<string>('');
+  const downloader = useHlsDownloader();
 
   const webviewRef = useRef<any>(null);
   const nearEndFired = useRef(false);
@@ -437,6 +562,17 @@ export default function WatchScreen() {
   const { data: similarAnime } = useSimilarAnime(anime?.genres, anime?.id);
 
   const resumeSeconds = savedProgress?.progress_seconds ?? 0;
+
+  // ── Server selection — hook owns all state ───────────────────────────────────
+  // Must run before any early returns (Rules of Hooks).
+  const srv = useServerSelection(
+    (episode as any)?.video_servers,
+    episode?.video_url,
+  );
+
+  const embedOrigin = useMemo(() => {
+    try { return new URL(srv.embedUrl).origin; } catch { return ''; }
+  }, [srv.embedUrl]);
 
   // Keep refs in sync so handleProgress always has fresh IDs without stale closures
   useEffect(() => { episodeIdRef.current = episode?.id; }, [episode?.id]);
@@ -562,6 +698,39 @@ export default function WatchScreen() {
           resetHudTimer();
         }
 
+        // ── Network sniffer result ─────────────────────────────────────────
+        if (msg.type === 'MEDIA_URL_DETECTED') {
+          const { mediaUrl, referer } = msg;
+          // Only accept .m3u8 for HLS download; prefer the first one captured
+          if (mediaUrl && mediaUrl.toLowerCase().includes('.m3u8') && !sniffedMediaUrl) {
+            console.log('[Download] Sniffed .m3u8:', mediaUrl);
+            setSniffedMediaUrl(mediaUrl);
+            setSniffedReferer(referer || '');
+          }
+        }
+
+        if (msg.type === 'MEDIA_MANIFEST_READY') {
+          const { mediaUrl, referer, manifestContent, cookies } = msg;
+          if (mediaUrl && manifestContent) {
+            console.log('[Download] Captured manifest for:', mediaUrl);
+            setSniffedManifestCache(prev => ({
+              ...prev,
+              [mediaUrl]: manifestContent
+            }));
+            if (cookies) {
+              setSniffedCookies(cookies);
+            }
+            if (!sniffedMediaUrl) {
+              setSniffedMediaUrl(mediaUrl);
+              setSniffedReferer(referer || '');
+            }
+          }
+        }
+
+        if (msg.type === 'DOWNLOAD_SEGMENT_CHUNK' || msg.type === 'DOWNLOAD_SEGMENT_ERROR') {
+          downloader.handleDownloadMessage(msg);
+        }
+
         if (msg.type === "player_error") {
           const { code } = msg;
           console.warn("[Watch] JWPlayer error", code, msg.message);
@@ -615,8 +784,29 @@ export default function WatchScreen() {
         }
       } catch (_) { }
     },
-    [handleProgress, handleEpisodeComplete, nextEpisode, resetHudTimer],
+    [handleProgress, handleEpisodeComplete, nextEpisode, resetHudTimer, sniffedMediaUrl, downloader],
   );
+
+  // ── Trigger download when user presses the Download button ──────────────────
+  const handleDownloadPress = useCallback(() => {
+    if (!sniffedMediaUrl || !episode) return;
+    downloader.startDownload(
+      sniffedMediaUrl,
+      sniffedReferer || embedOrigin,
+      {
+        episodeId: episode.id,
+        title: `Ep ${episode.episode_number}: ${episode.title ?? ''}`,
+        animeName: anime?.title ?? 'Unknown',
+        thumbnailUrl: episode.thumbnail_url ?? anime?.poster_url ?? '',
+      },
+      undefined, // resolved in hook from cache
+      sniffedCookies,
+      sniffedManifestCache,
+      (js: string) => {
+        webviewRef.current?.injectJavaScript(js);
+      }
+    );
+  }, [sniffedMediaUrl, sniffedReferer, embedOrigin, episode, anime, downloader, sniffedCookies, sniffedManifestCache]);
 
   // ── Orientation + nav bar ─────────────────────────────────────────────────
   // We mount landscape immediately. On unmount we restore portrait ONLY if no
@@ -658,6 +848,11 @@ export default function WatchScreen() {
     setShowNextUp(false);
     setPlayerReady(false);
     setPlayerError(false);
+    setSniffedMediaUrl(null);   // clear sniffed URL for new episode
+    setSniffedReferer('');
+    setSniffedManifestCache({});
+    setSniffedCookies('');
+    downloader.cancelDownload();
     srv.reset(); // reset server + lang to defaults on episode change
     cancelAutoPlay();
 
@@ -676,18 +871,9 @@ export default function WatchScreen() {
   // NOTE: clearOtherProgress was removed — it was wiping all episode history
   // on every mount which caused the watch tracker to lose progress.
 
-  // ── Server selection — hook owns all state ───────────────────────────────────
-  // Must run before any early returns (Rules of Hooks).
-  const srv = useServerSelection(
-    (episode as any)?.video_servers,
-    episode?.video_url,
-  );
 
-  const embedOrigin = useMemo(() => {
-    try { return new URL(srv.embedUrl).origin; } catch { return ''; }
-  }, [srv.embedUrl]);
   const injectedJS = useMemo(
-    () => buildInjectedJS(resumeSeconds, autoSkipIntroEnabled),
+    () => buildCombinedJS(resumeSeconds, autoSkipIntroEnabled),
     [resumeSeconds, autoSkipIntroEnabled]
   );
 
@@ -997,6 +1183,16 @@ export default function WatchScreen() {
                     </Text>
                   </View>
                 )}
+
+                {/* ── Download button ── */}
+                <DownloadButton
+                  status={downloader.status}
+                  progress={downloader.progress}
+                  sniffedUrl={sniffedMediaUrl}
+                  isPremium={isPremium}
+                  onPress={handleDownloadPress}
+                  onCancel={downloader.cancelDownload}
+                />
 
                 {/* Server chip — single tap opens the full picker sheet */}
                 {srv.servers.length > 0 && (

@@ -1,0 +1,466 @@
+import { useState, useRef, useCallback, useEffect } from 'react';
+import * as FileSystem from 'expo-file-system';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export type DownloadStatus =
+  | 'idle'
+  | 'sniffing'     // WebView has not yet detected the .m3u8 URL
+  | 'preparing'    // Fetching & parsing manifests
+  | 'downloading'  // Downloading .ts segments
+  | 'done'         // All done — local file ready
+  | 'error';
+
+export interface DownloadedEpisode {
+  episodeId: string;
+  title: string;
+  animeName: string;
+  thumbnailUrl: string;
+  localManifestUri: string;  // file:// path to local .m3u8
+  downloadedAt: number;      // timestamp ms
+  totalSegments: number;
+  sizeBytes: number;         // approx total size
+}
+
+export interface HlsDownloaderResult {
+  status: DownloadStatus;
+  progress: number;           // 0.0 – 1.0
+  error: string | null;
+  downloadedEpisode: DownloadedEpisode | null;
+  /** Call this when WebView sniffs a .m3u8 URL */
+  startDownload: (
+    m3u8Url: string,
+    referer: string,
+    episodeMeta: { episodeId: string; title: string; animeName: string; thumbnailUrl: string },
+    manifestContent?: string,
+    cookies?: string,
+    manifestCache?: Record<string, string>,
+    injectJS?: (js: string) => void,
+  ) => void;
+  cancelDownload: () => void;
+  handleDownloadMessage: (msg: any) => void;
+}
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const DOWNLOADS_STORAGE_KEY = 'animehub:downloads';
+const DOWNLOADS_DIR = `${FileSystem.documentDirectory}animehub_downloads/`;
+
+// Concurrent segment downloads (keep low to avoid memory pressure)
+const CONCURRENCY = 3;
+
+// User-Agent to pass when fetching manifests / segments
+const UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Resolve a relative URL against a base URL */
+function resolveUrl(base: string, relative: string): string {
+  if (relative.startsWith('http://') || relative.startsWith('https://')) return relative;
+  try {
+    return new URL(relative, base).href;
+  } catch {
+    const baseDir = base.substring(0, base.lastIndexOf('/') + 1);
+    return baseDir + relative;
+  }
+}
+
+/** Sanitize a string for use as a filesystem directory name */
+function safeName(s: string): string {
+  return s.replace(/[^a-zA-Z0-9_\-]/g, '_').substring(0, 40);
+}
+
+/**
+ * Fetch a text resource with streaming-friendly headers.
+ * Returns null on failure.
+ */
+async function fetchText(url: string, referer: string, cookies?: string): Promise<string | null> {
+  console.log(`[HLS fetchText] Fetching: ${url}`);
+  try {
+    const headers: Record<string, string> = {
+      'User-Agent': UA,
+    };
+    if (referer) {
+      headers['Referer'] = referer;
+      try {
+        headers['Origin'] = new URL(referer).origin;
+      } catch {}
+    }
+    if (cookies) {
+      headers['Cookie'] = cookies;
+    }
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      console.warn(`[HLS fetchText] Failed with status ${res.status}: ${res.statusText}`);
+      return null;
+    }
+    return await res.text();
+  } catch (err) {
+    console.error(`[HLS fetchText] Network/fetch error for ${url}:`, err);
+    return null;
+  }
+}
+
+interface SegmentInfo {
+  url: string;
+  localFilename: string;
+}
+
+/**
+ * Parse an HLS media playlist and return all segment URLs.
+ * If the URL points to a master playlist, picks the highest-bandwidth variant.
+ */
+async function resolveMediaPlaylist(
+  manifestUrl: string,
+  referer: string,
+  manifestCache?: Record<string, string>,
+  cookies?: string,
+): Promise<{ mediaUrl: string; segments: SegmentInfo[] } | null> {
+  let text = manifestCache ? manifestCache[manifestUrl] : null;
+  if (!text) {
+    text = await fetchText(manifestUrl, referer, cookies);
+  }
+  if (!text) return null;
+
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+
+  // ── Master playlist: find best variant ────────────────────────────────────
+  if (lines.some((l) => l.includes('#EXT-X-STREAM-INF'))) {
+    let bestBandwidth = -1;
+    let bestVariantUrl = '';
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.startsWith('#EXT-X-STREAM-INF')) {
+        const bwMatch = line.match(/BANDWIDTH=(\d+)/);
+        const bw = bwMatch ? parseInt(bwMatch[1], 10) : 0;
+        const variantLine = lines[i + 1];
+        if (variantLine && !variantLine.startsWith('#')) {
+          if (bw > bestBandwidth) {
+            bestBandwidth = bw;
+            bestVariantUrl = resolveUrl(manifestUrl, variantLine);
+          }
+          i++; // skip the URL line we just consumed
+        }
+      }
+    }
+
+    if (!bestVariantUrl) return null;
+    // Recursively parse the chosen media playlist
+    return resolveMediaPlaylist(bestVariantUrl, referer, manifestCache, cookies);
+  }
+
+  // ── Media playlist: collect segments ─────────────────────────────────────
+  const segments: SegmentInfo[] = [];
+  let segIdx = 0;
+  for (const line of lines) {
+    if (!line.startsWith('#')) {
+      const url = resolveUrl(manifestUrl, line);
+      const ext = url.includes('.ts') ? '.ts' : url.includes('.aac') ? '.aac' : '.seg';
+      segments.push({ url, localFilename: `seg_${String(segIdx).padStart(5, '0')}${ext}` });
+      segIdx++;
+    }
+  }
+
+  return { mediaUrl: manifestUrl, segments };
+}
+
+/**
+ * Build a local .m3u8 file that references local segment filenames.
+ * The player (expo-video / ExoPlayer) needs this to know the segment order.
+ */
+function buildLocalManifest(segments: SegmentInfo[]): string {
+  const header = [
+    '#EXTM3U',
+    '#EXT-X-VERSION:3',
+    '#EXT-X-TARGETDURATION:10',
+    '#EXT-X-MEDIA-SEQUENCE:0',
+  ].join('\n');
+  const body = segments
+    .map((s) => `#EXTINF:10.0,\n${s.localFilename}`)
+    .join('\n');
+  return `${header}\n${body}\n#EXT-X-ENDLIST`;
+}
+
+/** Run an async function over an array with bounded concurrency */
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<void>,
+  onProgress: (done: number) => void,
+): Promise<void> {
+  let done = 0;
+  let idx = 0;
+
+  async function worker() {
+    while (idx < items.length) {
+      const i = idx++;
+      await fn(items[i], i);
+      done++;
+      onProgress(done);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
+  await Promise.all(workers);
+}
+
+// ─── Persistent Storage Helpers ───────────────────────────────────────────────
+
+async function loadSavedDownloads(): Promise<DownloadedEpisode[]> {
+  try {
+    const raw = await AsyncStorage.getItem(DOWNLOADS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveDownloads(list: DownloadedEpisode[]): Promise<void> {
+  await AsyncStorage.setItem(DOWNLOADS_STORAGE_KEY, JSON.stringify(list));
+}
+
+export async function getAllDownloads(): Promise<DownloadedEpisode[]> {
+  return loadSavedDownloads();
+}
+
+export async function deleteDownload(episodeId: string): Promise<void> {
+  const list = await loadSavedDownloads();
+  const ep = list.find((d) => d.episodeId === episodeId);
+  if (ep) {
+    // Remove the folder
+    const folderUri = ep.localManifestUri.substring(0, ep.localManifestUri.lastIndexOf('/') + 1);
+    try { await FileSystem.deleteAsync(folderUri, { idempotent: true }); } catch {}
+  }
+  const updated = list.filter((d) => d.episodeId !== episodeId);
+  await saveDownloads(updated);
+}
+
+// ─── Hook ─────────────────────────────────────────────────────────────────────
+
+export function useHlsDownloader(): HlsDownloaderResult {
+  const [status, setStatus] = useState<DownloadStatus>('idle');
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [downloadedEpisode, setDownloadedEpisode] = useState<DownloadedEpisode | null>(null);
+  const cancelledRef = useRef(false);
+
+  const pendingSegmentsRef = useRef<Record<number, {
+    resolve: () => void;
+    reject: (err: string) => void;
+    writeChunk: (base64: string) => Promise<void>;
+  }>>({});
+  const injectJSRef = useRef<((js: string) => void) | null>(null);
+
+  const cancelDownload = useCallback(() => {
+    cancelledRef.current = true;
+    setStatus('idle');
+    setProgress(0);
+    setError(null);
+    // Reject all pending segment downloads
+    Object.keys(pendingSegmentsRef.current).forEach((key) => {
+      const idx = parseInt(key, 10);
+      pendingSegmentsRef.current[idx]?.reject('Download cancelled');
+    });
+    pendingSegmentsRef.current = {};
+    injectJSRef.current = null;
+  }, []);
+
+  const handleDownloadMessage = useCallback((msg: any) => {
+    if (msg.type === 'DOWNLOAD_SEGMENT_CHUNK') {
+      const { index, base64 } = msg;
+      const pending = pendingSegmentsRef.current[index];
+      if (pending) {
+        delete pendingSegmentsRef.current[index];
+        pending.writeChunk(base64)
+          .then(() => pending.resolve())
+          .catch((err) => pending.reject(err?.message ?? 'Write failed'));
+      }
+    } else if (msg.type === 'DOWNLOAD_SEGMENT_ERROR') {
+      const { index, error: errStr } = msg;
+      const pending = pendingSegmentsRef.current[index];
+      if (pending) {
+        delete pendingSegmentsRef.current[index];
+        pending.reject(errStr || 'Failed to download segment via WebView');
+      }
+    }
+  }, []);
+
+  const startDownload = useCallback(
+    async (
+      m3u8Url: string,
+      referer: string,
+      meta: { episodeId: string; title: string; animeName: string; thumbnailUrl: string },
+      manifestContent?: string,
+      cookies?: string,
+      manifestCache?: Record<string, string>,
+      injectJS?: (js: string) => void,
+    ) => {
+      cancelledRef.current = false;
+      setStatus('preparing');
+      setProgress(0);
+      setError(null);
+      setDownloadedEpisode(null);
+      injectJSRef.current = injectJS ?? null;
+      pendingSegmentsRef.current = {};
+
+      try {
+        // ── 1. Resolve & parse manifest ──────────────────────────────────────
+        // If manifestContent is provided for the root URL, pre-populate manifestCache
+        const cache = { ...manifestCache };
+        if (manifestContent) {
+          cache[m3u8Url] = manifestContent;
+        }
+
+        const resolved = await resolveMediaPlaylist(m3u8Url, referer, cache, cookies);
+        if (!resolved || resolved.segments.length === 0) {
+          throw new Error('Could not parse HLS manifest or no segments found.');
+        }
+        if (cancelledRef.current) return;
+
+        const { segments } = resolved;
+
+        // ── 2. Prepare local directory ───────────────────────────────────────
+        const folderName = `${safeName(meta.animeName)}_ep${safeName(meta.title)}`;
+        const folderUri = `${DOWNLOADS_DIR}${folderName}/`;
+        await FileSystem.makeDirectoryAsync(folderUri, { intermediates: true });
+
+        // ── 3. Download segments ─────────────────────────────────────────────
+        setStatus('downloading');
+        let totalBytes = 0;
+
+        await runWithConcurrency(
+          segments,
+          CONCURRENCY,
+          async (seg, i) => {
+            if (cancelledRef.current) return;
+            const destUri = `${folderUri}${seg.localFilename}`;
+
+            // Skip if already downloaded (resume support)
+            const info = await FileSystem.getInfoAsync(destUri);
+            if (info.exists) {
+              if ('size' in info) totalBytes += (info as any).size ?? 0;
+              return;
+            }
+
+            if (injectJSRef.current) {
+              // Download via WebView to bypass JA3 TLS Fingerprinting / Bot Protection
+              let resolvePromise: () => void;
+              let rejectPromise: (err: any) => void;
+              const promise = new Promise<void>((res, rej) => {
+                resolvePromise = res;
+                rejectPromise = rej;
+              });
+
+              pendingSegmentsRef.current[i] = {
+                resolve: resolvePromise!,
+                reject: rejectPromise!,
+                writeChunk: async (base64: string) => {
+                  await FileSystem.writeAsStringAsync(destUri, base64, {
+                    encoding: FileSystem.EncodingType.Base64,
+                  });
+                }
+              };
+
+              const js = `
+                try {
+                  if (typeof window.__rn_download_segment === 'function') {
+                    window.__rn_download_segment(${JSON.stringify(seg.url)}, ${i});
+                  } else {
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                      type: 'DOWNLOAD_SEGMENT_ERROR',
+                      index: ${i},
+                      url: ${JSON.stringify(seg.url)},
+                      error: 'window.__rn_download_segment is not defined'
+                    }));
+                  }
+                } catch (e) {
+                  window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'DOWNLOAD_SEGMENT_ERROR',
+                    index: ${i},
+                    url: ${JSON.stringify(seg.url)},
+                    error: e.message
+                  }));
+                }
+                true;
+              `;
+              injectJSRef.current(js);
+              await promise;
+            } else {
+              // Standard native fetch fallback
+              const downloadHeaders: Record<string, string> = {
+                'User-Agent': UA,
+              };
+              if (referer) {
+                downloadHeaders['Referer'] = referer;
+                try {
+                  downloadHeaders['Origin'] = new URL(referer).origin;
+                } catch {}
+              }
+              if (cookies) {
+                downloadHeaders['Cookie'] = cookies;
+              }
+
+              const dlResult = await FileSystem.downloadAsync(seg.url, destUri, {
+                headers: downloadHeaders,
+              });
+              if (dlResult.status >= 400) {
+                throw new Error(`Segment ${i} failed with ${dlResult.status}`);
+              }
+            }
+
+            const segInfo = await FileSystem.getInfoAsync(destUri);
+            if (segInfo.exists && 'size' in segInfo) {
+              totalBytes += (segInfo as any).size ?? 0;
+            }
+          },
+          (done) => {
+            if (!cancelledRef.current) {
+              setProgress(done / segments.length);
+            }
+          },
+        );
+
+        if (cancelledRef.current) return;
+
+        // ── 4. Write local manifest ──────────────────────────────────────────
+        const localManifestContent = buildLocalManifest(segments);
+        const localManifestUri = `${folderUri}playlist.m3u8`;
+        await FileSystem.writeAsStringAsync(localManifestUri, localManifestContent, {
+          encoding: FileSystem.EncodingType.UTF8,
+        });
+
+        // ── 5. Persist to AsyncStorage ───────────────────────────────────────
+        const episode: DownloadedEpisode = {
+          episodeId: meta.episodeId,
+          title: meta.title,
+          animeName: meta.animeName,
+          thumbnailUrl: meta.thumbnailUrl,
+          localManifestUri,
+          downloadedAt: Date.now(),
+          totalSegments: segments.length,
+          sizeBytes: totalBytes,
+        };
+
+        const list = await loadSavedDownloads();
+        const filtered = list.filter((d) => d.episodeId !== meta.episodeId); // dedup
+        await saveDownloads([...filtered, episode]);
+
+        setDownloadedEpisode(episode);
+        setStatus('done');
+        setProgress(1);
+      } catch (err: any) {
+        console.error('[HLS Downloader Error]:', err);
+        if (!cancelledRef.current) {
+          setError(err?.message ?? 'Download failed');
+          setStatus('error');
+        }
+      }
+    },
+    [],
+  );
+
+  return { status, progress, error, downloadedEpisode, startDownload, cancelDownload, handleDownloadMessage };
+}

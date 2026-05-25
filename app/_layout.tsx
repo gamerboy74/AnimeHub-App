@@ -51,6 +51,7 @@ export default function RootLayout() {
             }}>
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
               <Stack.Screen name="watch/[id]" options={{ presentation: 'fullScreenModal' }} />
+              <Stack.Screen name="downloads" options={{ headerShown: false }} />
               <Stack.Screen name="auth/login" options={{ presentation: 'modal' }} />
               <Stack.Screen name="auth/signup" options={{ presentation: 'modal' }} />
             </Stack>
