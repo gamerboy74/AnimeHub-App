@@ -37,6 +37,7 @@ export interface HlsDownloaderResult {
     cookies?: string,
     manifestCache?: Record<string, string>,
     injectJS?: (js: string) => void,
+    subtitles?: { url: string; label: string; lang: string }[],
   ) => void;
   cancelDownload: () => void;
   handleDownloadMessage: (msg: any) => void;
@@ -117,7 +118,7 @@ async function resolveMediaPlaylist(
   referer: string,
   manifestCache?: Record<string, string>,
   cookies?: string,
-): Promise<{ mediaUrl: string; segments: SegmentInfo[] } | null> {
+): Promise<{ mediaUrl: string; segments: SegmentInfo[]; manifestText: string } | null> {
   let text = manifestCache ? manifestCache[manifestUrl] : null;
   if (!text) {
     text = await fetchText(manifestUrl, referer, cookies);
@@ -164,24 +165,31 @@ async function resolveMediaPlaylist(
     }
   }
 
-  return { mediaUrl: manifestUrl, segments };
+  return { mediaUrl: manifestUrl, segments, manifestText: text };
 }
 
 /**
- * Build a local .m3u8 file that references local segment filenames.
- * The player (expo-video / ExoPlayer) needs this to know the segment order.
+ * Build a local .m3u8 file by rewriting the original manifest's segment URLs.
+ * This preserves all original metadata like exact segment durations and
+ * discontinuities, preventing native players (ExoPlayer) from stalling.
  */
-function buildLocalManifest(segments: SegmentInfo[]): string {
-  const header = [
-    '#EXTM3U',
-    '#EXT-X-VERSION:3',
-    '#EXT-X-TARGETDURATION:10',
-    '#EXT-X-MEDIA-SEQUENCE:0',
-  ].join('\n');
-  const body = segments
-    .map((s) => `#EXTINF:10.0,\n${s.localFilename}`)
-    .join('\n');
-  return `${header}\n${body}\n#EXT-X-ENDLIST`;
+function buildLocalManifest(originalManifest: string, segments: SegmentInfo[], folderUri: string): string {
+  const lines = originalManifest.split('\n');
+  let segmentIdx = 0;
+  const newLines = lines.map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('#')) {
+      return trimmed;
+    }
+    const seg = segments[segmentIdx];
+    if (seg) {
+      segmentIdx++;
+      return `${folderUri}${seg.localFilename}`;
+    }
+    return trimmed;
+  });
+  return newLines.join('\n');
 }
 
 /** Run an async function over an array with bounded concurrency */
@@ -297,6 +305,7 @@ export function useHlsDownloader(): HlsDownloaderResult {
       cookies?: string,
       manifestCache?: Record<string, string>,
       injectJS?: (js: string) => void,
+      subtitles?: { url: string; label: string; lang: string }[],
     ) => {
       cancelledRef.current = false;
       setStatus('preparing');
@@ -320,7 +329,7 @@ export function useHlsDownloader(): HlsDownloaderResult {
         }
         if (cancelledRef.current) return;
 
-        const { segments } = resolved;
+        const { segments, manifestText } = resolved;
 
         // ── 2. Prepare local directory ───────────────────────────────────────
         const folderName = `${safeName(meta.animeName)}_ep${safeName(meta.title)}`;
@@ -426,11 +435,99 @@ export function useHlsDownloader(): HlsDownloaderResult {
         if (cancelledRef.current) return;
 
         // ── 4. Write local manifest ──────────────────────────────────────────
-        const localManifestContent = buildLocalManifest(segments);
+        const localManifestContent = buildLocalManifest(manifestText, segments, folderUri);
         const localManifestUri = `${folderUri}playlist.m3u8`;
-        await FileSystem.writeAsStringAsync(localManifestUri, localManifestContent, {
-          encoding: FileSystem.EncodingType.UTF8,
-        });
+
+        if (subtitles && subtitles.length > 0) {
+          const downloadedSubs: { label: string; lang: string; localFilename: string }[] = [];
+
+          for (const sub of subtitles) {
+            const subFilename = `sub_${sub.lang}.vtt`;
+            const destSubUri = `${folderUri}${subFilename}`;
+            const subM3u8Filename = `sub_${sub.lang}.m3u8`;
+            const destSubM3u8Uri = `${folderUri}${subM3u8Filename}`;
+
+            try {
+              console.log(`[HLS Downloader] Downloading subtitle: ${sub.label} (${sub.url})`);
+              const downloadHeaders: Record<string, string> = {
+                'User-Agent': UA,
+              };
+              if (referer) {
+                downloadHeaders['Referer'] = referer;
+                try { downloadHeaders['Origin'] = new URL(referer).origin; } catch {}
+              }
+              if (cookies) {
+                downloadHeaders['Cookie'] = cookies;
+              }
+
+              await FileSystem.downloadAsync(sub.url, destSubUri, {
+                headers: downloadHeaders,
+              });
+
+              // Write subtitle media playlist wrapper (VOD format, single segment)
+              const subM3u8Content = [
+                '#EXTM3U',
+                '#EXT-X-VERSION:4',
+                '#EXT-X-TARGETDURATION:7200',
+                '#EXT-X-MEDIA-SEQUENCE:0',
+                '#EXT-X-PLAYLIST-TYPE:VOD',
+                '#EXTINF:7200.0,',
+                `${folderUri}${subFilename}`,
+                '#EXT-X-ENDLIST'
+              ].join('\n');
+
+              await FileSystem.writeAsStringAsync(destSubM3u8Uri, subM3u8Content, {
+                encoding: FileSystem.EncodingType.UTF8,
+              });
+
+              downloadedSubs.push({
+                label: sub.label,
+                lang: sub.lang,
+                localFilename: subM3u8Filename,
+              });
+            } catch (subErr) {
+              console.error(`[HLS Downloader] Failed to download subtitles for ${sub.label}:`, subErr);
+            }
+          }
+
+          if (downloadedSubs.length > 0) {
+            // Write video stream to video.m3u8
+            const videoManifestUri = `${folderUri}video.m3u8`;
+            await FileSystem.writeAsStringAsync(videoManifestUri, localManifestContent, {
+              encoding: FileSystem.EncodingType.UTF8,
+            });
+
+            // Write master playlist to playlist.m3u8
+            const masterPlaylistLines = [
+              '#EXTM3U',
+              '#EXT-X-VERSION:4',
+            ];
+
+            downloadedSubs.forEach((sub, idx) => {
+              const isDefault = idx === 0 ? 'YES' : 'NO';
+              masterPlaylistLines.push(
+                `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="${sub.label}",DEFAULT=${isDefault},AUTOSELECT=YES,LANGUAGE="${sub.lang}",URI="${folderUri}${sub.localFilename}"`
+              );
+            });
+
+            masterPlaylistLines.push(
+              `#EXT-X-STREAM-INF:BANDWIDTH=5000000,SUBTITLES="subs"`,
+              `${folderUri}video.m3u8`
+            );
+
+            await FileSystem.writeAsStringAsync(localManifestUri, masterPlaylistLines.join('\n'), {
+              encoding: FileSystem.EncodingType.UTF8,
+            });
+          } else {
+            await FileSystem.writeAsStringAsync(localManifestUri, localManifestContent, {
+              encoding: FileSystem.EncodingType.UTF8,
+            });
+          }
+        } else {
+          await FileSystem.writeAsStringAsync(localManifestUri, localManifestContent, {
+            encoding: FileSystem.EncodingType.UTF8,
+          });
+        }
 
         // ── 5. Persist to AsyncStorage ───────────────────────────────────────
         const episode: DownloadedEpisode = {

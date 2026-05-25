@@ -67,6 +67,17 @@ const buildSnifferJS = () => `
         if (!url || typeof url !== 'string') return;
         if (_mediaReported[url]) return;
         var lc = url.toLowerCase();
+        
+        // Intercept subtitle files directly (.vtt or .srt)
+        if (lc.indexOf('.vtt') !== -1 || lc.indexOf('.srt') !== -1) {
+          _mediaReported[url] = true;
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'SUBTITLE_URL_DETECTED',
+            subtitleUrl: url
+          }));
+          return;
+        }
+
         if (!lc.includes('.m3u8') && !lc.includes('.mp4') && !lc.includes('.mkv')) return;
         _mediaReported[url] = true;
         window.ReactNativeWebView.postMessage(JSON.stringify({
@@ -84,9 +95,9 @@ const buildSnifferJS = () => `
       var actualUrl = typeof url === 'string' ? url : (url && typeof url.url === 'string' ? url.url : '');
       var promise = _origFetch.apply(this, args);
       
-      if (actualUrl && actualUrl.toLowerCase().includes('.m3u8')) {
-        promise.then(function(res) {
-          try {
+      promise.then(function(res) {
+        try {
+          if (actualUrl && actualUrl.toLowerCase().includes('.m3u8')) {
             res.clone().text().then(function(text) {
               window.ReactNativeWebView.postMessage(JSON.stringify({
                 type: 'MEDIA_MANIFEST_READY',
@@ -96,9 +107,24 @@ const buildSnifferJS = () => `
                 cookies: document.cookie,
               }));
             }).catch(function(e) {});
-          } catch(e) {}
-        }).catch(function(e) {});
-      }
+          }
+
+          // Check if response contains tracks/subtitles
+          res.clone().text().then(function(text) {
+            if (text && (text.indexOf('"tracks"') !== -1 || text.indexOf('"subtitles"') !== -1)) {
+              try {
+                var json = JSON.parse(text);
+                if (json && json.tracks && Array.isArray(json.tracks)) {
+                  window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'SUBTITLES_DETECTED',
+                    tracks: json.tracks
+                  }));
+                }
+              } catch(err) {}
+            }
+          }).catch(function(e) {});
+        } catch(e) {}
+      }).catch(function(e) {});
       
       if (actualUrl) _reportMedia(actualUrl);
       return promise;
@@ -106,31 +132,44 @@ const buildSnifferJS = () => `
     var _origOpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url) {
       var actualUrl = url;
-      if (actualUrl && typeof actualUrl === 'string' && actualUrl.toLowerCase().includes('.m3u8')) {
-        this.addEventListener('readystatechange', function() {
-          if (this.readyState === 4 && this.status >= 200 && this.status < 300) {
-            try {
+      this.addEventListener('readystatechange', function() {
+        if (this.readyState === 4 && this.status >= 200 && this.status < 300) {
+          try {
+            var text = this.responseText;
+            var lcUrl = (actualUrl || '').toLowerCase();
+            if (lcUrl.indexOf('.m3u8') !== -1) {
               window.ReactNativeWebView.postMessage(JSON.stringify({
                 type: 'MEDIA_MANIFEST_READY',
                 mediaUrl: actualUrl,
                 referer: window.location.href,
-                manifestContent: this.responseText,
+                manifestContent: text,
                 cookies: document.cookie,
               }));
-            } catch(e) {}
-          }
-        });
-      }
+            }
+            if (text && (text.indexOf('"tracks"') !== -1 || text.indexOf('"subtitles"') !== -1)) {
+              var json = JSON.parse(text);
+              if (json && json.tracks && Array.isArray(json.tracks)) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'SUBTITLES_DETECTED',
+                  tracks: json.tracks
+                }));
+              }
+            }
+          } catch(e) {}
+        }
+      });
       _reportMedia(url);
       return _origOpen.apply(this, arguments);
     };
-    setTimeout(function() {
+    
+    // Periodically scan the DOM for video sources and track/subtitles tags
+    setInterval(function() {
       try {
-        document.querySelectorAll('source[src],video[src]').forEach(function(el) {
+        document.querySelectorAll('source[src],video[src],track[src]').forEach(function(el) {
           _reportMedia(el.src || el.getAttribute('src'));
         });
       } catch(e) {}
-    }, 3000);
+    }, 1500);
 
     // Segment download helper — runs within the WebView's TLS/session context
     window.__rn_download_segment = function(url, index) {
@@ -329,6 +368,20 @@ const buildMainInjectedJS = (resumeSeconds: number, autoSkipIntro: boolean) => `
             p.seek(${resumeSeconds});
           }
 
+          // Check for subtitles from JWPlayer playlist
+          try {
+            var playlist = p.getPlaylist();
+            if (playlist && playlist[p.getPlaylistIndex()]) {
+              var item = playlist[p.getPlaylistIndex()];
+              if (item.tracks && Array.isArray(item.tracks)) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'SUBTITLES_DETECTED',
+                  tracks: item.tracks
+                }));
+              }
+            }
+          } catch(err) {}
+
           window.ReactNativeWebView.postMessage(JSON.stringify({
             type:     'progress',
             current:  current,
@@ -525,6 +578,7 @@ export default function WatchScreen() {
   const [sniffedReferer, setSniffedReferer] = useState<string>('');
   const [sniffedManifestCache, setSniffedManifestCache] = useState<Record<string, string>>({});
   const [sniffedCookies, setSniffedCookies] = useState<string>('');
+  const [sniffedSubtitles, setSniffedSubtitles] = useState<{ url: string; label: string; lang: string }[]>([]);
   const downloader = useHlsDownloader();
 
   const webviewRef = useRef<any>(null);
@@ -709,6 +763,47 @@ export default function WatchScreen() {
           }
         }
 
+        if (msg.type === 'SUBTITLE_URL_DETECTED') {
+          const { subtitleUrl } = msg;
+          if (subtitleUrl) {
+            setSniffedSubtitles(prev => {
+              if (prev.some(s => s.url === subtitleUrl)) return prev;
+              console.log('[Download] Sniffed individual subtitle URL:', subtitleUrl);
+              const label = subtitleUrl.toLowerCase().includes('eng') ? 'English' : 'Subtitles';
+              return [
+                ...prev,
+                { url: subtitleUrl, label, lang: label.toLowerCase().substring(0, 3) }
+              ];
+            });
+          }
+        }
+
+        if (msg.type === 'SUBTITLES_DETECTED') {
+          const { tracks } = msg;
+          if (Array.isArray(tracks)) {
+            const vttTracks = tracks
+              .filter((t: any) => {
+                const fileUrl = t.file || t.src;
+                if (!fileUrl) return false;
+                const kind = t.kind || '';
+                return kind === 'captions' || kind === 'subtitles' || fileUrl.toLowerCase().includes('.vtt');
+              })
+              .map((t: any) => {
+                const url = t.file || t.src;
+                const label = t.label || 'Subtitles';
+                return {
+                  url,
+                  label,
+                  lang: label.toLowerCase().substring(0, 3)
+                };
+              });
+            if (vttTracks.length > 0) {
+              console.log('[Download] Sniffed subtitles:', vttTracks.length, 'tracks');
+              setSniffedSubtitles(vttTracks);
+            }
+          }
+        }
+
         if (msg.type === 'MEDIA_MANIFEST_READY') {
           const { mediaUrl, referer, manifestContent, cookies } = msg;
           if (mediaUrl && manifestContent) {
@@ -804,9 +899,10 @@ export default function WatchScreen() {
       sniffedManifestCache,
       (js: string) => {
         webviewRef.current?.injectJavaScript(js);
-      }
+      },
+      sniffedSubtitles
     );
-  }, [sniffedMediaUrl, sniffedReferer, embedOrigin, episode, anime, downloader, sniffedCookies, sniffedManifestCache]);
+  }, [sniffedMediaUrl, sniffedReferer, embedOrigin, episode, anime, downloader, sniffedCookies, sniffedManifestCache, sniffedSubtitles]);
 
   // ── Orientation + nav bar ─────────────────────────────────────────────────
   // We mount landscape immediately. On unmount we restore portrait ONLY if no
@@ -852,6 +948,7 @@ export default function WatchScreen() {
     setSniffedReferer('');
     setSniffedManifestCache({});
     setSniffedCookies('');
+    setSniffedSubtitles([]);
     downloader.cancelDownload();
     srv.reset(); // reset server + lang to defaults on episode change
     cancelAutoPlay();
