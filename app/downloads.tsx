@@ -7,7 +7,6 @@ import {
   StyleSheet,
   StatusBar,
   Alert,
-  Dimensions,
   BackHandler,
 } from 'react-native';
 import { Image } from 'expo-image';
@@ -28,8 +27,6 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 
-const { width } = Dimensions.get('window');
-const CARD_WIDTH = (width - 44) / 2; // Perfect two-column spacing with margins
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -387,7 +384,7 @@ function EpisodeRow({
   );
 }
 
-// ─── Grouped Anime Card (2-Column Premium Grid Item) ───────────────────────────
+// ─── Grouped Anime Row (Vertical List Item) ────────────────────────────────────
 
 function GroupedAnimeCard({
   group,
@@ -397,38 +394,44 @@ function GroupedAnimeCard({
   onPress: () => void;
 }) {
   return (
-    <TouchableOpacity 
-      style={styles.animeGridCard} 
-      onPress={onPress} 
-      activeOpacity={0.9}
+    <TouchableOpacity
+      style={styles.animeRow}
+      onPress={onPress}
+      activeOpacity={0.8}
     >
-      <Image
-        source={{ uri: group.thumbnailUrl }}
-        style={styles.gridPoster}
-        contentFit="cover"
-        transition={250}
-      />
-      <LinearGradient
-        colors={['transparent', 'rgba(8,8,16,0.3)', 'rgba(8,8,16,0.95)']}
-        style={StyleSheet.absoluteFill}
-      />
-      
-      {/* Stored Count Badge (Cyber glass style) */}
-      <View style={styles.gridBadge}>
-        <BlurView intensity={45} tint="dark" style={styles.gridBadgeBlur}>
-          <Text style={styles.gridBadgeText}>{group.episodes.length} EP</Text>
-        </BlurView>
+      {/* Poster thumbnail */}
+      <View style={styles.rowPosterWrap}>
+        <Image
+          source={{ uri: group.thumbnailUrl }}
+          style={styles.rowPoster}
+          contentFit="cover"
+          transition={200}
+        />
+        <LinearGradient
+          colors={['transparent', 'rgba(8,8,16,0.55)']}
+          style={StyleSheet.absoluteFill}
+        />
       </View>
 
-      {/* Bottom Title Panel */}
-      <View style={styles.gridTitlePanel}>
-        <Text style={styles.gridTitle} numberOfLines={1}>
+      {/* Info */}
+      <View style={styles.rowInfo}>
+        <Text style={styles.rowTitle} numberOfLines={2}>
           {group.animeName}
         </Text>
-        <Text style={styles.gridSubtitle}>
-          {formatBytes(group.totalSizeBytes)} saved
-        </Text>
+        <View style={styles.rowMeta}>
+          <View style={styles.rowBadge}>
+            <Ionicons name="film-outline" size={10} color={COLORS.neonCyan ?? '#00F5FF'} />
+            <Text style={styles.rowBadgeText}>{group.episodes.length} EP</Text>
+          </View>
+          <View style={styles.rowBadge}>
+            <Ionicons name="folder-open-outline" size={10} color={COLORS.neon ?? '#BF5FFF'} />
+            <Text style={[styles.rowBadgeText, { color: COLORS.neon ?? '#BF5FFF' }]}>{formatBytes(group.totalSizeBytes)}</Text>
+          </View>
+        </View>
       </View>
+
+      {/* Chevron */}
+      <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted ?? '#4A4768'} />
     </TouchableOpacity>
   );
 }
@@ -808,14 +811,13 @@ export default function DownloadsScreen() {
         <FlatList
           data={groupedList}
           keyExtractor={(item) => item.animeName}
-          numColumns={2}
-          columnWrapperStyle={styles.gridRow}
           renderItem={({ item }) => (
             <GroupedAnimeCard
               group={item}
               onPress={() => setSelectedAnimeName(item.animeName)}
             />
           )}
+          ItemSeparatorComponent={() => <View style={styles.rowSeparator} />}
           contentContainerStyle={[
             styles.list,
             { paddingBottom: insets.bottom + 32 },
@@ -892,74 +894,70 @@ const styles = StyleSheet.create({
   },
   list: {
     paddingHorizontal: 16,
-    paddingTop: 20,
-  },
-  gridRow: {
-    justifyContent: 'space-between',
-    marginBottom: 16,
+    paddingTop: 12,
   },
   separator: {
     height: 12,
   },
-  // ── 2-Column Premium Grid Card ──
-  animeGridCard: {
-    width: CARD_WIDTH,
-    height: CARD_WIDTH * 1.45,
-    borderRadius: 16,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(191,95,255,0.15)',
-    backgroundColor: COLORS.bgCard ?? '#0E0E1A',
-    position: 'relative',
-    ...SHADOWS.neon,
-    shadowOpacity: 0.1, // Subtle, upscale shadow
+  rowSeparator: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    marginHorizontal: 4,
   },
-  gridPoster: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  gridBadge: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    borderRadius: 8,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(0,245,255,0.25)',
-  },
-  gridBadgeBlur: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+  // ── Anime Library Row ──
+  animeRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    gap: 14,
+  },
+  rowPosterWrap: {
+    width: 64,
+    height: 88,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#13131F',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    flexShrink: 0,
+  },
+  rowPoster: {
+    width: '100%',
+    height: '100%',
+  },
+  rowInfo: {
+    flex: 1,
+    gap: 6,
     justifyContent: 'center',
   },
-  gridBadgeText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: COLORS.neonCyan ?? '#00F5FF',
-    letterSpacing: 0.5,
-  },
-  gridTitlePanel: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: 12,
-    gap: 3,
-  },
-  gridTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: COLORS.text ?? '#F0EEFF',
-    textShadowColor: 'rgba(0,0,0,0.8)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
-  gridSubtitle: {
-    fontSize: 10,
-    color: COLORS.neonCyan ?? '#00F5FF',
+  rowTitle: {
+    fontSize: 15,
     fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    color: COLORS.text ?? '#F0EEFF',
+    lineHeight: 20,
+  },
+  rowMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  rowBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  rowBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLORS.neonCyan ?? '#00F5FF',
+    letterSpacing: 0.3,
   },
   // ── Detail Sub-Page Banner ──
   detailBanner: {

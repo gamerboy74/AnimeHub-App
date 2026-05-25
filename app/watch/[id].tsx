@@ -369,9 +369,23 @@ const buildMainInjectedJS = (resumeSeconds: number, autoSkipIntro: boolean) => `
     function startPolling(p) {
       attachErrorListeners(p);
 
+      // ── Report JWPlayer subtitles ONCE when player first becomes ready ──────
+      // Do NOT put this inside setInterval — it would fire every 5 s, spamming
+      // SUBTITLES_DETECTED messages and triggering pointless re-renders.
+      try {
+        var playlist = p.getPlaylist();
+        if (playlist && playlist[p.getPlaylistIndex()]) {
+          var item = playlist[p.getPlaylistIndex()];
+          if (item.tracks && Array.isArray(item.tracks) && item.tracks.length > 0) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'SUBTITLES_DETECTED',
+              tracks: item.tracks
+            }));
+          }
+        }
+      } catch(err) {}
+
       // ── Episode complete (JWPlayer 'complete' event) ────────────────────────
-      // Fire as soon as the player itself signals end — more reliable than
-      // polling because it fires even if the last poll missed the final frame.
       try {
         p.on('complete', function() {
           window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'episode_complete' }));
@@ -389,20 +403,6 @@ const buildMainInjectedJS = (resumeSeconds: number, autoSkipIntro: boolean) => `
             resumeApplied = true;
             p.seek(${resumeSeconds});
           }
-
-          // Check for subtitles from JWPlayer playlist
-          try {
-            var playlist = p.getPlaylist();
-            if (playlist && playlist[p.getPlaylistIndex()]) {
-              var item = playlist[p.getPlaylistIndex()];
-              if (item.tracks && Array.isArray(item.tracks)) {
-                window.ReactNativeWebView.postMessage(JSON.stringify({
-                  type: 'SUBTITLES_DETECTED',
-                  tracks: item.tracks
-                }));
-              }
-            }
-          } catch(err) {}
 
           window.ReactNativeWebView.postMessage(JSON.stringify({
             type:     'progress',
@@ -601,6 +601,15 @@ export default function WatchScreen() {
   const [sniffedManifestCache, setSniffedManifestCache] = useState<Record<string, string>>({});
   const [sniffedCookies, setSniffedCookies] = useState<string>('');
   const [sniffedSubtitles, setSniffedSubtitles] = useState<{ url: string; label: string; lang: string }[]>([]);
+
+  // Live refs so handleDownloadPress always reads the latest sniffed data,
+  // even when React state hasn't yet committed between message and button press.
+  const sniffedSubtitlesRef = useRef<{ url: string; label: string; lang: string }[]>([]);
+  const sniffedManifestCacheRef = useRef<Record<string, string>>({});
+  const sniffedMediaUrlRef = useRef<string | null>(null);
+  const sniffedRefererRef = useRef<string>('');
+  const sniffedCookiesRef = useRef<string>('');
+
   const downloader = useHlsDownloader();
 
   const webviewRef = useRef<any>(null);
@@ -777,26 +786,31 @@ export default function WatchScreen() {
         // ── Network sniffer result ─────────────────────────────────────────
         if (msg.type === 'MEDIA_URL_DETECTED') {
           const { mediaUrl, referer } = msg;
-          // Only accept .m3u8 for HLS download; prefer the first one captured
-          if (mediaUrl && mediaUrl.toLowerCase().includes('.m3u8') && !sniffedMediaUrl) {
-            console.log('[Download] Sniffed .m3u8:', mediaUrl);
-            setSniffedMediaUrl(mediaUrl);
-            setSniffedReferer(referer || '');
+          if (mediaUrl && mediaUrl.toLowerCase().includes('.m3u8')) {
+            if (!sniffedMediaUrlRef.current || sniffedMediaUrlRef.current === episode?.video_url) {
+              console.log('[Download] Sniffed .m3u8:', mediaUrl);
+              sniffedMediaUrlRef.current = mediaUrl;
+              sniffedRefererRef.current = referer || '';
+              setSniffedMediaUrl(mediaUrl);
+              setSniffedReferer(referer || '');
+            }
           }
         }
 
         if (msg.type === 'SUBTITLE_URL_DETECTED') {
           const { subtitleUrl } = msg;
           if (subtitleUrl) {
-            setSniffedSubtitles(prev => {
-              if (prev.some(s => s.url === subtitleUrl)) return prev;
-              console.log('[Download] Sniffed individual subtitle URL:', subtitleUrl);
-              const label = subtitleUrl.toLowerCase().includes('eng') ? 'English' : 'Subtitles';
-              return [
-                ...prev,
-                { url: subtitleUrl, label, lang: label.toLowerCase().substring(0, 3) }
-              ];
-            });
+            const lcUrl = subtitleUrl.toLowerCase();
+            const isEnglish = lcUrl.includes('eng') || lcUrl.includes('english') || lcUrl.includes('/en/') || lcUrl.includes('_en.');
+            if (isEnglish) {
+              setSniffedSubtitles(prev => {
+                if (prev.some(s => s.url === subtitleUrl)) return prev;
+                console.log('[Download] Sniffed individual English subtitle URL:', subtitleUrl);
+                const next = [...prev, { url: subtitleUrl, label: 'English', lang: 'eng' }];
+                sniffedSubtitlesRef.current = next;
+                return next;
+              });
+            }
           }
         }
 
@@ -807,21 +821,27 @@ export default function WatchScreen() {
               .filter((t: any) => {
                 const fileUrl = t.file || t.src;
                 if (!fileUrl) return false;
+                const label = (t.label || '').toLowerCase();
+                const lcUrl = fileUrl.toLowerCase();
+                const isEnglish = label.includes('eng') || label.includes('english') || lcUrl.includes('eng') || lcUrl.includes('english') || lcUrl.includes('/en/') || lcUrl.includes('_en.');
+                if (!isEnglish) return false;
                 const kind = t.kind || '';
-                return kind === 'captions' || kind === 'subtitles' || fileUrl.toLowerCase().includes('.vtt');
+                return kind === 'captions' || kind === 'subtitles' || lcUrl.includes('.vtt');
               })
-              .map((t: any) => {
-                const url = t.file || t.src;
-                const label = t.label || 'Subtitles';
-                return {
-                  url,
-                  label,
-                  lang: label.toLowerCase().substring(0, 3)
-                };
-              });
+              .map((t: any) => ({
+                url: t.file || t.src,
+                label: t.label || 'English',
+                lang: 'eng',
+              }));
             if (vttTracks.length > 0) {
-              console.log('[Download] Sniffed subtitles:', vttTracks.length, 'tracks');
-              setSniffedSubtitles(vttTracks);
+              // Deduplicate: skip state update if URLs are identical to avoid re-renders
+              const existingUrls = sniffedSubtitlesRef.current.map(s => s.url).join(',');
+              const newUrls = vttTracks.map((s: any) => s.url).join(',');
+              if (existingUrls !== newUrls) {
+                console.log('[Download] Sniffed English subtitles:', vttTracks.length, 'tracks');
+                sniffedSubtitlesRef.current = vttTracks;
+                setSniffedSubtitles(vttTracks);
+              }
             }
           }
         }
@@ -830,14 +850,15 @@ export default function WatchScreen() {
           const { mediaUrl, referer, manifestContent, cookies } = msg;
           if (mediaUrl && manifestContent) {
             console.log('[Download] Captured manifest for:', mediaUrl);
-            setSniffedManifestCache(prev => ({
-              ...prev,
-              [mediaUrl]: manifestContent
-            }));
+            sniffedManifestCacheRef.current = { ...sniffedManifestCacheRef.current, [mediaUrl]: manifestContent };
+            setSniffedManifestCache(prev => ({ ...prev, [mediaUrl]: manifestContent }));
             if (cookies) {
+              sniffedCookiesRef.current = cookies;
               setSniffedCookies(cookies);
             }
-            if (!sniffedMediaUrl) {
+            if (!sniffedMediaUrlRef.current || sniffedMediaUrlRef.current === episode?.video_url) {
+              sniffedMediaUrlRef.current = mediaUrl;
+              sniffedRefererRef.current = referer || '';
               setSniffedMediaUrl(mediaUrl);
               setSniffedReferer(referer || '');
             }
@@ -905,26 +926,34 @@ export default function WatchScreen() {
   );
 
   // ── Trigger download when user presses the Download button ──────────────────
+  // Reads directly from refs so it always gets the latest sniffed data,
+  // immune to React state batching / closure timing races.
   const handleDownloadPress = useCallback(() => {
-    if (!sniffedMediaUrl || !episode) return;
+    const mediaUrl  = sniffedMediaUrlRef.current;
+    const referer   = sniffedRefererRef.current;
+    const cookies   = sniffedCookiesRef.current;
+    const cache     = sniffedManifestCacheRef.current;
+    const subtitles = sniffedSubtitlesRef.current;
+    if (!mediaUrl || !episode) return;
+    console.log('[Download] Starting — subtitles available:', subtitles.length);
     downloader.startDownload(
-      sniffedMediaUrl,
-      sniffedReferer || embedOrigin,
+      mediaUrl,
+      referer || embedOrigin,
       {
         episodeId: episode.id,
         title: `Ep ${episode.episode_number}: ${episode.title ?? ''}`,
         animeName: anime?.title ?? 'Unknown',
         thumbnailUrl: episode.thumbnail_url ?? anime?.poster_url ?? '',
       },
-      undefined, // resolved in hook from cache
-      sniffedCookies,
-      sniffedManifestCache,
+      undefined,
+      cookies,
+      cache,
       (js: string) => {
         webviewRef.current?.injectJavaScript(js);
       },
-      sniffedSubtitles
+      subtitles
     );
-  }, [sniffedMediaUrl, sniffedReferer, embedOrigin, episode, anime, downloader, sniffedCookies, sniffedManifestCache, sniffedSubtitles]);
+  }, [embedOrigin, episode, anime, downloader]);
 
   // ── Auto-start download if autoDownload=true parameter is present ─────────
   useEffect(() => {
@@ -973,11 +1002,16 @@ export default function WatchScreen() {
     setShowNextUp(false);
     setPlayerReady(false);
     setPlayerError(false);
-    setSniffedMediaUrl(null);   // clear sniffed URL for new episode
+    setSniffedMediaUrl(null);
     setSniffedReferer('');
     setSniffedManifestCache({});
     setSniffedCookies('');
     setSniffedSubtitles([]);
+    sniffedMediaUrlRef.current = null;
+    sniffedRefererRef.current = '';
+    sniffedManifestCacheRef.current = {};
+    sniffedCookiesRef.current = '';
+    sniffedSubtitlesRef.current = [];
     downloader.cancelDownload();
     srv.reset(); // reset server + lang to defaults on episode change
     cancelAutoPlay();
@@ -993,6 +1027,23 @@ export default function WatchScreen() {
       if (spinnerTimeoutRef.current) clearTimeout(spinnerTimeoutRef.current);
     };
   }, [id, resetHudTimer, cancelAutoPlay]);
+
+  // Pre-populate sniffedMediaUrl with the direct video_url if available
+  useEffect(() => {
+    if (episode?.video_url && episode.video_url.toLowerCase().includes('.m3u8')) {
+      setSniffedMediaUrl(prev => prev || episode.video_url || null);
+    }
+  }, [episode]);
+
+  // Reset sniffed states when server changes
+  useEffect(() => {
+    setSniffedMediaUrl(null);
+    setSniffedReferer('');
+    setSniffedManifestCache({});
+    setSniffedCookies('');
+    setSniffedSubtitles([]);
+    downloader.cancelDownload();
+  }, [srv.embedUrl]);
 
   // NOTE: clearOtherProgress was removed — it was wiping all episode history
   // on every mount which caused the watch tracker to lose progress.

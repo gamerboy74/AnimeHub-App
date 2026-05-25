@@ -264,6 +264,8 @@ export function useAnimeCharacters(animeId?: string) {
   });
 }
 
+const jikanRelationsCache = new Map<number, any[]>();
+
 function normalizeRelationType(type: string): RelatedAnime['relation_type'] {
   const norm = (type || '').toLowerCase().replace(/[^a-z0-9_]/g, '_');
   if (norm === 'prequel') return 'prequel';
@@ -282,44 +284,50 @@ export function useAnimeRelations(animeId?: string) {
     queryFn: async (): Promise<RelatedAnime[]> => {
       if (!animeId) return [];
 
-      // 0. Fetch current anime's MAL ID to query Jikan API
-      const { data: currentAnime } = await supabase
-        .from('anime')
-        .select('mal_id')
-        .eq('id', animeId)
-        .single();
-      const currentMalId = currentAnime?.mal_id;
+      // 0 & 1. Fetch current anime's MAL ID and local relations in parallel!
+      const [currentAnimeRes, localRelationsRes] = await Promise.all([
+        supabase
+          .from('anime')
+          .select('mal_id')
+          .eq('id', animeId)
+          .single(),
+        supabase
+          .from('anime_relations')
+          .select('*')
+          .eq('anime_id', animeId)
+      ]);
 
-      // 1. Fetch relation metadata rows from the local DB
-      const { data: relations } = await supabase
-        .from('anime_relations')
-        .select('*')
-        .eq('anime_id', animeId);
-      const localRelations = relations || [];
+      const currentMalId = currentAnimeRes.data?.mal_id;
+      const localRelations = localRelationsRes.data || [];
 
-      // 2. Dynamically fetch relations from Jikan API as fallback/enrichment
+      // 2. Dynamically fetch relations from Jikan API as fallback/enrichment (utilizing in-memory cache)
       let jikanRelations: any[] = [];
       if (currentMalId) {
-        try {
-          const res = await fetch(`https://api.jikan.moe/v4/anime/${currentMalId}/relations`);
-          if (res.ok) {
-            const json = await res.json();
-            const jdata = json.data || [];
-            for (const relGroup of jdata) {
-              const relType = relGroup.relation; // e.g. "Sequel", "Prequel", "Other", etc.
-              for (const entry of relGroup.entry) {
-                if (entry.type === 'anime') { // Only keep anime format relations
-                  jikanRelations.push({
-                    mal_id: entry.mal_id,
-                    relation_type: relType,
-                    title: entry.name,
-                  });
+        if (jikanRelationsCache.has(currentMalId)) {
+          jikanRelations = jikanRelationsCache.get(currentMalId)!;
+        } else {
+          try {
+            const res = await fetch(`https://api.jikan.moe/v4/anime/${currentMalId}/relations`);
+            if (res.ok) {
+              const json = await res.json();
+              const jdata = json.data || [];
+              for (const relGroup of jdata) {
+                const relType = relGroup.relation; // e.g. "Sequel", "Prequel", "Other", etc.
+                for (const entry of relGroup.entry) {
+                  if (entry.type === 'anime') { // Only keep anime format relations
+                    jikanRelations.push({
+                      mal_id: entry.mal_id,
+                      relation_type: relType,
+                      title: entry.name,
+                    });
+                  }
                 }
               }
+              jikanRelationsCache.set(currentMalId, jikanRelations);
             }
+          } catch (e) {
+            console.warn(`[useAnimeRelations] Jikan relations fetch failed for malId ${currentMalId}:`, e);
           }
-        } catch (e) {
-          console.warn(`[useAnimeRelations] Jikan relations fetch failed for malId ${currentMalId}:`, e);
         }
       }
 

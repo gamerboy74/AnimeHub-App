@@ -190,7 +190,7 @@ function buildLocalManifest(originalManifest: string, segments: SegmentInfo[], f
     const seg = segments[segmentIdx];
     if (seg) {
       segmentIdx++;
-      return `${folderUri}${seg.localFilename}`;
+      return seg.localFilename;
     }
     return trimmed;
   });
@@ -627,7 +627,7 @@ export function useHlsDownloader(): HlsDownloaderResult {
                 '#EXT-X-MEDIA-SEQUENCE:0',
                 '#EXT-X-PLAYLIST-TYPE:VOD',
                 '#EXTINF:7200.0,',
-                `${folderUri}${subFilename}`,
+                subFilename,
                 '#EXT-X-ENDLIST'
               ].join('\n');
 
@@ -661,13 +661,13 @@ export function useHlsDownloader(): HlsDownloaderResult {
             downloadedSubs.forEach((sub, idx) => {
               const isDefault = idx === 0 ? 'YES' : 'NO';
               masterPlaylistLines.push(
-                `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="${sub.label}",DEFAULT=${isDefault},AUTOSELECT=YES,LANGUAGE="${sub.lang}",URI="${folderUri}${sub.localFilename}"`
+                `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="${sub.label}",DEFAULT=${isDefault},AUTOSELECT=YES,LANGUAGE="${sub.lang}",URI="${sub.localFilename}"`
               );
             });
 
             masterPlaylistLines.push(
               `#EXT-X-STREAM-INF:BANDWIDTH=5000000,SUBTITLES="subs"`,
-              `${folderUri}video.m3u8`
+              `video.m3u8`
             );
 
             await FileSystem.writeAsStringAsync(localManifestUri, masterPlaylistLines.join('\n'), {
