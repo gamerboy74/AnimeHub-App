@@ -6,12 +6,13 @@ import {
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { supabase, userAPI, AnimeWithStats, Episode, Review } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
 import { useAnimeDetails, useEpisodes } from '../../src/hooks/useQueries';
 import { useToggleFavorite, useToggleWatchlist } from '../../src/hooks/useOptimisticMutations';
+import { getAllDownloads } from '../../src/hooks/useHlsDownloader';
 
 const { width, height } = Dimensions.get('window');
 
@@ -43,8 +44,28 @@ export default function AnimeDetailScreen() {
   const [resumeEpisodeId, setResumeEpisodeId] = useState<string | null>(null);
   const [resumeProgress, setResumeProgress] = useState<{ epNum: number; seconds: number } | null>(null);
   const [loadingUser, setLoadingUser] = useState(false);
+  const [downloadedIds, setDownloadedIds] = useState<Set<string>>(new Set());
 
   const loading = loadingAnime || loadingEpisodes;
+
+  const checkDownloads = useCallback(async () => {
+    try {
+      const list = await getAllDownloads();
+      setDownloadedIds(new Set(list.map(d => d.episodeId)));
+    } catch (e) {
+      console.error('[AnimeDetail] checkDownloads error:', e);
+    }
+  }, []);
+
+  const navigation = useNavigation();
+
+  useEffect(() => {
+    checkDownloads();
+    const unsubscribe = navigation.addListener('focus', () => {
+      checkDownloads();
+    });
+    return unsubscribe;
+  }, [navigation, checkDownloads]);
 
   // Fetch user-specific data (reviews + fav/watchlist/progress) separately
   useEffect(() => {
@@ -258,7 +279,7 @@ export default function AnimeDetailScreen() {
 
         {/* Tab content */}
         {activeTab === 'episodes' && (
-          <EpisodesTab episodes={episodes} anime={anime} router={router} user={user} />
+          <EpisodesTab episodes={episodes} anime={anime} router={router} user={user} downloadedIds={downloadedIds} />
         )}
         {activeTab === 'reviews' && (
           <ReviewsTab reviews={reviews} anime={anime} router={router} user={user} />
@@ -289,7 +310,7 @@ const StatItem = React.memo(function StatItem({ icon, value, label }: { icon: an
   );
 });
 
-const EpisodesTab = React.memo(function EpisodesTab({ episodes, anime, router, user }: any) {
+const EpisodesTab = React.memo(function EpisodesTab({ episodes, anime, router, user, downloadedIds }: any) {
   const isPremiumUser = user?.subscription_type === 'premium';
   return (
     <View style={styles.tabContent}>
@@ -299,48 +320,79 @@ const EpisodesTab = React.memo(function EpisodesTab({ episodes, anime, router, u
         </View>
       ) : (
         <>
-          {episodes.slice(0, 5).map((ep: Episode) => (
+          {episodes.slice(0, 5).map((ep: Episode) => {
+            const isDownloaded = downloadedIds?.has(ep.id);
+            return (
+              <View key={ep.id} style={styles.epRow}>
+                <TouchableOpacity
+                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: SPACING.sm }}
+                  onPress={() => {
+                    if (ep.is_premium && user?.subscription_type !== 'premium') {
+                      Alert.alert('Premium Required', 'Upgrade to watch premium episodes.');
+                      return;
+                    }
+                    router.push(`/watch/${ep.id}?animeTitle=${encodeURIComponent(anime.title)}`);
+                  }}
+                >
+                  <View style={styles.epNumWrap}>
+                    {ep.is_premium ? (
+                      <Ionicons name="star" size={14} color={COLORS.neonGold} />
+                    ) : (
+                      <Text style={styles.epNum}>{ep.episode_number}</Text>
+                    )}
+                  </View>
+                  <View style={styles.epInfo}>
+                    <Text style={styles.epTitle} numberOfLines={1}>
+                      {ep.title || `Episode ${ep.episode_number}`}
+                    </Text>
+                    <Text style={styles.epMeta}>
+                      {ep.duration ? `${Math.round(ep.duration / 60)}m` : ''}{ep.air_date ? ` • ${ep.air_date}` : ''}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                {/* Right Actions: Download & Play */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+                  {isDownloaded ? (
+                    <View style={styles.downloadedBadge}>
+                      <Ionicons name="cloud-done" size={18} color={COLORS.neonCyan} />
+                    </View>
+                  ) : (
+                    !(ep.is_premium && user?.subscription_type !== 'premium') && (
+                      <TouchableOpacity
+                        onPress={() => {
+                          router.push(`/watch/${ep.id}?animeTitle=${encodeURIComponent(anime.title)}&autoDownload=true`);
+                        }}
+                        style={styles.epDownloadBtn}
+                      >
+                        <Ionicons name="cloud-download-outline" size={18} color={COLORS.textSub} />
+                      </TouchableOpacity>
+                    )
+                  )}
+
+                  {ep.is_premium && user?.subscription_type !== 'premium' ? (
+                    <Ionicons name="lock-closed" size={16} color={COLORS.neonGold} />
+                  ) : (
+                    <TouchableOpacity
+                      onPress={() => {
+                        router.push(`/watch/${ep.id}?animeTitle=${encodeURIComponent(anime.title)}`);
+                      }}
+                    >
+                      <Ionicons name="play-circle-outline" size={22} color={COLORS.neon} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            );
+          })}
+          {episodes.length > 5 && (
             <TouchableOpacity
-              key={ep.id}
-              style={styles.epRow}
-              onPress={() => {
-                if (ep.is_premium && user?.subscription_type !== 'premium') {
-                  Alert.alert('Premium Required', 'Upgrade to watch premium episodes.');
-                  return;
-                }
-                router.push(`/watch/${ep.id}?animeTitle=${encodeURIComponent(anime.title)}`);
-              }}
+              style={styles.seeAllEps}
+              onPress={() => router.push(`/anime/episodes/${anime.id}?animeTitle=${encodeURIComponent(anime.title)}`)}
             >
-              <View style={styles.epNumWrap}>
-                {ep.is_premium ? (
-                  <Ionicons name="star" size={14} color={COLORS.neonGold} />
-                ) : (
-                  <Text style={styles.epNum}>{ep.episode_number}</Text>
-                )}
-              </View>
-              <View style={styles.epInfo}>
-                <Text style={styles.epTitle} numberOfLines={1}>
-                  {ep.title || `Episode ${ep.episode_number}`}
-                </Text>
-                <Text style={styles.epMeta}>
-                  {ep.duration ? `${Math.round(ep.duration / 60)}m` : ''}{ep.air_date ? ` • ${ep.air_date}` : ''}
-                </Text>
-              </View>
-              {ep.is_premium && user?.subscription_type !== 'premium' ? (
-                <Ionicons name="lock-closed" size={16} color={COLORS.neonGold} />
-              ) : (
-                <Ionicons name="play-circle-outline" size={22} color={COLORS.neon} />
-              )}
+              <Text style={styles.seeAllEpsText}>SEE ALL {episodes.length} EPISODES →</Text>
             </TouchableOpacity>
-          ))}
-            {episodes.length > 5 && (
-              <TouchableOpacity
-                style={styles.seeAllEps}
-                onPress={() => router.push(`/anime/episodes/${anime.id}?animeTitle=${encodeURIComponent(anime.title)}`)}
-              >
-                <Text style={styles.seeAllEpsText}>SEE ALL {episodes.length} EPISODES →</Text>
-              </TouchableOpacity>
-            )}
+          )}
         </>
       )}
     </View>
@@ -552,6 +604,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: SPACING.sm,
     paddingVertical: SPACING.sm,
     borderBottomWidth: 1, borderColor: COLORS.border,
+  },
+  downloadedBadge: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  epDownloadBtn: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   epNumWrap: {
     width: 36, height: 36,

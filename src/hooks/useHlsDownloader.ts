@@ -118,10 +118,15 @@ async function resolveMediaPlaylist(
   referer: string,
   manifestCache?: Record<string, string>,
   cookies?: string,
+  fetchTextFn?: (url: string) => Promise<string | null>,
 ): Promise<{ mediaUrl: string; segments: SegmentInfo[]; manifestText: string } | null> {
   let text = manifestCache ? manifestCache[manifestUrl] : null;
   if (!text) {
-    text = await fetchText(manifestUrl, referer, cookies);
+    if (fetchTextFn) {
+      text = await fetchTextFn(manifestUrl);
+    } else {
+      text = await fetchText(manifestUrl, referer, cookies);
+    }
   }
   if (!text) return null;
 
@@ -150,7 +155,7 @@ async function resolveMediaPlaylist(
 
     if (!bestVariantUrl) return null;
     // Recursively parse the chosen media playlist
-    return resolveMediaPlaylist(bestVariantUrl, referer, manifestCache, cookies);
+    return resolveMediaPlaylist(bestVariantUrl, referer, manifestCache, cookies, fetchTextFn);
   }
 
   // ── Media playlist: collect segments ─────────────────────────────────────
@@ -320,7 +325,48 @@ export function useHlsDownloader(): HlsDownloaderResult {
     reject: (err: string) => void;
     writeChunk: (base64: string) => Promise<void>;
   }>>({});
+  const pendingTextFetchesRef = useRef<Record<string, {
+    resolve: (text: string) => void;
+    reject: (err: string) => void;
+  }>>({});
   const injectJSRef = useRef<((js: string) => void) | null>(null);
+
+  const fetchTextViaWebView = useCallback((url: string) => {
+    if (!injectJSRef.current) return Promise.resolve(null);
+
+    return new Promise<string | null>((resolve, reject) => {
+      const callbackId = Math.random().toString(36).substring(2, 11);
+      pendingTextFetchesRef.current[callbackId] = {
+        resolve,
+        reject: (err) => {
+          console.warn(`[HLS fetchText WebView] Error for ${url}:`, err);
+          resolve(null); // fallback
+        }
+      };
+
+      const js = `
+        try {
+          if (typeof window.__rn_fetch_text === 'function') {
+            window.__rn_fetch_text(${JSON.stringify(url)}, ${JSON.stringify(callbackId)});
+          } else {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'FETCH_TEXT_ERROR',
+              callbackId: ${JSON.stringify(callbackId)},
+              error: 'window.__rn_fetch_text is not defined'
+            }));
+          }
+        } catch (e) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'FETCH_TEXT_ERROR',
+            callbackId: ${JSON.stringify(callbackId)},
+            error: e.message
+          }));
+        }
+        true;
+      `;
+      injectJSRef.current!(js);
+    });
+  }, []);
 
   const cancelDownload = useCallback(() => {
     cancelledRef.current = true;
@@ -333,6 +379,11 @@ export function useHlsDownloader(): HlsDownloaderResult {
       pendingSegmentsRef.current[idx]?.reject('Download cancelled');
     });
     pendingSegmentsRef.current = {};
+    // Reject all pending text fetches
+    Object.keys(pendingTextFetchesRef.current).forEach((key) => {
+      pendingTextFetchesRef.current[key]?.reject('Download cancelled');
+    });
+    pendingTextFetchesRef.current = {};
     injectJSRef.current = null;
   }, []);
 
@@ -352,6 +403,20 @@ export function useHlsDownloader(): HlsDownloaderResult {
       if (pending) {
         delete pendingSegmentsRef.current[index];
         pending.reject(errStr || 'Failed to download segment via WebView');
+      }
+    } else if (msg.type === 'FETCH_TEXT_SUCCESS') {
+      const { callbackId, text } = msg;
+      const pending = pendingTextFetchesRef.current[callbackId];
+      if (pending) {
+        delete pendingTextFetchesRef.current[callbackId];
+        pending.resolve(text);
+      }
+    } else if (msg.type === 'FETCH_TEXT_ERROR') {
+      const { callbackId, error: errStr } = msg;
+      const pending = pendingTextFetchesRef.current[callbackId];
+      if (pending) {
+        delete pendingTextFetchesRef.current[callbackId];
+        pending.reject(errStr || 'Failed to fetch text via WebView');
       }
     }
   }, []);
@@ -383,7 +448,13 @@ export function useHlsDownloader(): HlsDownloaderResult {
           cache[m3u8Url] = manifestContent;
         }
 
-        const resolved = await resolveMediaPlaylist(m3u8Url, referer, cache, cookies);
+        const resolved = await resolveMediaPlaylist(
+          m3u8Url,
+          referer,
+          cache,
+          cookies,
+          injectJSRef.current ? fetchTextViaWebView : undefined
+        );
         if (!resolved || resolved.segments.length === 0) {
           throw new Error('Could not parse HLS manifest or no segments found.');
         }
@@ -520,15 +591,26 @@ export function useHlsDownloader(): HlsDownloaderResult {
                 downloadHeaders['Cookie'] = cookies;
               }
 
-              await FileSystem.downloadAsync(sub.url, destSubUri, {
-                headers: downloadHeaders,
-              });
+              let rawVtt: string | null = null;
+              if (injectJSRef.current) {
+                rawVtt = await fetchTextViaWebView(sub.url);
+              }
+              if (!rawVtt) {
+                // Fallback to native download
+                await FileSystem.downloadAsync(sub.url, destSubUri, {
+                  headers: downloadHeaders,
+                });
+                rawVtt = await FileSystem.readAsStringAsync(destSubUri, {
+                  encoding: FileSystem.EncodingType.UTF8,
+                });
+              } else {
+                await FileSystem.writeAsStringAsync(destSubUri, rawVtt, {
+                  encoding: FileSystem.EncodingType.UTF8,
+                });
+              }
 
               // Preprocess the WebVTT file to apply custom background styling and position
               try {
-                const rawVtt = await FileSystem.readAsStringAsync(destSubUri, {
-                  encoding: FileSystem.EncodingType.UTF8,
-                });
                 const processedVtt = processVttContent(rawVtt);
                 await FileSystem.writeAsStringAsync(destSubUri, processedVtt, {
                   encoding: FileSystem.EncodingType.UTF8,

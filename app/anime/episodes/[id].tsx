@@ -4,11 +4,12 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { COLORS, SPACING, RADIUS } from '../../../src/constants/theme';
 import { Episode } from '../../../src/lib/supabase';
 import { useAuth } from '../../../src/context/AuthContext';
 import { useEpisodes } from '../../../src/hooks/useQueries';
+import { getAllDownloads } from '../../../src/hooks/useHlsDownloader';
 
 // Row height must match epRow.paddingVertical + content height + separator
 const ITEM_HEIGHT = 56; // paddingVertical * 2 + ~24 content
@@ -29,6 +30,26 @@ export default function EpisodesListScreen() {
   const { user } = useAuth();
 
   const [filter, setFilter] = useState<'all' | 'free' | 'premium'>('all');
+  const [downloadedIds, setDownloadedIds] = useState<Set<string>>(new Set());
+
+  const checkDownloads = useCallback(async () => {
+    try {
+      const list = await getAllDownloads();
+      setDownloadedIds(new Set(list.map(d => d.episodeId)));
+    } catch (e) {
+      console.error('[EpisodesList] checkDownloads error:', e);
+    }
+  }, []);
+
+  const navigation = useNavigation();
+
+  useEffect(() => {
+    checkDownloads();
+    const unsubscribe = navigation.addListener('focus', () => {
+      checkDownloads();
+    });
+    return unsubscribe;
+  }, [navigation, checkDownloads]);
 
   // Cached — navigating back and re-entering won't re-fetch within staleTime
   const { data: allEpisodes = [], isLoading: loading, isError } = useEpisodes(animeId);
@@ -64,13 +85,19 @@ export default function EpisodesListScreen() {
     router.push(`/watch/${ep.id}?animeTitle=${encodeURIComponent(animeTitle)}`);
   }, [router, animeTitle, user?.subscription_type]);
 
+  const handleDownloadPress = useCallback((ep: Episode) => {
+    router.push(`/watch/${ep.id}?animeTitle=${encodeURIComponent(animeTitle)}&autoDownload=true`);
+  }, [router, animeTitle]);
+
   const renderItem = useCallback(({ item: ep }: { item: Episode }) => (
     <EpisodeRow
       ep={ep}
       userSubscription={user?.subscription_type}
+      isDownloaded={downloadedIds.has(ep.id)}
       onPress={handleEpPress}
+      onDownloadPress={handleDownloadPress}
     />
-  ), [user?.subscription_type, handleEpPress]);
+  ), [user?.subscription_type, downloadedIds, handleEpPress, handleDownloadPress]);
 
   const keyExtractor = useCallback((item: Episode) => item.id, []);
 
@@ -138,43 +165,71 @@ export default function EpisodesListScreen() {
 interface EpisodeRowProps {
   ep: Episode;
   userSubscription?: string;
+  isDownloaded: boolean;
   onPress: (ep: Episode) => void;
+  onDownloadPress: (ep: Episode) => void;
 }
 
 const EpisodeRow = React.memo(
-  ({ ep, userSubscription, onPress }: EpisodeRowProps) => {
+  ({ ep, userSubscription, isDownloaded, onPress, onDownloadPress }: EpisodeRowProps) => {
     const isLocked = ep.is_premium && userSubscription !== 'premium';
     return (
-      <TouchableOpacity style={styles.epRow} onPress={() => onPress(ep)}>
-        <View style={styles.epLeft}>
-          <View style={[styles.epNumBox, ep.is_premium && styles.epNumBoxPremium]}>
-            {ep.is_premium
-              ? <Ionicons name="star" size={14} color={COLORS.neonGold} />
-              : <Text style={styles.epNumText}>{ep.episode_number}</Text>
-            }
+      <View style={styles.epRow}>
+        <TouchableOpacity 
+          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: SPACING.md }} 
+          onPress={() => onPress(ep)}
+        >
+          <View style={styles.epLeft}>
+            <View style={[styles.epNumBox, ep.is_premium && styles.epNumBoxPremium]}>
+              {ep.is_premium
+                ? <Ionicons name="star" size={14} color={COLORS.neonGold} />
+                : <Text style={styles.epNumText}>{ep.episode_number}</Text>
+              }
+            </View>
           </View>
-        </View>
-        <View style={styles.epMid}>
-          <Text style={styles.epTitle} numberOfLines={1}>
-            {ep.title || `Episode ${ep.episode_number}`}
-          </Text>
-          <View style={styles.epMetaRow}>
-            {ep.duration && <Text style={styles.epMeta}>{Math.round(ep.duration / 60)}m</Text>}
-            {ep.air_date && <Text style={styles.epMeta}>• {ep.air_date}</Text>}
-            {ep.is_premium && <Text style={[styles.epMeta, { color: COLORS.neonGold }]}>• PREMIUM</Text>}
+          <View style={styles.epMid}>
+            <Text style={styles.epTitle} numberOfLines={1}>
+              {ep.title || `Episode ${ep.episode_number}`}
+            </Text>
+            <View style={styles.epMetaRow}>
+              {ep.duration && <Text style={styles.epMeta}>{Math.round(ep.duration / 60)}m</Text>}
+              {ep.air_date && <Text style={styles.epMeta}>• {ep.air_date}</Text>}
+              {ep.is_premium && <Text style={[styles.epMeta, { color: COLORS.neonGold }]}>• PREMIUM</Text>}
+            </View>
           </View>
+        </TouchableOpacity>
+
+        {/* Action icons row */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+          {isDownloaded ? (
+            <View style={styles.downloadedBadge}>
+              <Ionicons name="cloud-done" size={18} color={COLORS.neonCyan} />
+            </View>
+          ) : (
+            !isLocked && (
+              <TouchableOpacity onPress={() => onDownloadPress(ep)} style={styles.epDownloadBtn}>
+                <Ionicons name="cloud-download-outline" size={18} color={COLORS.textSub} />
+              </TouchableOpacity>
+            )
+          )}
+
+          {isLocked
+            ? <Ionicons name="lock-closed-outline" size={18} color={COLORS.neonGold} />
+            : (
+              <TouchableOpacity onPress={() => onPress(ep)}>
+                <Ionicons name="play-circle-outline" size={24} color={COLORS.neon} />
+              </TouchableOpacity>
+            )
+          }
         </View>
-        {isLocked
-          ? <Ionicons name="lock-closed-outline" size={18} color={COLORS.neonGold} />
-          : <Ionicons name="play-circle-outline" size={24} color={COLORS.neon} />
-        }
-      </TouchableOpacity>
+      </View>
     );
   },
   (prevProps, nextProps) => {
     return (
       prevProps.ep.id === nextProps.ep.id &&
       prevProps.userSubscription === nextProps.userSubscription &&
+      prevProps.isDownloaded === nextProps.isDownloaded &&
       prevProps.ep.episode_number === nextProps.ep.episode_number &&
       prevProps.ep.title === nextProps.ep.title &&
       prevProps.ep.is_premium === nextProps.ep.is_premium
@@ -210,6 +265,18 @@ const styles = StyleSheet.create({
   epRow: {
     flexDirection: 'row', alignItems: 'center', gap: SPACING.md,
     paddingVertical: SPACING.md,
+  },
+  downloadedBadge: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  epDownloadBtn: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   epLeft: {},
   epNumBox: {

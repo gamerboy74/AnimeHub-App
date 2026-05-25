@@ -200,6 +200,28 @@ const buildSnifferJS = () => `
           }));
         });
     };
+
+    window.__rn_fetch_text = function(url, callbackId) {
+      fetch(url)
+        .then(function(res) {
+          if (!res.ok) throw new Error("Status " + res.status);
+          return res.text();
+        })
+        .then(function(text) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'FETCH_TEXT_SUCCESS',
+            callbackId: callbackId,
+            text: text
+          }));
+        })
+        .catch(function(err) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'FETCH_TEXT_ERROR',
+            callbackId: callbackId,
+            error: err ? err.message : 'Fetch text error'
+          }));
+        });
+    };
   })();
 `;
 
@@ -548,7 +570,7 @@ let _watchMounting = false;
 
 // ─── MAIN SCREEN ──────────────────────────────────────────────────────────────
 export default function WatchScreen() {
-  const { id } = useLocalSearchParams();
+  const { id, autoDownload } = useLocalSearchParams();
   const router = useRouter();
   const { user } = useAuth();
   const { isPremium, canWatch } = usePremium();
@@ -822,7 +844,7 @@ export default function WatchScreen() {
           }
         }
 
-        if (msg.type === 'DOWNLOAD_SEGMENT_CHUNK' || msg.type === 'DOWNLOAD_SEGMENT_ERROR') {
+        if (msg.type === 'DOWNLOAD_SEGMENT_CHUNK' || msg.type === 'DOWNLOAD_SEGMENT_ERROR' || msg.type === 'FETCH_TEXT_SUCCESS' || msg.type === 'FETCH_TEXT_ERROR') {
           downloader.handleDownloadMessage(msg);
         }
 
@@ -903,6 +925,13 @@ export default function WatchScreen() {
       sniffedSubtitles
     );
   }, [sniffedMediaUrl, sniffedReferer, embedOrigin, episode, anime, downloader, sniffedCookies, sniffedManifestCache, sniffedSubtitles]);
+
+  // ── Auto-start download if autoDownload=true parameter is present ─────────
+  useEffect(() => {
+    if (autoDownload === 'true' && sniffedMediaUrl && episode && playerReady && downloader.status === 'idle') {
+      handleDownloadPress();
+    }
+  }, [autoDownload, sniffedMediaUrl, episode, playerReady, downloader.status, handleDownloadPress]);
 
   // ── Orientation + nav bar ─────────────────────────────────────────────────
   // We mount landscape immediately. On unmount we restore portrait ONLY if no
