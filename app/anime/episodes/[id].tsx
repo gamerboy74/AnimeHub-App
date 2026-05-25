@@ -206,7 +206,7 @@ const EpisodeRow = React.memo(
               <Ionicons name="cloud-done" size={18} color={COLORS.neonCyan} />
             </View>
           ) : (
-            !isLocked && (
+            userSubscription === 'premium' && (
               <TouchableOpacity onPress={() => onDownloadPress(ep)} style={styles.epDownloadBtn}>
                 <Ionicons name="cloud-download-outline" size={18} color={COLORS.textSub} />
               </TouchableOpacity>

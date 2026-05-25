@@ -11,7 +11,7 @@ import {
   BackHandler,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -25,6 +25,8 @@ import {
   deleteDownload,
   type DownloadedEpisode,
 } from '../src/hooks/useHlsDownloader';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - 44) / 2; // Perfect two-column spacing with margins
@@ -431,6 +433,99 @@ function GroupedAnimeCard({
   );
 }
 
+// ─── Subscription Lock Screen Overlay ──────────────────────────────────────────
+
+function SubscriptionLockOverlay({
+  reason,
+  onRetry,
+  onBack,
+}: {
+  reason: 'no_account' | 'expired' | 'requires_checkin' | null;
+  onRetry: () => void;
+  onBack: () => void;
+}) {
+  const router = useRouter();
+
+  let title = 'VAULT LOCKED';
+  let description = 'Offline playback is a Premium feature. Please sign in with your premium account.';
+  let icon: any = 'lock-closed';
+  let glowColor = COLORS.neon;
+  let actionText = 'LOG IN';
+  let actionHandler = () => router.push('/auth/login');
+
+  if (reason === 'expired') {
+    title = 'PREMIUM EXPIRED';
+    description = 'Your premium subscription has expired. Please renew your subscription to resume offline playback.';
+    icon = 'hourglass';
+    glowColor = COLORS.neonPink;
+    actionText = 'UPGRADE NOW';
+    actionHandler = () => router.push('/premium');
+  } else if (reason === 'requires_checkin') {
+    title = 'CHECK-IN REQUIRED';
+    description = 'To protect content rights, offline downloads must be verified online once every 14 days. Please connect to the internet and try again.';
+    icon = 'wifi';
+    glowColor = COLORS.neonCyan;
+    actionText = 'RETRY CHECK-IN';
+    actionHandler = onRetry;
+  }
+
+  return (
+    <View style={styles.lockContainer}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      
+      {/* Background neon glows */}
+      <View style={[styles.lockGlow, { backgroundColor: glowColor, top: '25%', left: '20%' }]} />
+      <View style={[styles.lockGlow, { backgroundColor: COLORS.bgCard, top: '45%', right: '15%' }]} />
+
+      <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+
+      <View style={styles.lockContent}>
+        {/* Glowing Icon Container */}
+        <View style={[styles.lockIconContainer, { borderColor: glowColor, shadowColor: glowColor }]}>
+          <Ionicons name={icon} size={48} color={glowColor} />
+        </View>
+
+        {/* Text */}
+        <Text style={[styles.lockTitle, { color: glowColor }]}>{title}</Text>
+        <Text style={styles.lockDescription}>{description}</Text>
+
+        {/* Buttons */}
+        <View style={styles.lockButtonContainer}>
+          <TouchableOpacity 
+            style={[styles.lockPrimaryBtn, { borderColor: glowColor }]} 
+            onPress={actionHandler}
+            activeOpacity={0.8}
+          >
+            <LinearGradient
+              colors={['rgba(255,255,255,0.08)', 'rgba(255,255,255,0.02)']}
+              style={StyleSheet.absoluteFill}
+            />
+            <Text style={[styles.lockPrimaryBtnText, { color: glowColor }]}>{actionText}</Text>
+          </TouchableOpacity>
+
+          {reason === 'expired' && (
+            <TouchableOpacity 
+              style={styles.lockSecondaryBtn} 
+              onPress={() => router.push('/auth/login')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.lockSecondaryBtnText}>SWITCH ACCOUNT</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity 
+            style={styles.lockSecondaryBtn} 
+            onPress={onBack}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.lockSecondaryBtnText}>GO BACK</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function DownloadsScreen() {
@@ -440,6 +535,54 @@ export default function DownloadsScreen() {
   const [loading, setLoading] = useState(true);
   const [playingEpisode, setPlayingEpisode] = useState<DownloadedEpisode | null>(null);
   const [selectedAnimeName, setSelectedAnimeName] = useState<string | null>(null);
+
+  // ── Offline Verification State ──
+  const [subStatus, setSubStatus] = useState<{
+    isPremium: boolean;
+    reason: 'no_account' | 'expired' | 'requires_checkin' | null;
+    checking: boolean;
+  }>({ isPremium: false, reason: null, checking: true });
+
+  const checkOfflineSub = useCallback(async (showLoading = true) => {
+    if (showLoading) {
+      setSubStatus(prev => ({ ...prev, checking: true }));
+    }
+    try {
+      const raw = await AsyncStorage.getItem('animehub:sub_cache');
+      if (!raw) {
+        setSubStatus({ isPremium: false, reason: 'no_account', checking: false });
+        return;
+      }
+      const cache = JSON.parse(raw);
+      if (cache.subscription_type !== 'premium') {
+        setSubStatus({ isPremium: false, reason: 'expired', checking: false });
+        return;
+      }
+      if (cache.next_renewal) {
+        const renewalTime = new Date(cache.next_renewal).getTime();
+        if (isNaN(renewalTime) || Date.now() > renewalTime) {
+          setSubStatus({ isPremium: false, reason: 'expired', checking: false });
+          return;
+        }
+      }
+      // 14 days grace period: 14 * 24 * 60 * 60 * 1000 = 1209600000 ms
+      const fourteenDays = 14 * 24 * 60 * 60 * 1000;
+      if (!cache.last_verified || (Date.now() - cache.last_verified) > fourteenDays) {
+        setSubStatus({ isPremium: false, reason: 'requires_checkin', checking: false });
+        return;
+      }
+      setSubStatus({ isPremium: true, reason: null, checking: false });
+    } catch (error) {
+      console.error('[Downloads] Error checking offline sub:', error);
+      setSubStatus({ isPremium: false, reason: 'no_account', checking: false });
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      checkOfflineSub(subStatus.reason !== null);
+    }, [checkOfflineSub, subStatus.reason])
+  );
 
   // ── Hardware back button handler ─────────────────────────────────────────
   useEffect(() => {
@@ -513,6 +656,27 @@ export default function DownloadsScreen() {
       setSelectedAnimeName(null);
     }
   }, [selectedGroup, selectedAnimeName]);
+
+  // ── Render checking or lock screens ──────────────────────────────────────
+  if (subStatus.checking) {
+    return (
+      <View style={[styles.container, { paddingTop: insets.top, justifyContent: 'center', alignItems: 'center' }]}>
+        <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+        <Ionicons name="download-outline" size={56} color={COLORS.textMuted} />
+        <Text style={[styles.emptyTitle, { marginTop: 12 }]}>Accessing Vault…</Text>
+      </View>
+    );
+  }
+
+  if (!subStatus.isPremium) {
+    return (
+      <SubscriptionLockOverlay
+        reason={subStatus.reason}
+        onRetry={() => checkOfflineSub(true)}
+        onBack={() => router.back()}
+      />
+    );
+  }
 
   // ── Offline Player overlay ───────────────────────────────────────────────
   if (playingEpisode) {
@@ -1170,5 +1334,90 @@ const styles = StyleSheet.create({
   hudLayer: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 10,
+  },
+  // ── Subscription Lock Screen Styles ──
+  lockContainer: {
+    flex: 1,
+    backgroundColor: '#080810',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lockGlow: {
+    position: 'absolute',
+    width: 250,
+    height: 250,
+    borderRadius: 125,
+    opacity: 0.15,
+  },
+  lockContent: {
+    width: '85%',
+    alignItems: 'center',
+    padding: 24,
+    borderRadius: 24,
+    backgroundColor: 'rgba(14,14,26,0.65)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    ...SHADOWS.neon,
+    shadowOpacity: 0.1,
+  },
+  lockIconContainer: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(8,8,16,0.5)',
+    marginBottom: 24,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  lockTitle: {
+    fontSize: 22,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  lockDescription: {
+    fontSize: 14,
+    color: '#8A87A8',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 32,
+    paddingHorizontal: 12,
+  },
+  lockButtonContainer: {
+    width: '100%',
+    gap: 12,
+  },
+  lockPrimaryBtn: {
+    width: '100%',
+    height: 52,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.02)',
+  },
+  lockPrimaryBtnText: {
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  lockSecondaryBtn: {
+    width: '100%',
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lockSecondaryBtnText: {
+    fontSize: 13,
+    color: '#6B6888',
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
 });

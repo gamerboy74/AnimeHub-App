@@ -9,7 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useQuery } from '@tanstack/react-query';
-import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
+import { COLORS, SPACING, RADIUS, SHADOWS } from '../../src/constants/theme';
 import { animeAPI, Anime, AnimeWithStats } from '../../src/lib/supabase';
 import AnimeCard from '../../src/components/ui/AnimeCard';
 import { BlurView } from 'expo-blur';
@@ -55,11 +55,76 @@ const BENTO_GENRES = [
 const TRENDING_QUERIES = ['Chainsaw Man', 'Spy x Family', 'Oshi no Ko', 'Jujutsu Kaisen', 'Solo Leveling'];
 
 const STUDIOS = [
-  { id: '1', name: 'MAPPA', initial: 'M', color: COLORS.neon },
-  { id: '2', name: 'Ufotable', initial: 'U', color: COLORS.neonCyan },
-  { id: '3', name: 'Trigger', initial: 'T', color: COLORS.neonPink },
-  { id: '4', name: 'Wit Studio', initial: 'W', color: COLORS.text },
-  { id: '5', name: 'Bones', initial: 'B', color: COLORS.neonGold },
+  { 
+    id: '1', 
+    name: 'MAPPA', 
+    initial: 'M', 
+    color: COLORS.neon,
+    img: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?q=80&w=300&auto=format&fit=crop'
+  },
+  { 
+    id: '2', 
+    name: 'Ufotable', 
+    initial: 'U', 
+    color: COLORS.neonCyan,
+    img: 'https://images.unsplash.com/photo-1528164344705-47542687000d?q=80&w=300&auto=format&fit=crop'
+  },
+  { 
+    id: '3', 
+    name: 'Madhouse', 
+    initial: 'M', 
+    color: '#FFD600',
+    img: 'https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?q=80&w=300&auto=format&fit=crop'
+  },
+  { 
+    id: '4', 
+    name: 'Wit Studio', 
+    initial: 'W', 
+    color: COLORS.text,
+    img: 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?q=80&w=300&auto=format&fit=crop'
+  },
+  { 
+    id: '5', 
+    name: 'Trigger', 
+    initial: 'T', 
+    color: COLORS.neonPink,
+    img: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=300&auto=format&fit=crop'
+  },
+  { 
+    id: '6', 
+    name: 'Kyoto Animation', 
+    initial: 'K', 
+    color: '#FF8833',
+    img: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=300&auto=format&fit=crop'
+  },
+  { 
+    id: '7', 
+    name: 'A-1 Pictures', 
+    initial: 'A', 
+    color: '#3388FF',
+    img: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?q=80&w=300&auto=format&fit=crop'
+  },
+  { 
+    id: '8', 
+    name: 'Studio Ghibli', 
+    initial: 'G', 
+    color: '#22CC88',
+    img: 'https://images.unsplash.com/photo-1448375240586-882707db888b?q=80&w=300&auto=format&fit=crop'
+  },
+  { 
+    id: '9', 
+    name: 'Bones', 
+    initial: 'B', 
+    color: COLORS.neonGold,
+    img: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=300&auto=format&fit=crop'
+  },
+  { 
+    id: '10', 
+    name: 'CloverWorks', 
+    initial: 'C', 
+    color: '#00D2C4',
+    img: 'https://images.unsplash.com/photo-1513542789411-b6a5d4f31634?q=80&w=300&auto=format&fit=crop'
+  },
 ];
 
 export default function SearchScreen() {
@@ -337,11 +402,26 @@ export default function SearchScreen() {
           <Text style={styles.sectionTitle}>Top Studios</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.studioRow}>
             {STUDIOS.map((studio) => (
-              <TouchableOpacity key={studio.id} style={styles.studioCard}>
-                <View style={styles.studioLogoWrap}>
-                  <Text style={[styles.studioInitial, { color: studio.color }]}>{studio.initial}</Text>
+              <TouchableOpacity 
+                key={studio.id} 
+                style={[styles.studioCard, { borderColor: 'rgba(255,255,255,0.06)' }]}
+                onPress={() => router.push(`/studio/${studio.name}`)}
+                activeOpacity={0.85}
+              >
+                <Image 
+                  source={{ uri: studio.img }} 
+                  style={StyleSheet.absoluteFillObject} 
+                  contentFit="cover"
+                  transition={200}
+                />
+                <LinearGradient 
+                  colors={['rgba(8,8,16,0.1)', 'rgba(8,8,16,0.85)']} 
+                  style={StyleSheet.absoluteFillObject} 
+                />
+                <View style={styles.studioTextWrap}>
+                  <Text style={[styles.studioCardInitial, { color: studio.color }]}>{studio.initial}</Text>
+                  <Text style={styles.studioCardName} numberOfLines={1}>{studio.name}</Text>
                 </View>
-                <Text style={styles.studioName}>{studio.name}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -475,21 +555,47 @@ const styles = StyleSheet.create({
   
   studioRow: { gap: SPACING.md, paddingVertical: SPACING.sm },
   studioCard: {
-    width: 140, height: 140,
-    backgroundColor: 'rgba(25, 25, 29, 0.6)',
-    borderRadius: RADIUS.lg,
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: 'rgba(72, 71, 75, 0.2)',
+    width: 140, 
+    height: 90,
+    borderRadius: RADIUS.md,
+    overflow: 'hidden',
+    borderWidth: 1, 
+    position: 'relative',
+    ...SHADOWS.neon,
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
   },
-  studioLogoWrap: {
-    width: 60, height: 60,
-    borderRadius: 30,
-    backgroundColor: '#25252A',
-    alignItems: 'center', justifyContent: 'center',
-    marginBottom: SPACING.sm,
+  studioTextWrap: {
+    position: 'absolute',
+    bottom: SPACING.sm,
+    left: SPACING.sm,
+    right: SPACING.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
-  studioInitial: { fontSize: 24, fontWeight: '900' },
-  studioName: { fontSize: 11, color: COLORS.text, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase' },
+  studioCardInitial: {
+    fontSize: 14,
+    fontWeight: '900',
+    backgroundColor: 'rgba(8,8,16,0.75)',
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    textAlign: 'center',
+    lineHeight: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  studioCardName: {
+    fontSize: 11, 
+    color: COLORS.text, 
+    fontWeight: '800', 
+    letterSpacing: 0.5, 
+    textTransform: 'uppercase',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
 
   grid: { padding: SPACING.sm, paddingBottom: 100 },
   gridRow: { gap: SPACING.sm, marginBottom: SPACING.sm, justifyContent: 'space-between' },

@@ -30,6 +30,26 @@ export interface AnimeWithStats extends Anime {
   recent_activity?: number;
 }
 
+export interface Character {
+  id: string;
+  anime_id: string;
+  name: string;
+  image_url?: string;
+  role: string;
+  voice_actor?: string;
+  name_japanese?: string;
+  name_romaji?: string;
+  description?: string;
+  created_at?: string;
+}
+
+export interface RelatedAnime {
+  id: string; // target anime UUID
+  title: string;
+  poster_url?: string;
+  relation_type: 'prequel' | 'sequel' | 'spin_off' | 'alternative_version' | 'summary' | 'other';
+}
+
 /** A single streaming server entry stored in episodes.video_servers */
 export interface VideoServer {
   name: string;  // 'Server 1' | 'Server 2' | 'Backup' | etc.

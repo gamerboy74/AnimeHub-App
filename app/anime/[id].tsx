@@ -1,16 +1,18 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet,
-  TouchableOpacity, Dimensions, ActivityIndicator, Alert,
+  TouchableOpacity, Dimensions, ActivityIndicator, Alert, Modal, TouchableWithoutFeedback,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
+import YoutubePlayer from 'react-native-youtube-iframe';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
-import { supabase, userAPI, AnimeWithStats, Episode, Review } from '../../src/lib/supabase';
+import { supabase, userAPI, AnimeWithStats, Episode, Review, Character, RelatedAnime } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
-import { useAnimeDetails, useEpisodes } from '../../src/hooks/useQueries';
+import { useAnimeDetails, useEpisodes, useAnimeCharacters, useAnimeRelations } from '../../src/hooks/useQueries';
 import { useToggleFavorite, useToggleWatchlist } from '../../src/hooks/useOptimisticMutations';
 import { getAllDownloads } from '../../src/hooks/useHlsDownloader';
 
@@ -35,6 +37,8 @@ export default function AnimeDetailScreen() {
     () => allEpisodes.filter(ep => !!ep.video_url?.trim()),
     [allEpisodes],
   );
+  const { data: characters = [] } = useAnimeCharacters(animeId);
+  const { data: relations = [] } = useAnimeRelations(animeId);
 
   // ── User-specific state (not cached globally — per-user) ──────────────────
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -45,6 +49,8 @@ export default function AnimeDetailScreen() {
   const [resumeProgress, setResumeProgress] = useState<{ epNum: number; seconds: number } | null>(null);
   const [loadingUser, setLoadingUser] = useState(false);
   const [downloadedIds, setDownloadedIds] = useState<Set<string>>(new Set());
+  const [trailerVisible, setTrailerVisible] = useState(false);
+  const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
 
   const loading = loadingAnime || loadingEpisodes;
 
@@ -166,6 +172,17 @@ export default function AnimeDetailScreen() {
             <Ionicons name="chevron-back" size={22} color={COLORS.text} />
           </TouchableOpacity>
 
+          {/* Trailer Button */}
+          {anime.trailer_url ? (
+            <TouchableOpacity
+              style={[styles.trailerOverlayBtn, { top: insets.top + SPACING.sm }]}
+              onPress={() => setTrailerVisible(true)}
+            >
+              <Ionicons name="play" size={14} color={COLORS.neon} />
+              <Text style={styles.trailerOverlayText}>TRAILER</Text>
+            </TouchableOpacity>
+          ) : null}
+
           {/* Poster + basic info */}
           <View style={styles.posterRow}>
             <Image
@@ -186,7 +203,7 @@ export default function AnimeDetailScreen() {
               </View>
               {anime.user_rating_avg && (
                 <View style={styles.ratingRow}>
-                  {[1,2,3,4,5].map(i => (
+                  {[1, 2, 3, 4, 5].map(i => (
                     <Ionicons
                       key={i}
                       name={i <= Math.round(Number(anime.user_rating_avg) / 2) ? 'star' : 'star-outline'}
@@ -262,6 +279,19 @@ export default function AnimeDetailScreen() {
           </ScrollView>
         ) : null}
 
+        {/* Relations chronology */}
+        {relations && relations.length > 0 ? (
+          <RelationsShelf relations={relations} />
+        ) : null}
+
+        {/* Characters carousel */}
+        {characters && characters.length > 0 ? (
+          <CharactersShelf
+            characters={characters}
+            onCharacterPress={(char) => setSelectedCharacter(char)}
+          />
+        ) : null}
+
         {/* Tab bar */}
         <View style={styles.tabBar}>
           {(['episodes', 'reviews', 'info'] as const).map((tab) => (
@@ -288,6 +318,21 @@ export default function AnimeDetailScreen() {
           <InfoTab anime={anime} />
         )}
       </ScrollView>
+
+      {trailerVisible && anime.trailer_url ? (
+        <TrailerModal
+          onClose={() => setTrailerVisible(false)}
+          url={anime.trailer_url}
+        />
+      ) : null}
+
+      {selectedCharacter ? (
+        <CharacterModal
+          visible={selectedCharacter !== null}
+          onClose={() => setSelectedCharacter(null)}
+          character={selectedCharacter}
+        />
+      ) : null}
     </View>
   );
 }
@@ -358,7 +403,7 @@ const EpisodesTab = React.memo(function EpisodesTab({ episodes, anime, router, u
                       <Ionicons name="cloud-done" size={18} color={COLORS.neonCyan} />
                     </View>
                   ) : (
-                    !(ep.is_premium && user?.subscription_type !== 'premium') && (
+                    user?.subscription_type === 'premium' && (
                       <TouchableOpacity
                         onPress={() => {
                           router.push(`/watch/${ep.id}?animeTitle=${encodeURIComponent(anime.title)}&autoDownload=true`);
@@ -500,6 +545,245 @@ const InfoTab = React.memo(function InfoTab({ anime }: { anime: AnimeWithStats }
           <Text style={styles.infoText}>{anime.studios.join(', ')}</Text>
         </View>
       ) : null}
+    </View>
+  );
+});
+
+function TrailerModal({ onClose, url }: { onClose: () => void; url: string }) {
+  const onFullScreenChange = useCallback((isFullScreen: boolean) => {
+    if (isFullScreen) {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+    } else {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+    };
+  }, []);
+
+  const videoId = useMemo(() => {
+    if (!url) return '';
+    let base = url.replace('youtube-nocookie.com', 'youtube.com');
+    if (base.includes('youtube.com/watch')) {
+      return base.split('v=')[1]?.split('&')[0] || '';
+    } else if (base.includes('youtu.be/')) {
+      return base.split('youtu.be/')[1]?.split('?')[0] || '';
+    } else if (base.includes('youtube.com/embed/')) {
+      return base.split('youtube.com/embed/')[1]?.split('?')[0] || '';
+    }
+    return '';
+  }, [url]);
+
+  const cardWidth = useMemo(() => width * 0.92, []);
+  const videoHeight = useMemo(() => cardWidth * (9 / 16), [cardWidth]);
+
+  return (
+    <TouchableOpacity
+      style={styles.trailerModalContainer}
+      activeOpacity={1}
+      onPress={onClose}
+    >
+      <TouchableWithoutFeedback>
+        <View style={[styles.trailerVideoCard, { width: cardWidth }]}>
+          <View style={styles.trailerHeader}>
+            <Text style={styles.trailerHeaderTitle}>TRAILER PREVIEW</Text>
+            <TouchableOpacity style={styles.closeTrailerBtn} onPress={onClose}>
+              <Ionicons name="close" size={18} color={COLORS.text} />
+            </TouchableOpacity>
+          </View>
+          {videoId ? (
+            <YoutubePlayer
+              height={videoHeight}
+              play={true}
+              videoId={videoId}
+              webViewStyle={styles.trailerPlayer}
+              webViewProps={{
+                androidLayerType: 'hardware',
+              }}
+              onFullScreenChange={onFullScreenChange}
+            />
+          ) : (
+            <View style={[styles.trailerPlayer, { height: videoHeight, justifyContent: 'center', alignItems: 'center' }]}>
+              <Text style={{ color: '#fff' }}>Invalid Trailer URL</Text>
+            </View>
+          )}
+        </View>
+      </TouchableWithoutFeedback>
+    </TouchableOpacity>
+  );
+}
+
+function CharacterModal({ visible, onClose, character }: { visible: boolean; onClose: () => void; character: Character | null }) {
+  if (!character) return null;
+
+  const isMain = character.role?.toLowerCase() === 'main';
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
+      <View style={styles.charModalContainer}>
+        {/* Header Row */}
+        <View style={styles.charModalHeader}>
+          <TouchableOpacity style={styles.charModalBackBtn} onPress={onClose}>
+            <Ionicons name="chevron-back" size={24} color={COLORS.text} />
+          </TouchableOpacity>
+          <Text style={styles.charModalTitle} numberOfLines={1}>
+            {character.name}
+          </Text>
+          {character.role ? (
+            <View style={[styles.charRoleBadge, isMain ? styles.charRoleBadgeMain : styles.charRoleBadgeSub]}>
+              {isMain && (
+                <Ionicons name="star" size={12} color={COLORS.bg} style={{ marginRight: 2 }} />
+              )}
+              <Text style={[styles.charRoleBadgeText, isMain ? { color: COLORS.bg } : { color: COLORS.textSub }]}>
+                {character.role.toLowerCase()}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
+        {/* Content Scroll View */}
+        <ScrollView contentContainerStyle={styles.charModalContent} showsVerticalScrollIndicator={false}>
+          {/* Large Image */}
+          {character.image_url ? (
+            <View style={styles.charModalImageWrap}>
+              <Image
+                source={{ uri: character.image_url }}
+                style={styles.charModalImage}
+                contentFit="cover"
+              />
+            </View>
+          ) : null}
+
+          {/* Names Info */}
+          <View style={styles.charModalSection}>
+            <View style={styles.charModalSectionHeader}>
+              <Ionicons name="person-outline" size={16} color={COLORS.neon} />
+              <Text style={styles.charModalSectionTitle}>Names</Text>
+            </View>
+            <View style={styles.charInfoBox}>
+              {character.name_japanese ? (
+                <View style={styles.charInfoRow}>
+                  <View style={styles.charJpBadge}>
+                    <Text style={styles.charJpBadgeText}>JP</Text>
+                  </View>
+                  <Text style={styles.charInfoRowLabel}>Japanese:</Text>
+                  <Text style={styles.charInfoRowValue}>{character.name_japanese}</Text>
+                </View>
+              ) : null}
+              {character.name_romaji ? (
+                <View style={styles.charInfoRow}>
+                  <View style={styles.charAbcBadge}>
+                    <Text style={styles.charAbcBadgeText}>abc</Text>
+                  </View>
+                  <Text style={styles.charInfoRowLabel}>Romaji:</Text>
+                  <Text style={styles.charInfoRowValue}>{character.name_romaji}</Text>
+                </View>
+              ) : null}
+              {character.voice_actor ? (
+                <View style={styles.charInfoRow}>
+                  <Ionicons name="mic-outline" size={14} color={COLORS.neonGold} style={{ marginRight: 4 }} />
+                  <Text style={styles.charInfoRowLabel}>Voice Actor:</Text>
+                  <Text style={styles.charInfoRowValue}>{character.voice_actor}</Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
+
+          {/* Description Section */}
+          {character.description ? (
+            <View style={styles.charModalSection}>
+              <View style={styles.charModalSectionHeader}>
+                <Ionicons name="chatbubble-outline" size={16} color={COLORS.neon} />
+                <Text style={styles.charModalSectionTitle}>Description</Text>
+              </View>
+              <View style={styles.charDescBox}>
+                <Text style={styles.charDescText}>{character.description}</Text>
+              </View>
+            </View>
+          ) : null}
+        </ScrollView>
+
+        {/* Close Button at Bottom */}
+        <View style={styles.charModalFooter}>
+          <TouchableOpacity style={styles.charModalCloseBtn} onPress={onClose} activeOpacity={0.8}>
+            <Ionicons name="close-circle" size={18} color={COLORS.bg} />
+            <Text style={styles.charModalCloseBtnText}>Close</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const RelationsShelf = React.memo(function RelationsShelf({ relations }: { relations: RelatedAnime[] }) {
+  const router = useRouter();
+  return (
+    <View style={styles.shelfContainer}>
+      <Text style={styles.shelfTitle}>// SERIES CHRONOLOGY</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.shelfScroll}>
+        {relations.map((item) => (
+          <TouchableOpacity
+            key={item.id}
+            style={styles.relationCard}
+            onPress={() => router.push(`/anime/${item.id}`)}
+          >
+            <Image
+              source={{ uri: item.poster_url || '' }}
+              style={styles.relationPoster}
+              contentFit="cover"
+              transition={150}
+            />
+            <View style={styles.relationBadge}>
+              <Text style={styles.relationBadgeText}>
+                {item.relation_type.toUpperCase()}
+              </Text>
+            </View>
+            <Text style={styles.relationText} numberOfLines={1}>
+              {item.title}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </View>
+  );
+});
+
+const CharactersShelf = React.memo(function CharactersShelf({
+  characters,
+  onCharacterPress,
+}: {
+  characters: Character[];
+  onCharacterPress: (char: Character) => void;
+}) {
+  return (
+    <View style={styles.shelfContainer}>
+      <Text style={styles.shelfTitle}>// CHARACTERS & VOICE ACTORS</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.shelfScroll}>
+        {characters.map((char) => (
+          <TouchableOpacity
+            key={char.id}
+            style={styles.charCard}
+            onPress={() => onCharacterPress(char)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.charAvatarWrap}>
+              <Image
+                source={{ uri: char.image_url || '' }}
+                style={styles.charAvatar}
+                contentFit="cover"
+              />
+            </View>
+            <Text style={styles.charName} numberOfLines={1}>{char.name}</Text>
+            <Text style={styles.charRole}>{char.role}</Text>
+            {char.voice_actor ? (
+              <Text style={styles.vaName} numberOfLines={1}>{char.voice_actor}</Text>
+            ) : null}
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
     </View>
   );
 });
@@ -715,4 +999,329 @@ const styles = StyleSheet.create({
 
   emptyState: { alignItems: 'center', padding: SPACING.xl },
   emptyText: { fontSize: 13, color: COLORS.textMuted },
+
+  // Trailer styles
+  trailerOverlayBtn: {
+    position: 'absolute',
+    right: SPACING.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+    backgroundColor: COLORS.bgGlass,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 6,
+    height: 38,
+    justifyContent: 'center',
+  },
+  trailerOverlayText: {
+    color: COLORS.text,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  trailerModalContainer: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(8, 8, 16, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999,
+  },
+  trailerVideoCard: {
+    backgroundColor: COLORS.bgCard,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    overflow: 'hidden',
+    shadowColor: COLORS.neonCyan,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  trailerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    backgroundColor: COLORS.bgCard,
+    borderBottomWidth: 1,
+    borderColor: COLORS.border,
+  },
+  trailerHeaderTitle: {
+    fontSize: 11,
+    color: COLORS.neonCyan,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+  },
+  closeTrailerBtn: {
+    padding: SPACING.xs,
+  },
+  trailerPlayer: {
+    backgroundColor: '#000',
+    width: '100%',
+  },
+
+  // Shelves styles
+  shelfContainer: {
+    marginTop: SPACING.lg,
+    paddingHorizontal: SPACING.md,
+  },
+  shelfTitle: {
+    fontSize: 11,
+    color: COLORS.neon,
+    fontWeight: '800',
+    letterSpacing: 2,
+    marginBottom: SPACING.sm,
+  },
+  shelfScroll: {
+    gap: SPACING.sm,
+    paddingBottom: SPACING.xs,
+  },
+
+  // Relation Card
+  relationCard: {
+    width: 90,
+    position: 'relative',
+    gap: SPACING.xs,
+  },
+  relationPoster: {
+    width: 90,
+    height: 130,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  relationBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    backgroundColor: 'rgba(8, 8, 16, 0.85)',
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: RADIUS.sm,
+    borderWidth: 0.5,
+    borderColor: COLORS.border,
+  },
+  relationBadgeText: {
+    fontSize: 8,
+    color: COLORS.neonCyan,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  relationText: {
+    fontSize: 11,
+    color: COLORS.textSub,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+
+  // Character Card
+  charCard: {
+    width: 80,
+    alignItems: 'center',
+    gap: 2,
+  },
+  charAvatarWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    overflow: 'hidden',
+    marginBottom: 4,
+  },
+  charAvatar: {
+    width: '100%',
+    height: '100%',
+  },
+  charName: {
+    fontSize: 11,
+    color: COLORS.text,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  charRole: {
+    fontSize: 9,
+    color: COLORS.textMuted,
+    fontWeight: '500',
+    textTransform: 'uppercase',
+  },
+  vaName: {
+    fontSize: 9,
+    color: COLORS.neonCyan,
+    textAlign: 'center',
+    opacity: 0.8,
+  },
+
+  // Character Modal styles
+  charModalContainer: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+  },
+  charModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SPACING.md,
+    paddingTop: 50,
+    paddingBottom: SPACING.sm,
+    borderBottomWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bgCard,
+  },
+  charModalBackBtn: {
+    padding: SPACING.xs,
+  },
+  charModalTitle: {
+    fontSize: 20,
+    color: COLORS.neonCyan,
+    fontWeight: '800',
+    flex: 1,
+    marginLeft: SPACING.md,
+  },
+  charRoleBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: RADIUS.sm,
+  },
+  charRoleBadgeMain: {
+    backgroundColor: COLORS.neonGold,
+  },
+  charRoleBadgeSub: {
+    backgroundColor: COLORS.bgCard,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  charRoleBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  charModalContent: {
+    padding: SPACING.md,
+    alignItems: 'center',
+    gap: SPACING.lg,
+    paddingBottom: 40,
+  },
+  charModalImageWrap: {
+    width: width * 0.7,
+    height: width * 0.7,
+    borderRadius: RADIUS.lg,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    marginTop: SPACING.sm,
+  },
+  charModalImage: {
+    width: '100%',
+    height: '100%',
+  },
+  charModalSection: {
+    width: '100%',
+    gap: SPACING.sm,
+  },
+  charModalSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+  },
+  charModalSectionTitle: {
+    fontSize: 14,
+    color: COLORS.text,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  charInfoBox: {
+    backgroundColor: COLORS.bgCard,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    gap: SPACING.sm,
+  },
+  charInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  },
+  charInfoRowLabel: {
+    fontSize: 13,
+    color: COLORS.textSub,
+    fontWeight: '700',
+    marginRight: 6,
+  },
+  charJpBadge: {
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderWidth: 1,
+    borderColor: COLORS.success,
+    borderRadius: 4,
+    marginRight: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  charJpBadgeText: {
+    fontSize: 9,
+    color: COLORS.success,
+    fontWeight: '800',
+  },
+  charAbcBadge: {
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderWidth: 1,
+    borderColor: COLORS.neonCyan,
+    borderRadius: 4,
+    marginRight: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  charAbcBadgeText: {
+    fontSize: 9,
+    color: COLORS.neonCyan,
+    fontWeight: '800',
+  },
+  charInfoRowValue: {
+    fontSize: 13,
+    color: COLORS.text,
+    fontWeight: '600',
+  },
+  charDescBox: {
+    backgroundColor: COLORS.bgCard,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+  },
+  charDescText: {
+    fontSize: 13,
+    color: COLORS.textSub,
+    lineHeight: 20,
+  },
+  charModalFooter: {
+    padding: SPACING.md,
+    borderTopWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bgCard,
+  },
+  charModalCloseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: COLORS.neonCyan,
+    paddingVertical: 12,
+    borderRadius: RADIUS.lg,
+  },
+  charModalCloseBtnText: {
+    fontSize: 14,
+    color: COLORS.bg,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
 });

@@ -4,7 +4,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
-import { AnimeWithStats, Episode, UserActivitySummary, UserWatchProgressDetailed } from '../types/database';
+import { AnimeWithStats, Episode, UserActivitySummary, UserWatchProgressDetailed, Character, RelatedAnime } from '../types/database';
 import { fetchJikanWithFallback } from '../lib/jikan';
 
 // ─── URL HELPER ────────────────────────────────────────────────────────────────
@@ -236,5 +236,154 @@ export function useSimilarAnime(genres: string[] = [], currentAnimeId?: string, 
       return data;
     },
     enabled: genres.length > 0,
+  });
+}
+
+export function useAnimeCharacters(animeId?: string) {
+  return useQuery({
+    queryKey: ['anime-characters', animeId],
+    staleTime: 10 * 60 * 1000,
+    gcTime: 15 * 60 * 1000,
+    queryFn: async (): Promise<Character[]> => {
+      if (!animeId) return [];
+      const { data, error } = await supabase
+        .from('anime_characters')
+        .select('id, anime_id, name, image_url, role, voice_actor, name_japanese, name_romaji, description')
+        .eq('anime_id', animeId);
+
+      if (error) {
+        if (error.code === '42P01') {
+          console.warn('[useAnimeCharacters] anime_characters table does not exist yet');
+          return [];
+        }
+        throw error;
+      }
+      return data || [];
+    },
+    enabled: !!animeId,
+  });
+}
+
+function normalizeRelationType(type: string): RelatedAnime['relation_type'] {
+  const norm = (type || '').toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  if (norm === 'prequel') return 'prequel';
+  if (norm === 'sequel') return 'sequel';
+  if (norm === 'spin_off' || norm === 'spinoff') return 'spin_off';
+  if (norm === 'alternative_version' || norm === 'alternative') return 'alternative_version';
+  if (norm === 'summary') return 'summary';
+  return 'other';
+}
+
+export function useAnimeRelations(animeId?: string) {
+  return useQuery({
+    queryKey: ['anime-relations', animeId],
+    staleTime: 60 * 60 * 1000,
+    gcTime: 2 * 60 * 60 * 1000,
+    queryFn: async (): Promise<RelatedAnime[]> => {
+      if (!animeId) return [];
+
+      // 0. Fetch current anime's MAL ID to query Jikan API
+      const { data: currentAnime } = await supabase
+        .from('anime')
+        .select('mal_id')
+        .eq('id', animeId)
+        .single();
+      const currentMalId = currentAnime?.mal_id;
+
+      // 1. Fetch relation metadata rows from the local DB
+      const { data: relations } = await supabase
+        .from('anime_relations')
+        .select('*')
+        .eq('anime_id', animeId);
+      const localRelations = relations || [];
+
+      // 2. Dynamically fetch relations from Jikan API as fallback/enrichment
+      let jikanRelations: any[] = [];
+      if (currentMalId) {
+        try {
+          const res = await fetch(`https://api.jikan.moe/v4/anime/${currentMalId}/relations`);
+          if (res.ok) {
+            const json = await res.json();
+            const jdata = json.data || [];
+            for (const relGroup of jdata) {
+              const relType = relGroup.relation; // e.g. "Sequel", "Prequel", "Other", etc.
+              for (const entry of relGroup.entry) {
+                if (entry.type === 'anime') { // Only keep anime format relations
+                  jikanRelations.push({
+                    mal_id: entry.mal_id,
+                    relation_type: relType,
+                    title: entry.name,
+                  });
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn(`[useAnimeRelations] Jikan relations fetch failed for malId ${currentMalId}:`, e);
+        }
+      }
+
+      // 3. Merge local and Jikan relations by mal_id, preferring local DB details if available
+      const mergedMap = new Map<number, { mal_id: number; relation_type: string; title: string; poster_url?: string }>();
+
+      // Add local relations first (applying format exclusions)
+      for (const r of localRelations) {
+        if (r.mal_id) {
+          const type = (r.relation_type || '').toUpperCase();
+          const format = (r.format || '').toUpperCase();
+          if (type === 'ADAPTATION' || format === 'MANGA' || format === 'NOVEL') continue;
+
+          mergedMap.set(r.mal_id, {
+            mal_id: r.mal_id,
+            relation_type: r.relation_type,
+            title: r.title || '',
+            poster_url: r.poster_url || undefined,
+          });
+        }
+      }
+
+      // Add Jikan relations if not already present
+      for (const jr of jikanRelations) {
+        const type = (jr.relation_type || '').toUpperCase();
+        if (type === 'ADAPTATION') continue;
+
+        if (!mergedMap.has(jr.mal_id)) {
+          mergedMap.set(jr.mal_id, jr);
+        }
+      }
+
+      const mergedRelations = Array.from(mergedMap.values());
+      const malIds = mergedRelations.map(r => r.mal_id).filter(Boolean);
+
+      // 4. Fetch actual matching anime locally using their MAL IDs
+      let localAnimes: any[] = [];
+      if (malIds.length > 0) {
+        const { data: animes } = await supabase
+          .from('anime')
+          .select('id, mal_id, title, title_english, poster_url')
+          .in('mal_id', malIds);
+        localAnimes = animes || [];
+      }
+
+      // 5. Map the merged relations to the final structure
+      const mapped = mergedRelations
+        .map(r => {
+          const localMatch = r.mal_id ? localAnimes.find(a => a.mal_id === r.mal_id) : null;
+          
+          if (!localMatch) return null; // Only show if we actually have the anime locally
+          
+          return {
+            id: localMatch.id as string,
+            title: localMatch.title_english || localMatch.title || r.title || 'Unknown Title',
+            poster_url: localMatch.poster_url || r.poster_url || 'https://via.placeholder.com/110x160/1a1a2e/ffffff?text=No+Poster',
+            relation_type: normalizeRelationType(r.relation_type),
+          };
+        })
+        .filter(r => r !== null) as RelatedAnime[];
+
+      // 6. Deduplicate by target anime ID to prevent React unique key warnings
+      return Array.from(new Map(mapped.map(item => [item.id, item])).values());
+    },
+    enabled: !!animeId,
   });
 }

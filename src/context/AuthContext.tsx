@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase, userAPI, User } from '../lib/supabase';
 import { Session } from '@supabase/supabase-js';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type AuthContextType = {
   session: Session | null;
@@ -89,6 +90,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return () => { supabase.removeChannel(channel); };
   }, [session?.user?.id]);
+
+  // ── Sync user subscription cache to AsyncStorage for offline verification ──
+  useEffect(() => {
+    if (user) {
+      (async () => {
+        try {
+          const { data: prefs } = await (userAPI.getPreferences(user.id) as any);
+          const meta = prefs?.subscription_meta as any;
+          const cache = {
+            subscription_type: user.subscription_type,
+            next_renewal: meta?.next_renewal || null,
+            last_verified: Date.now(),
+          };
+          await AsyncStorage.setItem('animehub:sub_cache', JSON.stringify(cache));
+        } catch (err) {
+          const cache = {
+            subscription_type: user.subscription_type,
+            next_renewal: null,
+            last_verified: Date.now(),
+          };
+          await AsyncStorage.setItem('animehub:sub_cache', JSON.stringify(cache));
+        }
+      })();
+    } else {
+      AsyncStorage.removeItem('animehub:sub_cache');
+    }
+  }, [user]);
 
   async function fetchUserProfile(userId: string) {
     try {

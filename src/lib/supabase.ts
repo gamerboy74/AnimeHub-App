@@ -55,7 +55,7 @@ export type AnimeWithStats = Anime & {
 };
 
 // Episode is defined (and owned) in src/types/database.ts — re-exported here for convenience
-export type { Episode } from '../types/database';
+export type { Episode, Character, RelatedAnime } from '../types/database';
 
 export type UserProgress = {
   id: string;
@@ -162,6 +162,10 @@ export const animeAPI = {
 
   getByGenre: (genre: string, limit = 20) =>
     supabase.from('anime').select('*').contains('genres', [genre]).limit(limit),
+
+  getByStudio: (studio: string, limit = 20) =>
+    supabase.from('anime').select('*').contains('studios', [studio]).limit(limit),
+
 
   search: (query: string) =>
     supabase.from('anime').select('*')
@@ -283,6 +287,15 @@ export const userAPI = {
 
   markNotificationRead: (id: string) =>
     supabase.from('notifications').update({ read: true }).eq('id', id),
+
+  markAllNotificationsRead: (userId: string) =>
+    supabase.from('notifications').update({ read: true }).eq('user_id', userId),
+
+  clearAllNotifications: (userId: string) =>
+    supabase.from('notifications').delete().eq('user_id', userId),
+
+  deleteNotification: (id: string) =>
+    supabase.from('notifications').delete().eq('id', id),
 
   getPreferences: (userId: string) =>
     // maybeSingle() returns null (not error) when no preferences row exists yet
