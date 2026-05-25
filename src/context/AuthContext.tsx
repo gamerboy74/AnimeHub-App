@@ -20,13 +20,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    // Safely load the initial session.
+    // If the stored refresh token is invalid/expired, Supabase throws
+    // AuthApiError: "Refresh Token Not Found". We catch that, sign out
+    // cleanly (clears AsyncStorage), and treat the user as logged-out.
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        // Invalid / expired token — wipe it and start fresh
+        console.warn('[Auth] Stale session detected, signing out:', error.message);
+        supabase.auth.signOut();
+        setSession(null);
+        setUser(null);
+        setLoading(false);
+        return;
+      }
       setSession(session);
       if (session?.user) fetchUserProfile(session.user.id);
       else setLoading(false);
+    }).catch((err) => {
+      // Network error or unexpected throw — treat same as invalid token
+      console.warn('[Auth] getSession threw unexpectedly:', err);
+      supabase.auth.signOut();
+      setSession(null);
+      setUser(null);
+      setLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED' && !session) {
+        // Token refresh failed or explicit sign-out — clear everything
+        setSession(null);
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
       setSession(session);
       if (session?.user) fetchUserProfile(session.user.id);
       else { setUser(null); setLoading(false); }
@@ -34,6 +62,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return () => subscription.unsubscribe();
   }, []);
+
 
   // ── Realtime: watch users table for subscription_type changes ──────────────
   // When the user upgrades to premium (or is changed via Supabase dashboard),

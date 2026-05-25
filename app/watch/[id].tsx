@@ -32,6 +32,8 @@ import {
 import { usePremium } from "../../src/hooks/usePremium";
 import { useAutoPlay } from "../../src/hooks/useAutoPlay";
 import { useAutoSkipIntro } from "../../src/hooks/useAutoSkipIntro";
+import { useServerSelection } from "../../src/hooks/useServerSelection";
+import ServerPickerSheet from "../../src/components/ui/ServerPickerSheet";
 import { supabase, userAPI } from "../../src/lib/supabase";
 import { useAuth } from "../../src/context/AuthContext";
 import { COLORS } from "../../src/constants/theme";
@@ -398,8 +400,7 @@ export default function WatchScreen() {
     duration: 0,
   });
   const [autoPlayCountdown, setAutoPlayCountdown] = useState<number | null>(null);
-  // Index into the servers array — 0 = primary server
-  const [selectedServer, setSelectedServer] = useState(0);
+  const [showServerPicker, setShowServerPicker] = useState(false);
 
   const webviewRef = useRef<any>(null);
   const nearEndFired = useRef(false);
@@ -657,7 +658,7 @@ export default function WatchScreen() {
     setShowNextUp(false);
     setPlayerReady(false);
     setPlayerError(false);
-    setSelectedServer(0); // reset to primary server on episode change
+    srv.reset(); // reset server + lang to defaults on episode change
     cancelAutoPlay();
 
     // Show HUD briefly then auto-hide — restarts the timer on every episode switch
@@ -675,22 +676,16 @@ export default function WatchScreen() {
   // NOTE: clearOtherProgress was removed — it was wiping all episode history
   // on every mount which caused the watch tracker to lose progress.
 
-  // ── Derived render values ────────────────────────────────────────────────────
-  // Build server list: prefer video_servers JSONB, fallback to bare video_url.
-  // This must run before any early returns (Rules of Hooks).
-  const servers = useMemo(() => {
-    const raw = (episode as any)?.video_servers;
-    if (Array.isArray(raw) && raw.length > 0) return raw as { name: string; url: string }[];
-    const fallback = episode?.video_url?.trim();
-    if (fallback) return [{ name: 'Server 1', url: fallback }];
-    return [];
-  }, [episode]);
+  // ── Server selection — hook owns all state ───────────────────────────────────
+  // Must run before any early returns (Rules of Hooks).
+  const srv = useServerSelection(
+    (episode as any)?.video_servers,
+    episode?.video_url,
+  );
 
-  // Active server URL (used by WebView source)
-  const embedUrl = servers[selectedServer]?.url?.trim() ?? '';
   const embedOrigin = useMemo(() => {
-    try { return new URL(embedUrl).origin; } catch { return ''; }
-  }, [embedUrl]);
+    try { return new URL(srv.embedUrl).origin; } catch { return ''; }
+  }, [srv.embedUrl]);
   const injectedJS = useMemo(
     () => buildInjectedJS(resumeSeconds, autoSkipIntroEnabled),
     [resumeSeconds, autoSkipIntroEnabled]
@@ -760,10 +755,8 @@ export default function WatchScreen() {
     );
   }
 
-  // Build the embed URL — use video_url directly (it's the embed page)
-  // embedUrl, embedOrigin, injectedJS are computed above before any early returns.
-
-  if (!embedUrl) {
+  // Guard: if no URL is available for the current server/lang selection, show error.
+  if (!srv.embedUrl) {
     return (
       <View style={styles.fullCenter}>
         <Ionicons
@@ -793,7 +786,7 @@ export default function WatchScreen() {
       <WebView
         ref={webviewRef}
         source={{
-          uri: embedUrl,
+          uri: srv.embedUrl,
           // Use the embed URL's own origin as Referer so the CDN sees a
           // self-referential request — works for any streaming host without
           // maintaining a per-site list.
@@ -911,46 +904,22 @@ export default function WatchScreen() {
           <Ionicons name="cloud-offline-outline" size={52} color={COLORS.neonPink} />
           <Text style={styles.errorTitle}>Stream Unavailable</Text>
           <Text style={styles.errorSubtitle}>
-            {servers.length > 1
+            {srv.servers.length > 1
               ? 'This server failed. Try switching to another.'
               : 'Could not load the stream. Try retrying or go back.'}
           </Text>
 
-          {/* Server selector pills (only shown when >1 server exists) */}
-          {servers.length > 1 && (
-            <>
-              <Text style={styles.errorServerLabel}>SELECT SERVER</Text>
-              <View style={styles.serverGrid}>
-                {servers.map((srv, i) => (
-                  <TouchableOpacity
-                    key={i}
-                    style={[
-                      styles.serverPill,
-                      i === selectedServer && styles.serverPillActive,
-                    ]}
-                    onPress={() => {
-                      setSelectedServer(i);
-                      setPlayerError(false);
-                      setPlayerReady(false);
-                    }}
-                  >
-                    <Ionicons
-                      name={i === selectedServer ? 'radio-button-on' : 'radio-button-off'}
-                      size={14}
-                      color={i === selectedServer ? COLORS.neonCyan : COLORS.textMuted}
-                    />
-                    <Text
-                      style={[
-                        styles.serverPillText,
-                        i === selectedServer && { color: COLORS.neonCyan },
-                      ]}
-                    >
-                      {srv.name}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </>
+          {/* Server switcher — opens the full picker sheet */}
+          {srv.servers.length > 1 && (
+            <TouchableOpacity
+              style={styles.errorSwitchBtn}
+              onPress={() => setShowServerPicker(true)}
+            >
+              <Ionicons name="swap-horizontal" size={15} color={COLORS.neonCyan} />
+              <Text style={styles.errorSwitchBtnText}>
+                Switch Server  •  {srv.label}
+              </Text>
+            </TouchableOpacity>
           )}
 
           {/* Action buttons */}
@@ -1029,34 +998,16 @@ export default function WatchScreen() {
                   </View>
                 )}
 
-                {/* Server picker — only if >1 server available */}
-                {servers.length > 1 && (
-                  <View style={styles.hudServerRow} pointerEvents="box-none">
-                    {servers.map((srv, i) => (
-                      <TouchableOpacity
-                        key={i}
-                        style={[
-                          styles.hudServerPill,
-                          i === selectedServer && styles.hudServerPillActive,
-                        ]}
-                        onPress={() => {
-                          if (i === selectedServer) return;
-                          setSelectedServer(i);
-                          setPlayerError(false);
-                          setPlayerReady(false);
-                        }}
-                      >
-                        <Text
-                          style={[
-                            styles.hudServerPillText,
-                            i === selectedServer && { color: COLORS.neonCyan },
-                          ]}
-                        >
-                          {srv.name}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
+                {/* Server chip — single tap opens the full picker sheet */}
+                {srv.servers.length > 0 && (
+                  <TouchableOpacity
+                    style={styles.serverChip}
+                    onPress={() => setShowServerPicker(true)}
+                  >
+                    <Ionicons name="server-outline" size={11} color={COLORS.neonCyan} />
+                    <Text style={styles.serverChipText}>{srv.label}</Text>
+                    <Ionicons name="chevron-down" size={10} color={COLORS.textMuted} />
+                  </TouchableOpacity>
                 )}
 
                 <TouchableOpacity
@@ -1198,6 +1149,26 @@ export default function WatchScreen() {
           </BlurView>
         </View>
       )}
+      {/* ── SERVER PICKER SHEET ── */}
+      <ServerPickerSheet
+        visible={showServerPicker}
+        onClose={() => setShowServerPicker(false)}
+        servers={srv.servers}
+        grouped={srv.grouped}
+        availableLangs={srv.availableLangs}
+        selectedLang={srv.lang}
+        selectedIndex={srv.index}
+        onSelectLang={(lang) => {
+          srv.selectLang(lang);
+          setPlayerError(false);
+          setPlayerReady(false);
+        }}
+        onSelectServer={(i) => {
+          srv.selectServer(i);
+          setPlayerError(false);
+          setPlayerReady(false);
+        }}
+      />
     </View>
   );
 }
@@ -1344,66 +1315,46 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingHorizontal: 32,
   },
-  errorServerLabel: {
-    fontSize: 9,
-    fontWeight: "900",
-    color: COLORS.textMuted,
-    letterSpacing: 2,
-    marginTop: 8,
-  },
-  serverGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    justifyContent: "center",
-    marginTop: 4,
-    marginBottom: 8,
-  },
-  serverPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 100,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
-    backgroundColor: "rgba(255,255,255,0.05)",
-  },
-  serverPillActive: {
-    borderColor: COLORS.neonCyan,
-    backgroundColor: "rgba(0,229,255,0.08)",
-  },
-  serverPillText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: COLORS.textMuted,
-  },
 
-  // ── HUD top-bar server pills (compact, no icon) ──────────────────────
-  hudServerRow: {
+  // ── HUD compact server chip ──────────────────────────────────────────────
+  serverChip: {
     flexDirection: "row",
-    gap: 6,
     alignItems: "center",
-  },
-  hudServerPill: {
+    gap: 6,
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 100,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
-    backgroundColor: "rgba(0,0,0,0.3)",
+    borderColor: "rgba(0,229,255,0.3)",
+    backgroundColor: "rgba(0,0,0,0.45)",
   },
-  hudServerPillActive: {
-    borderColor: COLORS.neonCyan,
-    backgroundColor: "rgba(0,229,255,0.1)",
-  },
-  hudServerPillText: {
-    fontSize: 9,
+  serverChipText: {
+    fontSize: 10,
     fontWeight: "800",
-    color: COLORS.textMuted,
+    color: COLORS.neonCyan,
     letterSpacing: 0.5,
   },
+
+  // ── Error overlay "Switch Server" button ─────────────────────────────────
+  errorSwitchBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(0,229,255,0.25)",
+    backgroundColor: "rgba(0,229,255,0.07)",
+    marginTop: 4,
+  },
+  errorSwitchBtnText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: COLORS.neonCyan,
+  },
+
+
 
   // HUD layer — floats over WebView, box-none so touches pass through to WebView
   hudLayer: {
