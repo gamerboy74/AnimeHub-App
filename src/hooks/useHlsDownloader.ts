@@ -192,6 +192,66 @@ function buildLocalManifest(originalManifest: string, segments: SegmentInfo[], f
   return newLines.join('\n');
 }
 
+/**
+ * Preprocess downloaded WebVTT subtitles to inject a custom style block
+ * (giving them a grayish background) and position settings to push them up.
+ */
+function processVttContent(content: string): string {
+  let processed = content.trim();
+  if (!processed.startsWith('WEBVTT')) {
+    processed = 'WEBVTT\n' + processed;
+  }
+
+  // Inject STYLE block for gray background
+  if (processed.indexOf('STYLE') === -1) {
+    const styleBlock = [
+      'STYLE',
+      '::cue {',
+      '  background-color: rgba(40, 40, 40, 0.65) !important;',
+      '  color: #ffffff !important;',
+      '}',
+      ''
+    ].join('\n');
+    
+    const lines = processed.split('\n');
+    let insertIdx = 1;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trim() === 'WEBVTT') {
+        insertIdx = i + 1;
+        break;
+      }
+    }
+    lines.splice(insertIdx, 0, styleBlock);
+    processed = lines.join('\n');
+  }
+
+  // Adjust cue vertical line position to push subtitles a little up (e.g. line:82%)
+  const lines = processed.split('\n');
+  const timestampRegex = /^(\d{2}:\d{2}:\d{2}[.,]\d{3}\s+-->\s+\d{2}:\d{2}:\d{2}[.,]\d{3})(.*)$/;
+  const timestampShortRegex = /^(\d{2}:\d{2}[.,]\d{3}\s+-->\s+\d{2}:\d{2}[.,]\d{3})(.*)$/;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    let match = line.match(timestampRegex);
+    if (!match) {
+      match = line.match(timestampShortRegex);
+    }
+    
+    if (match) {
+      const baseTimestamp = match[1];
+      const existingSettings = match[2].trim();
+      
+      // Strip any pre-existing line setting and enforce line:82%
+      let newSettings = existingSettings.replace(/line:\S+/g, '').trim();
+      newSettings = (newSettings + ' line:82%').trim();
+      
+      lines[i] = `${baseTimestamp} ${newSettings}`;
+    }
+  }
+
+  return lines.join('\n');
+}
+
 /** Run an async function over an array with bounded concurrency */
 async function runWithConcurrency<T>(
   items: T[],
@@ -463,6 +523,19 @@ export function useHlsDownloader(): HlsDownloaderResult {
               await FileSystem.downloadAsync(sub.url, destSubUri, {
                 headers: downloadHeaders,
               });
+
+              // Preprocess the WebVTT file to apply custom background styling and position
+              try {
+                const rawVtt = await FileSystem.readAsStringAsync(destSubUri, {
+                  encoding: FileSystem.EncodingType.UTF8,
+                });
+                const processedVtt = processVttContent(rawVtt);
+                await FileSystem.writeAsStringAsync(destSubUri, processedVtt, {
+                  encoding: FileSystem.EncodingType.UTF8,
+                });
+              } catch (parseErr) {
+                console.warn('[HLS Downloader] Failed to preprocess VTT styling:', parseErr);
+              }
 
               // Write subtitle media playlist wrapper (VOD format, single segment)
               const subM3u8Content = [

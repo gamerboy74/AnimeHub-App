@@ -81,6 +81,7 @@ function OfflinePlayer({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [subtitlesEnabled, setSubtitlesEnabled] = useState(true);
+  const [contentFit, setContentFit] = useState<'contain' | 'fill' | 'cover'>('contain');
 
   useEffect(() => {
     const watchdog = setInterval(() => {
@@ -116,6 +117,19 @@ function OfflinePlayer({
     setShowHud(true);
     if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
     hudTimerRef.current = setTimeout(() => setShowHud(false), 4000);
+  }, []);
+
+  const toggleHud = useCallback(() => {
+    setShowHud((prev) => {
+      if (prev) {
+        if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
+        return false;
+      } else {
+        if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
+        hudTimerRef.current = setTimeout(() => setShowHud(false), 4000);
+        return true;
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -168,6 +182,15 @@ function OfflinePlayer({
     resetHudTimer();
   }, [player, subtitlesEnabled, resetHudTimer]);
 
+  const handleToggleResizeMode = useCallback(() => {
+    setContentFit((prev) => {
+      if (prev === 'contain') return 'fill';
+      if (prev === 'fill') return 'cover';
+      return 'contain';
+    });
+    resetHudTimer();
+  }, [resetHudTimer]);
+
   const pct = duration > 0 ? (currentTime / duration) * 100 : 0;
   const progressBarWidthRef = useRef<number>(0);
 
@@ -187,7 +210,7 @@ function OfflinePlayer({
       <VideoView
         player={player}
         style={StyleSheet.absoluteFill}
-        contentFit="contain"
+        contentFit={contentFit}
         nativeControls={false}
       />
 
@@ -195,7 +218,7 @@ function OfflinePlayer({
       <TouchableOpacity 
         style={StyleSheet.absoluteFill} 
         activeOpacity={1} 
-        onPress={resetHudTimer}
+        onPress={toggleHud}
       />
 
       {showHud && (
@@ -258,6 +281,21 @@ function OfflinePlayer({
                 {formatTime(currentTime)} / {formatTime(duration)}
               </Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <TouchableOpacity onPress={handleToggleResizeMode} style={styles.resizeBtn}>
+                  <Ionicons 
+                    name={
+                      contentFit === 'contain' ? "resize" : 
+                      contentFit === 'fill' ? "expand" : "scan"
+                    } 
+                    size={14} 
+                    color={COLORS.neonCyan} 
+                  />
+                  <Text style={styles.resizeBtnText}>
+                    {contentFit === 'contain' ? 'ORIGINAL' : 
+                     contentFit === 'fill' ? 'STRETCH' : 'ZOOM'}
+                  </Text>
+                </TouchableOpacity>
+
                 {player.availableSubtitleTracks && player.availableSubtitleTracks.length > 0 && (
                   <TouchableOpacity onPress={handleToggleSubtitles} style={[styles.ccButton, !subtitlesEnabled && styles.ccButtonDisabled]}>
                     <Ionicons name="chatbubble-ellipses" size={16} color={subtitlesEnabled ? COLORS.neonCyan : COLORS.textMuted} />
@@ -1110,6 +1148,23 @@ const styles = StyleSheet.create({
   ccButtonText: {
     fontSize: 9,
     fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  resizeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,245,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(0,245,255,0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    gap: 4,
+  },
+  resizeBtnText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: COLORS.neonCyan ?? '#00F5FF',
     letterSpacing: 0.5,
   },
   hudLayer: {
