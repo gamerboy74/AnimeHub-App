@@ -67,11 +67,12 @@ VALUES
   ('Ads',                     'With ads',   'Ad-free',     true,  4),
   ('Simultaneous Streams',    '1 device',   '2 devices',   false, 5),
   ('Offline Downloads',       '✗',          '✓',           false, 6),
-  ('Early Episode Access',    '✗',          '✓',           false, 7),
-  ('New Episode Alerts',      '✓',          '✓',           false, 8),
-  ('Watchlist & Favorites',   '✓',          '✓',           false, 9),
-  ('Community Reviews',       '✓',          '✓',           false, 10),
-  ('Customer Support',        'Standard',   'Priority',    false, 11)
+  ('Multiple Stream Servers', 'Server 1 only', 'Unlimited',  true,  7),
+  ('Early Episode Access',    '✗',          '✓',           false, 8),
+  ('New Episode Alerts',      '✓',          '✓',           false, 9),
+  ('Watchlist & Favorites',   '✓',          '✓',           false, 10),
+  ('Community Reviews',       '✓',          '✓',           false, 11),
+  ('Customer Support',        'Standard',   'Priority',    false, 12)
 ON CONFLICT DO NOTHING;
 
 -- ── 5. updated_at trigger for subscription_plans ─────────────

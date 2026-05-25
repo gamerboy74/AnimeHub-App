@@ -18,6 +18,7 @@ const { width } = Dimensions.get('window');
 const PERKS = [
   { icon: 'star', text: 'Unlimited premium episodes' },
   { icon: 'play-skip-forward', text: 'Ad-free streaming' },
+  { icon: 'server', text: 'Multiple high-speed stream servers' },
   { icon: 'download', text: 'Download for offline' },
   { icon: 'time', text: 'Early access to new episodes' },
   { icon: 'shield-checkmark', text: 'HD & 4K quality' },

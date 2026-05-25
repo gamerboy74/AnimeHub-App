@@ -10,7 +10,7 @@ export interface Server {
 }
 
 export interface ServerSelectionResult {
-  /** Full flat server list (all langs) */
+  /** Full flat server list (all langs) — filtered to 1 for free users */
   servers: Server[];
   /** Servers grouped by language — grouped['sub'] | grouped['dub'] */
   grouped: Record<ServerLang, Server[]>;
@@ -26,6 +26,8 @@ export interface ServerSelectionResult {
   embedUrl: string;
   /** Human-readable label e.g. "HD-2 · SUB" for the HUD chip */
   label: string;
+  /** True when additional servers exist but the user is on the free plan */
+  isServerLocked: boolean;
   /** Select a language tab — always resets server index to 0 */
   selectLang: (lang: ServerLang) => void;
   /** Select a server by its index within filteredServers */
@@ -46,6 +48,7 @@ export interface ServerSelectionResult {
 export function useServerSelection(
   rawServers: unknown,
   fallbackUrl?: string | null,
+  isPremium = false,
 ): ServerSelectionResult {
   const [lang, setLang] = useState<ServerLang>('sub');
   const [index, setIndex] = useState(0);
@@ -53,18 +56,22 @@ export function useServerSelection(
   // ── Normalise raw input ──────────────────────────────────────────────────
   // Accepts the video_servers JSONB column (any[]) or falls back to video_url.
   // Both legacy { name, url } and new { name, url, lang } shapes are handled.
+  // Free users are limited to the first server only (Server 1).
   const servers = useMemo<Server[]>(() => {
+    let all: Server[];
     if (Array.isArray(rawServers) && rawServers.length > 0) {
-      return (rawServers as Server[]).map((s) => ({
+      all = (rawServers as Server[]).map((s) => ({
         name: s.name ?? 'Server',
         url:  s.url  ?? '',
-        lang: s.lang ?? 'sub',
+        lang: (((s as any).lang === 'dub' || (s as any).lang === 'dubbed') ? 'dub' : 'sub') as ServerLang,
       }));
+    } else {
+      const fallback = fallbackUrl?.trim();
+      all = fallback ? [{ name: 'Server 1', url: fallback, lang: 'sub' }] : [];
     }
-    const fallback = fallbackUrl?.trim();
-    if (fallback) return [{ name: 'Server 1', url: fallback, lang: 'sub' }];
-    return [];
-  }, [rawServers, fallbackUrl]);
+    // Free plan: cap to the very first server
+    return isPremium ? all : all.slice(0, 1);
+  }, [rawServers, fallbackUrl, isPremium]);
 
   // ── Group by language ───────────────────────────────────────────────────
   const grouped = useMemo<Record<ServerLang, Server[]>>(() => {
@@ -86,6 +93,14 @@ export function useServerSelection(
   const label           = currentServer
     ? `${currentServer.name} · ${lang.toUpperCase()}`
     : '';
+
+  // True when the episode has more than one server but the user is on free plan.
+  // The watch screen uses this to show an upgrade prompt instead of the picker.
+  const isServerLocked = !isPremium && (
+    Array.isArray(rawServers)
+      ? (rawServers as Server[]).length > 1
+      : false
+  );
 
   // ── Actions ──────────────────────────────────────────────────────────────
   function selectLang(newLang: ServerLang) {
@@ -111,6 +126,7 @@ export function useServerSelection(
     filteredServers,
     embedUrl,
     label,
+    isServerLocked,
     selectLang,
     selectServer,
     reset,

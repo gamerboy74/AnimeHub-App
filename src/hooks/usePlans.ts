@@ -59,6 +59,7 @@ const FALLBACK_FEATURES: PlanFeature[] = [
   { id: '5', label: 'Ads',                    sub_label: null, free_value: 'With ads',   premium_value: 'Ad-free', is_highlighted: true,  sort_order: 4 },
   { id: '6', label: 'Simultaneous Streams',   sub_label: null, free_value: '1 device',   premium_value: '2 devices', is_highlighted: false, sort_order: 5 },
   { id: '7', label: 'Offline Downloads',      sub_label: null, free_value: '✗',          premium_value: '✓',       is_highlighted: false, sort_order: 6 },
+  { id: '13', label: 'Multiple Stream Servers', sub_label: 'Switch to faster back-up streams', free_value: 'Server 1 only', premium_value: 'Unlimited', is_highlighted: true,  sort_order: 6.5 },
   { id: '8', label: 'Early Episode Access',   sub_label: null, free_value: '✗',          premium_value: '✓',       is_highlighted: false, sort_order: 7 },
   { id: '9', label: 'New Episode Alerts',     sub_label: null, free_value: '✓',          premium_value: '✓',       is_highlighted: false, sort_order: 8 },
   { id: '10', label: 'Watchlist & Favorites', sub_label: null, free_value: '✓',          premium_value: '✓',       is_highlighted: false, sort_order: 9 },
