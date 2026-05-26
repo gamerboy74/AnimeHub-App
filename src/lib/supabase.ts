@@ -218,7 +218,7 @@ export const episodeAPI = {
 
 export const userAPI = {
   getProfile: (userId: string) =>
-    supabase.from('users').select('*').eq('id', userId).single(),
+    supabase.from('users').select('*').eq('id', userId).maybeSingle(),
 
   updateProfile: (userId: string, data: Partial<User>) =>
     supabase.from('users').update(data).eq('id', userId).select(),

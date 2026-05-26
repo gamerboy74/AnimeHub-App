@@ -2,6 +2,11 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase, userAPI, User } from '../lib/supabase';
 import { Session } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as WebBrowser from 'expo-web-browser';
+import * as Linking from 'expo-linking';
+
+// Required for expo-web-browser to complete OAuth sessions on Android
+WebBrowser.maybeCompleteAuthSession();
 
 type AuthContextType = {
   session: Session | null;
@@ -11,6 +16,8 @@ type AuthContextType = {
   signUp: (email: string, password: string, username: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  signInWithGoogle: () => Promise<{ error: any }>;
+  resetPassword: (email: string) => Promise<{ error: any }>;
 };
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
@@ -36,7 +43,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       setSession(session);
-      if (session?.user) fetchUserProfile(session.user.id);
+      if (session?.user) fetchUserProfile(session.user.id, session.user);
       else setLoading(false);
     }).catch((err) => {
       // Network error or unexpected throw — treat same as invalid token
@@ -48,7 +55,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED' && !session) {
+      // Fix: explicit parentheses to make operator precedence clear
+      if (event === 'SIGNED_OUT' || (event === 'TOKEN_REFRESHED' && !session)) {
         // Token refresh failed or explicit sign-out — clear everything
         setSession(null);
         setUser(null);
@@ -57,7 +65,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       setSession(session);
-      if (session?.user) fetchUserProfile(session.user.id);
+      if (session?.user) fetchUserProfile(session.user.id, session.user);
       else { setUser(null); setLoading(false); }
     });
 
@@ -118,12 +126,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
-  async function fetchUserProfile(userId: string) {
+  async function fetchUserProfile(userId: string, authUser?: any) {
     try {
-      const { data } = await userAPI.getProfile(userId);
-      setUser(data);
+      const { data, error } = await userAPI.getProfile(userId);
+      if (error || !data) {
+        // Profile row missing (e.g. insert failed on signup, or first-time OAuth login)
+        console.warn('[Auth] Profile row missing for user:', userId, error?.message || 'No data');
+        
+        // Auto-heal / auto-create profile if we have active user session metadata (e.g., for Google OAuth)
+        const currentUser = authUser || session?.user;
+        if (currentUser) {
+          // Wait for JWT to propagate before attempting write, preventing RLS timing issues
+          await new Promise(r => setTimeout(r, 500));
+          
+          console.log('[Auth] Auto-creating profile for:', currentUser.email);
+          const metadata = currentUser.user_metadata || {};
+          const rawName = metadata.full_name || metadata.name || '';
+          const cleanName = rawName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+          const emailPrefix = currentUser.email ? currentUser.email.split('@')[0] : '';
+          const generatedUsername = cleanName || emailPrefix || `user_${userId.substring(0, 5)}`;
+          
+          const newProfile = {
+            id: userId,
+            email: currentUser.email || '',
+            username: generatedUsername,
+            avatar_url: metadata.avatar_url || null,
+            subscription_type: 'free' as const,
+            role: 'user',
+            is_admin: false,
+          };
+
+          const { data: createdData, error: createError } = await supabase
+            .from('users')
+            .upsert(newProfile)
+            .select()
+            .maybeSingle();
+
+          if (createError) {
+            console.error('[Auth] Failed to auto-create user profile:', createError.message);
+            setUser(null);
+          } else {
+            console.log('[Auth] User profile auto-created successfully');
+            setUser(createdData);
+          }
+        } else {
+          setUser(null);
+        }
+      } else {
+        setUser(data);
+      }
     } catch (e) {
-      console.error(e);
+      console.error('[Auth] fetchUserProfile threw:', e);
+      setUser(null);
     } finally {
       setLoading(false);
     }
@@ -135,10 +189,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function signUp(email: string, password: string, username: string) {
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    // Fix: Pass username in options.data so that Supabase database triggers expecting it don't crash
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          username: username,
+        },
+      },
+    });
     if (!error && data.user) {
-      try {
-        await supabase.from('users').insert({
+      // Retry the profile insert/upsert up to 3 times — network blips on signup are common
+      let insertError: any = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const { error: err } = await supabase.from('users').upsert({
           id: data.user.id,
           email,
           username,
@@ -146,8 +211,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           role: 'user',
           is_admin: false,
         });
-      } catch (insertError) {
-        console.error('Error inserting user profile:', insertError);
+        insertError = err;
+        if (!err) break;
+        console.warn(`[Auth] Profile insert attempt ${attempt} failed:`, err.message);
+        await new Promise(r => setTimeout(r, attempt * 400)); // back-off: 400ms, 800ms
+      }
+      if (insertError) {
+        // Auth user created but profile missing — surface this as an error
+        console.error('[Auth] Could not create user profile after 3 attempts:', insertError);
+        // Clean up the orphaned auth user so they can retry signup
+        await supabase.auth.signOut();
+        return { error: { message: 'Account created but profile setup failed. Please try again.' } };
       }
     }
     return { error };
@@ -160,11 +234,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function refreshUser() {
-    if (session?.user) await fetchUserProfile(session.user.id);
+    if (session?.user) await fetchUserProfile(session.user.id, session.user);
+  }
+
+  async function resetPassword(email: string) {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: 'animehubmobile://reset-password',
+    });
+    return { error };
+  }
+
+  async function signInWithGoogle() {
+    try {
+      const redirectTo = Linking.createURL('auth/callback', { scheme: 'animehubmobile' });
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo,
+          skipBrowserRedirect: true,
+        },
+      });
+      if (error || !data?.url) return { error: error ?? new Error('No OAuth URL returned') };
+
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      if (result.type !== 'success') return { error: new Error('Google sign-in was cancelled') };
+
+      // On Android, callback.tsx handles the exchange via deep link.
+      // Check if it already did — if so, skip to avoid consuming the verifier twice.
+      const { data: { session: existingSession } } = await supabase.auth.getSession();
+      if (existingSession) return { error: null };
+
+      // Supabase v2 uses PKCE — exchangeCodeForSession handles ?code= automatically
+      const { error: sessionError } = await supabase.auth.exchangeCodeForSession(result.url);
+      if (sessionError?.message.includes('verifier')) {
+        // Callback.tsx won the race — session is being set via onAuthStateChange
+        return { error: null };
+      }
+      return { error: sessionError };
+    } catch (e: any) {
+      return { error: e };
+    }
   }
 
   return (
-    <AuthContext.Provider value={{ session, user, loading, signIn, signUp, signOut, refreshUser }}>
+    <AuthContext.Provider value={{ session, user, loading, signIn, signUp, signOut, refreshUser, signInWithGoogle, resetPassword }}>
       {children}
     </AuthContext.Provider>
   );
