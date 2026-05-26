@@ -55,6 +55,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('[Auth] onAuthStateChange event:', event, 'Has session:', !!session);
       // Fix: explicit parentheses to make operator precedence clear
       if (event === 'SIGNED_OUT' || (event === 'TOKEN_REFRESHED' && !session)) {
         // Token refresh failed or explicit sign-out — clear everything
@@ -65,7 +66,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       setSession(session);
-      if (session?.user) fetchUserProfile(session.user.id, session.user);
+      if (session?.user) {
+        console.log('[Auth] Fetching profile for user ID:', session.user.id);
+        fetchUserProfile(session.user.id, session.user);
+      }
       else { setUser(null); setLoading(false); }
     });
 
@@ -90,6 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           filter: `id=eq.${session.user.id}`,
         },
         (payload) => {
+          console.log('[Auth] Realtime user update received:', payload.new);
           // Merge only the changed fields — don't replace the whole user object
           setUser(prev => prev ? { ...prev, ...(payload.new as Partial<User>) } : prev);
         },
@@ -102,6 +107,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ── Sync user subscription cache to AsyncStorage for offline verification ──
   useEffect(() => {
     if (user) {
+      console.log('[Auth] Syncing subscription cache to AsyncStorage for:', user.email);
       (async () => {
         try {
           const { data: prefs } = await (userAPI.getPreferences(user.id) as any);
@@ -128,7 +134,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   async function fetchUserProfile(userId: string, authUser?: any) {
     try {
+      console.log('[Auth] fetchUserProfile starting for:', userId);
       const { data, error } = await userAPI.getProfile(userId);
+      console.log('[Auth] fetchUserProfile getProfile result:', !!data, 'Error:', error?.message);
       if (error || !data) {
         // Profile row missing (e.g. insert failed on signup, or first-time OAuth login)
         console.warn('[Auth] Profile row missing for user:', userId, error?.message || 'No data');
@@ -144,7 +152,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const rawName = metadata.full_name || metadata.name || '';
           const cleanName = rawName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
           const emailPrefix = currentUser.email ? currentUser.email.split('@')[0] : '';
-          const generatedUsername = cleanName || emailPrefix || `user_${userId.substring(0, 5)}`;
+          const base = cleanName || emailPrefix || 'user';
+          // Add short uid suffix to guarantee uniqueness
+          const generatedUsername = `${base}_${userId.substring(0, 6)}`;
           
           const newProfile = {
             id: userId,
@@ -158,7 +168,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           const { data: createdData, error: createError } = await supabase
             .from('users')
-            .upsert(newProfile)
+            .upsert(newProfile, { onConflict: 'id' })  // ← explicit conflict target
             .select()
             .maybeSingle();
 
@@ -166,7 +176,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             console.error('[Auth] Failed to auto-create user profile:', createError.message);
             setUser(null);
           } else {
-            console.log('[Auth] User profile auto-created successfully');
             setUser(createdData);
           }
         } else {
@@ -257,7 +266,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (error || !data?.url) return { error: error ?? new Error('No OAuth URL returned') };
 
       const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      console.log('[Auth] WebBrowser.openAuthSessionAsync result:', result);
       if (result.type !== 'success') return { error: new Error('Google sign-in was cancelled') };
+
+      // Support both PKCE (?code=) and Implicit (#access_token=) flows:
+      if (result.url.includes('access_token=') && result.url.includes('refresh_token=')) {
+        console.log('[Auth] Detected implicit flow tokens in redirect URL. Parsing...');
+        const hash = result.url.split('#')[1];
+        const urlParams = new URLSearchParams(hash);
+        const accessToken = urlParams.get('access_token');
+        const refreshToken = urlParams.get('refresh_token');
+        
+        if (accessToken && refreshToken) {
+          console.log('[Auth] Setting session directly via implicit flow...');
+          const { error: setSessionError } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          return { error: setSessionError };
+        }
+      }
 
       // On Android, callback.tsx handles the exchange via deep link.
       // Check if it already did — if so, skip to avoid consuming the verifier twice.

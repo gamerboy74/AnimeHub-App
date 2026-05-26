@@ -76,7 +76,7 @@ const BADGE_DEFS = [
   },
   {
     id: '10', code: 'OTAKU', name: 'OTAKU KING', desc: 'Watch 100 episodes',
-    icon: 'crown',         color: '#E040FB',
+    icon: 'trophy',        color: '#E040FB',
     check:    (p: any[], s: number) => p.length >= 100,
     progress: (p: any[], s: number) => ({ cur: Math.min(p.length, 100), max: 100 }),
   },
