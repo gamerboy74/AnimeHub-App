@@ -619,6 +619,10 @@ export default function WatchScreen() {
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null); // auto-play timer
   const skipToastTimeoutRef = useRef<any>(null);
 
+  // Dynamic redirect tracking refs
+  const isPageLoadedRef = useRef(false);
+  const currentHostRef = useRef("");
+
   // HUD visibility — driven by WebView click events (injected JS fires player_tap)
   const [showHud, setShowHud] = useState(true);
 
@@ -1428,6 +1432,9 @@ export default function WatchScreen() {
     downloader.cancelDownload();
     srv.reset(); // reset server + lang to defaults on episode change
     cancelAutoPlay();
+    // Reset redirect blocker refs
+    isPageLoadedRef.current = false;
+    currentHostRef.current = "";
 
     // Show HUD briefly then auto-hide — restarts the timer on every episode switch
     resetHudTimer();
@@ -1456,6 +1463,9 @@ export default function WatchScreen() {
     setSniffedCookies('');
     setSniffedSubtitles([]);
     downloader.cancelDownload();
+    // Reset redirect blocker refs
+    isPageLoadedRef.current = false;
+    currentHostRef.current = "";
   }, [srv.embedUrl]);
 
   // NOTE: clearOtherProgress was removed — it was wiping all episode history
@@ -1579,11 +1589,22 @@ export default function WatchScreen() {
         injectedJavaScript={injectedJS}
         injectedJavaScriptForMainFrameOnly={false}
         onMessage={handleWebViewMessage}
+        onNavigationStateChange={(navState) => {
+          try {
+            const host = new URL(navState.url).hostname.toLowerCase();
+            if (host && host !== "about:blank") {
+              currentHostRef.current = host;
+            }
+          } catch (e) {
+            // ignore
+          }
+        }}
         // Page HTML loaded — cancel the 8s fallback timer and show the player immediately
         onLoadEnd={() => {
           if (spinnerTimeoutRef.current)
             clearTimeout(spinnerTimeoutRef.current);
           setPlayerReady(true);
+          isPageLoadedRef.current = true;
         }}
         // Full Chrome 124 desktop UA — replaces the entire WebView UA string.
         // applicationNameForUserAgent only *appends* to the Dalvik/mobile UA, which
@@ -1597,14 +1618,7 @@ export default function WatchScreen() {
           if (e.nativeEvent.statusCode >= 400) setPlayerError(true);
         }}
         // ── Redirect guard — GENERIC, zero per-site maintenance ────────────
-        // OLD approach: allowlist every CDN domain → breaks whenever a new
-        //               streaming host is added.
-        // NEW approach: blocklist the tiny set of things that are ALWAYS harmful
-        //               (non-http schemes + confirmed pure-ad domains).
-        //               Everything else — CDNs, player scripts, HLS, APIs — passes.
-        //
-        // Note: on Android, onShouldStartLoadWithRequest fires for main-frame
-        // navigations only (not subresource fetches), so this is safe to open up.
+        // Blocks external ad/popup redirects dynamically.
         onShouldStartLoadWithRequest={(req) => {
           const url = req.url;
 
@@ -1614,42 +1628,76 @@ export default function WatchScreen() {
             return false;
           }
 
-          // ② Block confirmed pure-ad / redirect domains — never serve video.
-          const AD_DOMAINS = [
-            "googlesyndication.com",
-            "doubleclick.net",
-            "adservice.google.com",
-            "amazon-adsystem.com",
-            "ads.yahoo.com",
-            "popads.net",
-            "popcash.net",
-            "exoclick.com",
-            "trafficjunky.net",
-            "juicyads.com",
-            // Additional common ad/redirect networks
-            "propellerads.com",
-            "trafficstars.com",
-            "hilltopads.net",
-            "adsterra.com",
-            "bidvertiser.com",
-            "revcontent.com",
-            "outbrain.com",
-            "taboola.com",
-            "mgid.com",
-          ];
           try {
-            const reqHost = new URL(url).hostname;
+            const reqUrlObj = new URL(url);
+            const reqHost = reqUrlObj.hostname.toLowerCase();
+
+            // Allow local/about pages
+            if (url === "about:blank" || url.startsWith("data:") || url.startsWith("file:")) {
+              return true;
+            }
+
+            // Extract embedHost
+            let embedHost = "";
+            try {
+              if (srv.embedUrl) {
+                embedHost = new URL(srv.embedUrl).hostname.toLowerCase();
+              }
+            } catch (e) {
+              // ignore
+            }
+
+            // Always allow the original embed host and its subdomains
+            if (embedHost && (reqHost === embedHost || reqHost.endsWith("." + embedHost) || embedHost.endsWith("." + reqHost))) {
+              return true;
+            }
+
+            // If the page is already loaded, block any top-frame navigation to a different host
+            const isTopFrame = req.isTopFrame !== false;
+            if (isPageLoadedRef.current && isTopFrame) {
+              const currentHost = currentHostRef.current;
+              if (currentHost) {
+                const isSameHost = reqHost === currentHost || reqHost.endsWith("." + currentHost) || currentHost.endsWith("." + reqHost);
+                if (!isSameHost) {
+                  console.log("[WebView] BLOCKED external redirect (post-load top frame) →", url);
+                  return false;
+                }
+              }
+            }
+
+            // Always block known ad/redirect domains
+            const AD_DOMAINS = [
+              "googlesyndication.com",
+              "doubleclick.net",
+              "adservice.google.com",
+              "amazon-adsystem.com",
+              "ads.yahoo.com",
+              "popads.net",
+              "popcash.net",
+              "exoclick.com",
+              "trafficjunky.net",
+              "juicyads.com",
+              "propellerads.com",
+              "trafficstars.com",
+              "hilltopads.net",
+              "adsterra.com",
+              "bidvertiser.com",
+              "revcontent.com",
+              "outbrain.com",
+              "taboola.com",
+              "mgid.com",
+            ];
             if (
               AD_DOMAINS.some((d) => reqHost === d || reqHost.endsWith("." + d))
             ) {
               console.log("[WebView] BLOCKED ad →", reqHost);
               return false;
             }
-          } catch {
-            /* malformed URL — allow */
+          } catch (e) {
+            console.error("[WebView] Error in redirect guard:", e);
+            return req.isTopFrame === false;
           }
 
-          // ③ Allow everything else — CDNs, HLS, auth redirects, player scripts.
           return true;
         }}
       />
