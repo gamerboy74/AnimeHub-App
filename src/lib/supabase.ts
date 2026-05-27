@@ -228,15 +228,14 @@ export const userAPI = {
     const blob = await response.blob();
     const fileExt = localUri.split('.').pop() || 'jpg';
     const fileName = `${userId}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-    const filePath = `avatars/${fileName}`;
     const { error: uploadError } = await supabase.storage
-      .from('avatars')
-      .upload(filePath, blob, {
+      .from('user-avatars')
+      .upload(fileName, blob, {
         contentType: `image/${fileExt}`,
         upsert: true,
       });
     if (uploadError) throw uploadError;
-    const { data } = supabase.storage.from('avatars').getPublicUrl(filePath);
+    const { data } = supabase.storage.from('user-avatars').getPublicUrl(fileName);
     return data.publicUrl;
   },
 
