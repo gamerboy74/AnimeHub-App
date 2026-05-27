@@ -223,6 +223,23 @@ export const userAPI = {
   updateProfile: (userId: string, data: Partial<User>) =>
     supabase.from('users').update(data).eq('id', userId).select(),
 
+  uploadAvatar: async (userId: string, localUri: string): Promise<string> => {
+    const response = await fetch(localUri);
+    const blob = await response.blob();
+    const fileExt = localUri.split('.').pop() || 'jpg';
+    const fileName = `${userId}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+    const filePath = `avatars/${fileName}`;
+    const { error: uploadError } = await supabase.storage
+      .from('avatars')
+      .upload(filePath, blob, {
+        contentType: `image/${fileExt}`,
+        upsert: true,
+      });
+    if (uploadError) throw uploadError;
+    const { data } = supabase.storage.from('avatars').getPublicUrl(filePath);
+    return data.publicUrl;
+  },
+
   getFavorites: (userId: string) =>
     supabase.from('user_favorites').select('*, anime(*)').eq('user_id', userId),
 

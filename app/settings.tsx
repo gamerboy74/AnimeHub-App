@@ -14,6 +14,7 @@ import { useAuth } from '../src/context/AuthContext';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ImagePicker from 'expo-image-picker';
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -32,6 +33,7 @@ export default function SettingsScreen() {
   ]);
   const [avatarModalVisible, setAvatarModalVisible] = useState(false);
   const [avatarInputUrl, setAvatarInputUrl] = useState('');
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [passwordModalVisible, setPasswordModalVisible] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
@@ -39,6 +41,47 @@ export default function SettingsScreen() {
   const [cardNumInput, setCardNumInput] = useState('');
   const [cardExpiryInput, setCardExpiryInput] = useState('');
   const [cardBrandInput, setCardBrandInput] = useState('VISA');
+
+  const handleSelectAndUploadAvatar = async () => {
+    if (!user) {
+      Alert.alert('Error', 'You must be logged in to upload an avatar.');
+      return;
+    }
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'We need photo library access to change your avatar.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.85,
+    });
+
+    if (result.canceled || !result.assets || result.assets.length === 0) {
+      return;
+    }
+
+    const selectedUri = result.assets[0].uri;
+
+    try {
+      setUploadingAvatar(true);
+      const publicUrl = await userAPI.uploadAvatar(user.id, selectedUri);
+
+      const { error } = await userAPI.updateProfile(user.id, { avatar_url: publicUrl });
+      if (error) throw error;
+
+      Alert.alert('Success', 'Avatar updated!');
+      setAvatarModalVisible(false);
+      await refreshUser();
+    } catch (err: any) {
+      Alert.alert('Error', `Failed to upload avatar: ${err.message || JSON.stringify(err)}`);
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
 
   useEffect(() => {
     if (!user) { setLoading(false); return; }
@@ -427,8 +470,40 @@ export default function SettingsScreen() {
             <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setAvatarModalVisible(false)} />
             <View style={styles.modalSheet}>
               <View style={styles.modalHandle} />
-              <Text style={styles.modalTitle}>Change Avatar URL</Text>
-              <Text style={styles.modalLabel}>Avatar Image URL</Text>
+              <Text style={styles.modalTitle}>Change Avatar</Text>
+              
+              {/* Option 1: Upload from Device */}
+              <Text style={styles.modalLabel}>Upload from Device</Text>
+              <TouchableOpacity 
+                style={styles.uploadImageBtn}
+                onPress={handleSelectAndUploadAvatar}
+                disabled={uploadingAvatar}
+              >
+                <LinearGradient 
+                  colors={[COLORS.neonCyan, COLORS.neon]} 
+                  start={{x:0,y:0}} end={{x:1,y:1}} 
+                  style={styles.uploadImageGradient}
+                >
+                  {uploadingAvatar ? (
+                    <ActivityIndicator size="small" color="#000" />
+                  ) : (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="cloud-upload" size={20} color="#000" style={{ marginRight: 8 }} />
+                      <Text style={styles.uploadImageText}>Choose Photo from Library</Text>
+                    </View>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
+
+              {/* Divider */}
+              <View style={styles.modalDivider}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>OR</Text>
+                <View style={styles.dividerLine} />
+              </View>
+
+              {/* Option 2: Paste URL */}
+              <Text style={styles.modalLabel}>Or, Paste Public Image URL</Text>
               <TextInput
                 style={styles.modalInput}
                 value={avatarInputUrl}
@@ -452,7 +527,7 @@ export default function SettingsScreen() {
                 }}
               >
                 <LinearGradient colors={[COLORS.neon, COLORS.accent]} start={{x:0,y:0}} end={{x:1,y:1}} style={styles.modalSaveGradient}>
-                  <Text style={styles.modalSaveText}>Update Avatar</Text>
+                  <Text style={styles.modalSaveText}>Update URL</Text>
                 </LinearGradient>
               </TouchableOpacity>
             </View>
@@ -794,4 +869,10 @@ const styles = StyleSheet.create({
   modalSaveBtn: { marginTop: 24, borderRadius: 100, overflow: 'hidden' },
   modalSaveGradient: { paddingVertical: 15, alignItems: 'center', justifyContent: 'center' },
   modalSaveText: { color: '#000', fontWeight: '800', fontSize: 14 },
+  uploadImageBtn: { borderRadius: 100, overflow: 'hidden', marginTop: 8 },
+  uploadImageGradient: { paddingVertical: 14, alignItems: 'center', justifyContent: 'center' },
+  uploadImageText: { color: '#000', fontWeight: '800', fontSize: 14 },
+  modalDivider: { flexDirection: 'row', alignItems: 'center', marginVertical: 20 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.06)' },
+  dividerText: { marginHorizontal: 16, fontSize: 11, fontWeight: '800', color: COLORS.textMuted },
 });
