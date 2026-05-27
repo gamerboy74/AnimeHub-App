@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
@@ -216,6 +217,43 @@ export const episodeAPI = {
     supabase.from('episodes').select('*').eq('id', id).single(),
 };
 
+function base64ToUint8Array(base64: string): Uint8Array {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const lookup = new Uint8Array(256);
+  for (let i = 0; i < chars.length; i++) {
+    lookup[chars.charCodeAt(i)] = i;
+  }
+  
+  let bufferLength = base64.length * 0.75;
+  if (base64[base64.length - 1] === '=') {
+    bufferLength--;
+    if (base64[base64.length - 2] === '=') {
+      bufferLength--;
+    }
+  }
+  
+  const arrayBuffer = new ArrayBuffer(bufferLength);
+  const bytes = new Uint8Array(arrayBuffer);
+  
+  let p = 0;
+  for (let i = 0; i < base64.length; i += 4) {
+    const encoded1 = lookup[base64.charCodeAt(i)];
+    const encoded2 = lookup[base64.charCodeAt(i + 1)];
+    const encoded3 = lookup[base64.charCodeAt(i + 2)];
+    const encoded4 = lookup[base64.charCodeAt(i + 3)];
+    
+    bytes[p++] = (encoded1 << 2) | (encoded2 >> 4);
+    if (p < bufferLength) {
+      bytes[p++] = ((encoded2 & 15) << 4) | (encoded3 >> 2);
+    }
+    if (p < bufferLength) {
+      bytes[p++] = ((encoded3 & 3) << 6) | (encoded4 & 63);
+    }
+  }
+  
+  return bytes;
+}
+
 export const userAPI = {
   getProfile: (userId: string) =>
     supabase.from('users').select('*').eq('id', userId).maybeSingle(),
@@ -224,24 +262,20 @@ export const userAPI = {
     supabase.from('users').update(data).eq('id', userId).select(),
 
   uploadAvatar: async (userId: string, localUri: string): Promise<string> => {
-    const blob: Blob = await new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.onload = function () {
-        resolve(xhr.response as Blob);
-      };
-      xhr.onerror = function () {
-        reject(new Error("Failed to read local image file"));
-      };
-      xhr.responseType = "blob";
-      xhr.open("GET", localUri, true);
-      xhr.send(null);
+    // 1. Read local file as base64 using expo-file-system
+    const base64 = await FileSystem.readAsStringAsync(localUri, {
+      encoding: FileSystem.EncodingType.Base64,
     });
 
+    // 2. Decode base64 to binary ArrayBuffer/Uint8Array
+    const arrayBuffer = base64ToUint8Array(base64);
+
+    // 3. Upload binary array to Supabase Storage (bypasses native Blob networking issues)
     const fileExt = localUri.split('.').pop() || 'jpg';
     const fileName = `${userId}-${Math.random().toString(36).substring(2)}.${fileExt}`;
     const { error: uploadError } = await supabase.storage
       .from('user-avatars')
-      .upload(fileName, blob, {
+      .upload(fileName, arrayBuffer, {
         contentType: `image/${fileExt}`,
         upsert: true,
       });
