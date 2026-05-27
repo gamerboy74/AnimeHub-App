@@ -164,6 +164,17 @@ export default function ProfileScreen() {
 
   const saveEdit = async () => {
     if (!user || !editUsername.trim()) return;
+
+    // 1. Frontend validation: Length & Characters check
+    const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/;
+    if (!usernameRegex.test(editUsername.trim())) {
+      Alert.alert(
+        'Invalid Username',
+        'Username must be 3-20 characters long and can only contain letters, numbers, and underscores.'
+      );
+      return;
+    }
+
     setEditSaving(true);
 
     // Only update fields that exist in the DB (bio column does not exist)
@@ -177,7 +188,20 @@ export default function ProfileScreen() {
     setEditSaving(false);
 
     if (error) {
-      Alert.alert('Error', `Could not update profile: ${(error as any)?.message || 'Unknown error'}`);
+      const errMsg = (error as any)?.message || '';
+      // 2. Intercept unique constraint violation errors from PostgreSQL
+      if (
+        errMsg.toLowerCase().includes('duplicate key') ||
+        errMsg.toLowerCase().includes('already exists') ||
+        (error as any)?.code === '23505'
+      ) {
+        Alert.alert(
+          'Username Taken',
+          'This username is already taken. Please try another one.'
+        );
+      } else {
+        Alert.alert('Error', `Could not update profile: ${errMsg || 'Unknown error'}`);
+      }
     } else if (!updatedRows || (updatedRows as any[]).length === 0) {
       // RLS blocked the update silently — row was filtered out
       Alert.alert('Error', 'Update blocked. Check Supabase RLS policy allows users to update their own row.');
