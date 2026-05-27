@@ -68,10 +68,18 @@ export default function SettingsScreen() {
 
     try {
       setUploadingAvatar(true);
+      const oldAvatarUrl = user.avatar_url;
       const publicUrl = await userAPI.uploadAvatar(user.id, selectedUri);
 
       const { error } = await userAPI.updateProfile(user.id, { avatar_url: publicUrl });
       if (error) throw error;
+
+      // Asynchronously delete old avatar from storage to keep buckets clean (non-blocking)
+      if (oldAvatarUrl) {
+        userAPI.deleteAvatar(oldAvatarUrl).catch(err => {
+          console.warn('[Storage] Failed to delete old avatar:', err);
+        });
+      }
 
       Alert.alert('Success', 'Avatar updated!');
       setAvatarModalVisible(false);

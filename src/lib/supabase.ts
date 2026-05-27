@@ -314,6 +314,38 @@ export const userAPI = {
     }
   },
 
+  deleteAvatar: async (avatarUrl: string): Promise<void> => {
+    try {
+      if (!avatarUrl) return;
+
+      // Extract bucket and file path from the public URL
+      const pathParts = avatarUrl.split('/public/');
+      if (pathParts.length < 2) return;
+
+      const fullPath = pathParts[1];
+      const firstSlash = fullPath.indexOf('/');
+      if (firstSlash === -1) return;
+
+      const bucket = fullPath.substring(0, firstSlash);
+      const filePath = fullPath.substring(firstSlash + 1);
+
+      // Skip if the old avatar URL is an external placeholder image (e.g., Unsplash)
+      if (avatarUrl.includes('images.unsplash.com') || avatarUrl.includes('readdy.ai')) {
+        return;
+      }
+
+      const { error } = await supabase.storage
+        .from(bucket)
+        .remove([filePath]);
+
+      if (error) {
+        console.warn('[Storage] Failed to delete old avatar:', error.message);
+      }
+    } catch (error) {
+      console.warn('[Storage] Error deleting old avatar:', error);
+    }
+  },
+
   getFavorites: (userId: string) =>
     supabase.from('user_favorites').select('*, anime(*)').eq('user_id', userId),
 
