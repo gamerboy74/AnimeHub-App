@@ -224,8 +224,19 @@ export const userAPI = {
     supabase.from('users').update(data).eq('id', userId).select(),
 
   uploadAvatar: async (userId: string, localUri: string): Promise<string> => {
-    const response = await fetch(localUri);
-    const blob = await response.blob();
+    const blob: Blob = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.onload = function () {
+        resolve(xhr.response as Blob);
+      };
+      xhr.onerror = function () {
+        reject(new Error("Failed to read local image file"));
+      };
+      xhr.responseType = "blob";
+      xhr.open("GET", localUri, true);
+      xhr.send(null);
+    });
+
     const fileExt = localUri.split('.').pop() || 'jpg';
     const fileName = `${userId}-${Math.random().toString(36).substring(2)}.${fileExt}`;
     const { error: uploadError } = await supabase.storage
