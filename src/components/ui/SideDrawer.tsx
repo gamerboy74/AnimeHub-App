@@ -99,6 +99,9 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
   }, [onClose, signOut, router]);
 
   const initials = user?.username?.substring(0, 2).toUpperCase() ?? '??';
+  const hasValidAvatar = user?.avatar_url && 
+    user.avatar_url !== 'https://ieopfdxgjlmdsidikgbj.supabase.co' && 
+    user.avatar_url !== 'https://ieopfdxgjlmdsidikgbj.supabase.co/';
 
   return (
     <Modal
@@ -125,8 +128,8 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
           {/* Profile header */}
           <View style={styles.profileSection}>
             <View style={styles.avatarWrap}>
-              {user?.avatar_url ? (
-                <Image source={{ uri: user.avatar_url }} style={styles.avatarImage} contentFit="cover" transition={200} />
+              {hasValidAvatar ? (
+                <Image source={{ uri: user!.avatar_url }} style={styles.avatarImage} contentFit="cover" transition={200} />
               ) : (
                 <View style={styles.avatarPlaceholder}>
                   <Text style={styles.avatarInitials}>{initials}</Text>
