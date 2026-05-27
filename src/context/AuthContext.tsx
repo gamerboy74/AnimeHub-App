@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase, userAPI, User } from '../lib/supabase';
 import { Session } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -132,7 +132,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
-  async function fetchUserProfile(userId: string, authUser?: any) {
+  const fetchUserProfile = useCallback(async (userId: string, authUser?: any) => {
     try {
       console.log('[Auth] fetchUserProfile starting for:', userId);
       const { data, error } = await userAPI.getProfile(userId);
@@ -165,13 +165,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             role: 'user',
             is_admin: false,
           };
-
+ 
           const { data: createdData, error: createError } = await supabase
             .from('users')
             .upsert(newProfile, { onConflict: 'id' })  // ← explicit conflict target
             .select()
             .maybeSingle();
-
+ 
           if (createError) {
             console.error('[Auth] Failed to auto-create user profile:', createError.message);
             setUser(null);
@@ -190,14 +190,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [session?.user]);
 
-  async function signIn(email: string, password: string) {
+  const signIn = useCallback(async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error };
-  }
+  }, []);
 
-  async function signUp(email: string, password: string, username: string) {
+  const signUp = useCallback(async (email: string, password: string, username: string) => {
     // Fix: Pass username in options.data so that Supabase database triggers expecting it don't crash
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -234,26 +234,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
     return { error };
-  }
+  }, []);
 
-  async function signOut() {
+  const signOut = useCallback(async () => {
     await supabase.auth.signOut();
     setUser(null);
     setSession(null);
-  }
+  }, []);
 
-  async function refreshUser() {
+  const refreshUser = useCallback(async () => {
     if (session?.user) await fetchUserProfile(session.user.id, session.user);
-  }
+  }, [session?.user, fetchUserProfile]);
 
-  async function resetPassword(email: string) {
+  const resetPassword = useCallback(async (email: string) => {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: 'animehubmobile://reset-password',
     });
     return { error };
-  }
+  }, []);
 
-  async function signInWithGoogle() {
+  const signInWithGoogle = useCallback(async () => {
     try {
       const redirectTo = Linking.createURL('auth/callback', { scheme: 'animehubmobile' });
       const { data, error } = await supabase.auth.signInWithOAuth({
@@ -264,11 +264,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         },
       });
       if (error || !data?.url) return { error: error ?? new Error('No OAuth URL returned') };
-
+ 
       const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
       console.log('[Auth] WebBrowser.openAuthSessionAsync result:', result);
       if (result.type !== 'success') return { error: new Error('Google sign-in was cancelled') };
-
+ 
       // Support both PKCE (?code=) and Implicit (#access_token=) flows:
       if (result.url.includes('access_token=') && result.url.includes('refresh_token=')) {
         console.log('[Auth] Detected implicit flow tokens in redirect URL. Parsing...');
@@ -286,12 +286,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return { error: setSessionError };
         }
       }
-
+ 
       // On Android, callback.tsx handles the exchange via deep link.
       // Check if it already did — if so, skip to avoid consuming the verifier twice.
       const { data: { session: existingSession } } = await supabase.auth.getSession();
       if (existingSession) return { error: null };
-
+ 
       // Supabase v2 uses PKCE — exchangeCodeForSession handles ?code= automatically
       const { error: sessionError } = await supabase.auth.exchangeCodeForSession(result.url);
       if (sessionError?.message.includes('verifier')) {
@@ -302,7 +302,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (e: any) {
       return { error: e };
     }
-  }
+  }, [session?.user]);
 
   return (
     <AuthContext.Provider value={{ session, user, loading, signIn, signUp, signOut, refreshUser, signInWithGoogle, resetPassword }}>
