@@ -54,9 +54,7 @@ export default function AuthCallback() {
         // Reconstruct the deep link URL with 'code' and 'state' so the Supabase client can match the PKCE verifier
         let exchangeUrl = incomingUrl;
         if (!exchangeUrl || !exchangeUrl.includes('code=')) {
-          // Dynamic redirect URL that works in both Expo Go (exp://) and standalone app (animehubmobile://)
-          const baseRedirect = Linking.createURL('auth/callback');
-          exchangeUrl = `${baseRedirect}?code=${code}`;
+          exchangeUrl = `animehubmobile://auth/callback?code=${code}`;
           if (params.state) {
             exchangeUrl += `&state=${params.state}`;
           }
