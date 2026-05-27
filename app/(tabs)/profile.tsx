@@ -144,7 +144,6 @@ export default function ProfileScreen() {
   const [editVisible, setEditVisible] = useState(false);
   const [editUsername, setEditUsername] = useState('');
   const [editBio, setEditBio] = useState('');
-  const [editAvatarUrl, setEditAvatarUrl] = useState('');
   const [editSaving, setEditSaving] = useState(false);
   const [usernameStatus, setUsernameStatus] = useState<'checking' | 'available' | 'taken' | 'invalid' | 'current' | null>(null);
 
@@ -254,7 +253,6 @@ export default function ProfileScreen() {
   const openEdit = useCallback(() => {
     setEditUsername(user?.username || '');
     setEditBio(bio);
-    setEditAvatarUrl(user?.avatar_url || '');
     setEditVisible(true);
   }, [user, bio]);
 

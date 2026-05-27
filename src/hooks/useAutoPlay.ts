@@ -9,22 +9,41 @@
  *   const { autoPlayEnabled } = useAutoPlay();
  */
 
-import { useState, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { userAPI } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 
 export function useAutoPlay() {
   const { user } = useAuth();
-  const [autoPlayEnabled, setAutoPlayEnabled] = useState(true); // default on
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
+  const { data: prefs } = useQuery({
+    queryKey: ['user', user?.id, 'preferences'],
+    queryFn: async () => {
+      if (!user?.id) return null;
+      const { data } = await userAPI.getPreferences(user.id);
+      return data;
+    },
+    enabled: !!user?.id,
+    staleTime: 10_000,
+  });
+
+  const autoPlayEnabled = prefs?.auto_play_next !== false;
+
+  const setAutoPlay = async (enabled: boolean) => {
     if (!user?.id) return;
-    userAPI.getPreferences(user.id).then(({ data }) => {
-      if (data && typeof data.auto_play_next === 'boolean') {
-        setAutoPlayEnabled(data.auto_play_next);
-      }
-    });
-  }, [user?.id]);
+    
+    // Optimistically update the cache
+    const currentPrefs = queryClient.getQueryData<any>(['user', user.id, 'preferences']) || {};
+    const updatedPrefs = { ...currentPrefs, auto_play_next: enabled };
+    queryClient.setQueryData(['user', user.id, 'preferences'], updatedPrefs);
 
-  return { autoPlayEnabled };
+    // Save to database
+    await userAPI.updatePreferences(user.id, updatedPrefs);
+    
+    // Invalidate query to trigger sync
+    queryClient.invalidateQueries({ queryKey: ['user', user.id, 'preferences'] });
+  };
+
+  return { autoPlayEnabled, setAutoPlay };
 }

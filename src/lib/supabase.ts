@@ -82,7 +82,7 @@ export type User = {
   email: string;
   username: string;
   bio?: string;
-  avatar_url?: string;
+  avatar_url?: string | null;
   subscription_type: 'free' | 'premium';
   role: string;
   is_admin: boolean;

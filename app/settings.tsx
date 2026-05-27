@@ -1,106 +1,37 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  View, Text, Switch, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert,
-  Modal, TextInput, KeyboardAvoidingView, Platform,
+  View, Text, Switch, ScrollView, TouchableOpacity, Alert, ActivityIndicator,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
+import { COLORS } from '../src/constants/theme';
 import { userAPI, supabase } from '../src/lib/supabase';
+import { styles } from '../src/screens/settings.styles';
 import { useAuth } from '../src/context/AuthContext';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as ImagePicker from 'expo-image-picker';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { usePaymentCards } from '../src/hooks/usePaymentCards';
+import ChangePasswordModal from '../src/components/settings/ChangePasswordModal';
+import AddPaymentCardModal from '../src/components/settings/AddPaymentCardModal';
+import AvatarModal from '../src/components/settings/AvatarModal';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user, signOut, refreshUser } = useAuth();
-  const [prefs, setPrefs] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
 
-  // Re-fetch user profile every time this screen is focused.
-  // Ensures subscription_type is current even if it was changed externally.
-  useFocusEffect(useCallback(() => { refreshUser(); }, [refreshUser]));
-
-  // Dynamic lists and modal states
-  const [cards, setCards] = useState<any[]>([
-    { id: '1', brand: 'VISA', last4: '4242', expiry: '12/26', primary: true }
-  ]);
-  const [avatarModalVisible, setAvatarModalVisible] = useState(false);
-  const [avatarInputUrl, setAvatarInputUrl] = useState('');
-  const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const [passwordModalVisible, setPasswordModalVisible] = useState(false);
-  const [passwordInput, setPasswordInput] = useState('');
-  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
-  const [cardModalVisible, setCardModalVisible] = useState(false);
-  const [cardNumInput, setCardNumInput] = useState('');
-  const [cardExpiryInput, setCardExpiryInput] = useState('');
-  const [cardBrandInput, setCardBrandInput] = useState('VISA');
-
-  const handleSelectAndUploadAvatar = async () => {
-    if (!user) {
-      Alert.alert('Error', 'You must be logged in to upload an avatar.');
-      return;
-    }
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission Denied', 'We need photo library access to change your avatar.');
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.85,
-    });
-
-    if (result.canceled || !result.assets || result.assets.length === 0) {
-      return;
-    }
-
-    const selectedUri = result.assets[0].uri;
-
-    try {
-      setUploadingAvatar(true);
-      const oldAvatarUrl = user.avatar_url;
-      const publicUrl = await userAPI.uploadAvatar(user.id, selectedUri);
-
-      const { error } = await userAPI.updateProfile(user.id, { avatar_url: publicUrl });
-      if (error) throw error;
-
-      // Asynchronously delete old avatar from storage to keep buckets clean (non-blocking)
-      if (oldAvatarUrl) {
-        userAPI.deleteAvatar(oldAvatarUrl).catch(err => {
-          console.warn('[Storage] Failed to delete old avatar:', err);
-        });
-      }
-
-      Alert.alert('Success', 'Avatar updated!');
-      setAvatarModalVisible(false);
-      await refreshUser();
-    } catch (err: any) {
-      Alert.alert('Error', `Failed to upload avatar: ${err.message || JSON.stringify(err)}`);
-    } finally {
-      setUploadingAvatar(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!user) { setLoading(false); return; }
-    
-    // Load local cards cache
-    AsyncStorage.getItem(`user_cards_${user.id}`).then(cached => {
-      if (cached) setCards(JSON.parse(cached));
-    });
-
-    userAPI.getPreferences(user.id).then(({ data }) => {
-      setPrefs(data || { 
+  // Fetch preferences via TanStack Query
+  const { data: prefs, isLoading: loading } = useQuery({
+    queryKey: ['user', user?.id, 'preferences'],
+    queryFn: async () => {
+      if (!user?.id) return null;
+      const { data } = await userAPI.getPreferences(user.id);
+      return data || { 
         auto_play_next: true, 
         auto_skip_intro: true,
         quality_preference: 'auto', 
@@ -111,15 +42,45 @@ export default function SettingsScreen() {
         audio_preference: 'Japanese (Original)',
         content_region: 'North America',
         two_factor_enabled: false,
-      });
-      setLoading(false);
-    });
-  }, [user]);
+      };
+    },
+    enabled: !!user?.id,
+  });
+
+  // Re-fetch user profile and invalidate preferences query every time this screen is focused.
+  // Ensures subscription_type and preferences are current even if changed externally.
+  useFocusEffect(useCallback(() => { 
+    refreshUser(); 
+    if (user?.id) {
+      queryClient.invalidateQueries({ queryKey: ['user', user.id, 'preferences'] });
+    }
+  }, [refreshUser, user?.id, queryClient]));
+
+  // Dynamic lists and modal states
+  const { cards, isLoading: loadingCards, addCard, deleteCard, setPrimaryCard } = usePaymentCards(user?.id);
+  const [avatarModalVisible, setAvatarModalVisible] = useState(false);
+  const [passwordModalVisible, setPasswordModalVisible] = useState(false);
+  const [cardModalVisible, setCardModalVisible] = useState(false);
+
+  const handleEditAvatarPress = () => {
+    setAvatarModalVisible(true);
+  };
+
+
 
   const updatePref = async (key: string, value: any) => {
-    const updated = { ...prefs, [key]: value };
-    setPrefs(updated);
-    if (user) await userAPI.updatePreferences(user.id, updated);
+    if (!user) return;
+    const current = queryClient.getQueryData<any>(['user', user.id, 'preferences']) || {};
+    const updated = { ...current, [key]: value };
+    
+    // Optimistic update
+    queryClient.setQueryData(['user', user.id, 'preferences'], updated);
+    
+    // DB save
+    await userAPI.updatePreferences(user.id, updated);
+    
+    // Invalidate query to sync across other screens
+    queryClient.invalidateQueries({ queryKey: ['user', user.id, 'preferences'] });
   };
 
   const handleSignOut = () => {
@@ -169,10 +130,7 @@ export default function SettingsScreen() {
             />
             <TouchableOpacity
               style={styles.editAvatarBtn}
-              onPress={() => {
-                setAvatarInputUrl(user.avatar_url || '');
-                setAvatarModalVisible(true);
-              }}
+              onPress={handleEditAvatarPress}
             >
               <Ionicons name="pencil" size={12} color={COLORS.bg} />
             </TouchableOpacity>
@@ -361,10 +319,7 @@ export default function SettingsScreen() {
             <ActionRow 
               label="Change Password" 
               sub="Update account password securely" 
-              onPress={() => {
-                setPasswordInput('');
-                setPasswordModalVisible(true);
-              }}
+              onPress={() => setPasswordModalVisible(true)}
             />
             <ActionRow 
               label="Two-Factor Auth" 
@@ -403,46 +358,41 @@ export default function SettingsScreen() {
             <Text style={styles.cardTitle}>Payment Methods</Text>
           </View>
           <View style={styles.cardBody}>
-            {cards.map(c => (
-              <View key={c.id} style={styles.paymentCard}>
-                <View style={styles.visaBox}><Text style={styles.visaText}>{c.brand}</Text></View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.cardNum} numberOfLines={1}>{`•••• ${c.last4}`}</Text>
-                  <Text style={styles.cardExpiry}>EXPIRES {c.expiry}</Text>
-                </View>
-                {c.primary ? (
-                  <View style={styles.primaryPill}><Text style={styles.pillText}>PRIMARY</Text></View>
-                ) : (
+            {loadingCards ? (
+              <ActivityIndicator size="small" color={COLORS.neon} style={{ marginVertical: 16 }} />
+            ) : cards.length === 0 ? (
+              <Text style={{ fontSize: 13, color: COLORS.textMuted, textAlign: 'center', marginVertical: 16 }}>
+                No payment methods registered.
+              </Text>
+            ) : (
+              cards.map(c => (
+                <View key={c.id} style={styles.paymentCard}>
+                  <View style={styles.visaBox}><Text style={styles.visaText}>{c.brand}</Text></View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.cardNum} numberOfLines={1}>{`•••• ${c.last4}`}</Text>
+                    <Text style={styles.cardExpiry}>EXPIRES {c.expiry}</Text>
+                  </View>
+                  {c.primary ? (
+                    <View style={styles.primaryPill}><Text style={styles.pillText}>PRIMARY</Text></View>
+                  ) : (
+                    <TouchableOpacity 
+                      onPress={() => setPrimaryCard(c.id)}
+                    >
+                      <Text style={{ fontSize: 9, fontWeight: '700', color: COLORS.textMuted }}>SET PRIMARY</Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity 
-                    onPress={() => {
-                      const updated = cards.map(x => ({ ...x, primary: x.id === c.id }));
-                      setCards(updated);
-                      AsyncStorage.setItem(`user_cards_${user.id}`, JSON.stringify(updated));
-                    }}
+                    onPress={() => deleteCard(c.id)}
+                    style={{ marginLeft: 10 }}
                   >
-                    <Text style={{ fontSize: 9, fontWeight: '700', color: COLORS.textMuted }}>SET PRIMARY</Text>
+                    <Ionicons name="trash-outline" size={14} color={COLORS.danger} />
                   </TouchableOpacity>
-                )}
-                <TouchableOpacity 
-                  onPress={() => {
-                    const updated = cards.filter(x => x.id !== c.id);
-                    setCards(updated);
-                    AsyncStorage.setItem(`user_cards_${user.id}`, JSON.stringify(updated));
-                  }}
-                  style={{ marginLeft: 10 }}
-                >
-                  <Ionicons name="trash-outline" size={14} color={COLORS.danger} />
-                </TouchableOpacity>
-              </View>
-            ))}
-            <TouchableOpacity 
+                </View>
+              ))
+            )}
+             <TouchableOpacity 
               style={styles.addPaymentBtn}
-              onPress={() => {
-                setCardNumInput('');
-                setCardExpiryInput('');
-                setCardBrandInput('VISA');
-                setCardModalVisible(true);
-              }}
+              onPress={() => setCardModalVisible(true)}
             >
               <Ionicons name="add-circle-outline" size={16} color={COLORS.textSub} />
               <Text style={styles.addPaymentText}>Add New Payment Method</Text>
@@ -473,210 +423,25 @@ export default function SettingsScreen() {
         </BlurView>
 
         {/* Edit Avatar Modal */}
-        <Modal visible={avatarModalVisible} transparent animationType="slide" onRequestClose={() => setAvatarModalVisible(false)}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-            <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setAvatarModalVisible(false)} />
-            <View style={styles.modalSheet}>
-              <View style={styles.modalHandle} />
-              <Text style={styles.modalTitle}>Change Avatar</Text>
-              
-              {/* Option 1: Upload from Device */}
-              <Text style={styles.modalLabel}>Upload from Device</Text>
-              <TouchableOpacity 
-                style={styles.uploadImageBtn}
-                onPress={handleSelectAndUploadAvatar}
-                disabled={uploadingAvatar}
-              >
-                <LinearGradient 
-                  colors={[COLORS.neonCyan, COLORS.neon]} 
-                  start={{x:0,y:0}} end={{x:1,y:1}} 
-                  style={styles.uploadImageGradient}
-                >
-                  {uploadingAvatar ? (
-                    <ActivityIndicator size="small" color="#000" />
-                  ) : (
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Ionicons name="cloud-upload" size={20} color="#000" style={{ marginRight: 8 }} />
-                      <Text style={styles.uploadImageText}>Choose Photo from Library</Text>
-                    </View>
-                  )}
-                </LinearGradient>
-              </TouchableOpacity>
-
-              {/* Divider */}
-              <View style={styles.modalDivider}>
-                <View style={styles.dividerLine} />
-                <Text style={styles.dividerText}>OR</Text>
-                <View style={styles.dividerLine} />
-              </View>
-
-              {/* Option 2: Paste URL */}
-              <Text style={styles.modalLabel}>Or, Paste Public Image URL</Text>
-              <TextInput
-                style={styles.modalInput}
-                value={avatarInputUrl}
-                onChangeText={setAvatarInputUrl}
-                placeholder="Paste a public avatar image URL"
-                placeholderTextColor={COLORS.textMuted}
-                autoCapitalize="none"
-              />
-              <TouchableOpacity 
-                style={styles.modalSaveBtn} 
-                onPress={async () => {
-                  if (!avatarInputUrl.trim()) return;
-                  const { error } = await userAPI.updateProfile(user.id, { avatar_url: avatarInputUrl.trim() });
-                  if (error) {
-                    Alert.alert('Error', `Failed to update avatar: ${(error as any)?.message || JSON.stringify(error)}`);
-                  } else {
-                    Alert.alert('Success', 'Avatar updated!');
-                    setAvatarModalVisible(false);
-                    await refreshUser();
-                  }
-                }}
-              >
-                <LinearGradient colors={[COLORS.neon, COLORS.accent]} start={{x:0,y:0}} end={{x:1,y:1}} style={styles.modalSaveGradient}>
-                  <Text style={styles.modalSaveText}>Update URL</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
+        <AvatarModal
+          visible={avatarModalVisible}
+          onClose={() => setAvatarModalVisible(false)}
+          user={user}
+          refreshUser={refreshUser}
+        />
 
         {/* Change Password Modal */}
-        <Modal visible={passwordModalVisible} transparent animationType="slide" onRequestClose={() => setPasswordModalVisible(false)}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-            <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setPasswordModalVisible(false)} />
-            <View style={styles.modalSheet}>
-              <View style={styles.modalHandle} />
-              <Text style={styles.modalTitle}>Change Password</Text>
-              <Text style={styles.modalLabel}>New Password</Text>
-              <TextInput
-                style={styles.modalInput}
-                value={passwordInput}
-                onChangeText={setPasswordInput}
-                placeholder="Enter at least 6 characters"
-                placeholderTextColor={COLORS.textMuted}
-                secureTextEntry
-                autoCapitalize="none"
-              />
-              <Text style={styles.modalLabel}>Confirm New Password</Text>
-              <TextInput
-                style={styles.modalInput}
-                value={confirmPasswordInput}
-                onChangeText={setConfirmPasswordInput}
-                placeholder="Re-enter your new password"
-                placeholderTextColor={COLORS.textMuted}
-                secureTextEntry
-                autoCapitalize="none"
-              />
-              <TouchableOpacity 
-                style={styles.modalSaveBtn} 
-                onPress={async () => {
-                  if (!passwordInput.trim() || passwordInput.length < 6) {
-                    Alert.alert('Error', 'Password must be at least 6 characters.');
-                    return;
-                  }
-                  if (passwordInput !== confirmPasswordInput) {
-                    Alert.alert('Error', 'Passwords do not match. Please try again.');
-                    return;
-                  }
-                  const { error } = await supabase.auth.updateUser({ password: passwordInput.trim() });
-                  if (error) {
-                    Alert.alert('Error', error.message);
-                  } else {
-                    Alert.alert('Success', 'Password changed successfully!');
-                    setPasswordModalVisible(false);
-                    setPasswordInput('');
-                    setConfirmPasswordInput('');
-                  }
-                }}
-              >
-                <LinearGradient colors={[COLORS.neon, COLORS.accent]} start={{x:0,y:0}} end={{x:1,y:1}} style={styles.modalSaveGradient}>
-                  <Text style={styles.modalSaveText}>Update Password</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
+        <ChangePasswordModal
+          visible={passwordModalVisible}
+          onClose={() => setPasswordModalVisible(false)}
+        />
 
         {/* Add Payment Method Modal */}
-        <Modal visible={cardModalVisible} transparent animationType="slide" onRequestClose={() => setCardModalVisible(false)}>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-            <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setCardModalVisible(false)} />
-            <View style={styles.modalSheet}>
-              <View style={styles.modalHandle} />
-              <Text style={styles.modalTitle}>Add Payment Card</Text>
-              
-              <Text style={styles.modalLabel}>Card Provider</Text>
-              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
-                {['VISA', 'MC', 'AMEX'].map(brand => (
-                  <TouchableOpacity 
-                    key={brand}
-                    onPress={() => setCardBrandInput(brand)}
-                    style={[{
-                      paddingHorizontal: 16, paddingVertical: 10, borderRadius: RADIUS.md, borderWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
-                      backgroundColor: 'rgba(255,255,255,0.03)'
-                    }, cardBrandInput === brand && { borderColor: COLORS.neon, backgroundColor: 'rgba(189,157,255,0.05)' }]}
-                  >
-                    <Text style={{ color: COLORS.text, fontWeight: '700' }}>{brand}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <Text style={styles.modalLabel}>Last 4 Digits</Text>
-              <TextInput
-                style={styles.modalInput}
-                value={cardNumInput}
-                onChangeText={setCardNumInput}
-                placeholder="e.g. 5678"
-                placeholderTextColor={COLORS.textMuted}
-                keyboardType="number-pad"
-                maxLength={4}
-              />
-
-              <Text style={styles.modalLabel}>Expiration Date</Text>
-              <TextInput
-                style={styles.modalInput}
-                value={cardExpiryInput}
-                onChangeText={setCardExpiryInput}
-                placeholder="MM/YY"
-                placeholderTextColor={COLORS.textMuted}
-                maxLength={5}
-              />
-
-              <TouchableOpacity 
-                style={styles.modalSaveBtn} 
-                onPress={async () => {
-                  if (cardNumInput.trim().length < 4) {
-                    Alert.alert('Error', 'Please enter the last 4 digits of your card.');
-                    return;
-                  }
-                  const expiryPattern = /^(0[1-9]|1[0-2])\/(\d{2})$/;
-                  if (!expiryPattern.test(cardExpiryInput.trim())) {
-                    Alert.alert('Error', 'Expiry must be in MM/YY format (e.g. 08/27).');
-                    return;
-                  }
-                  const newCard = {
-                    id: Date.now().toString(),
-                    brand: cardBrandInput,
-                    last4: cardNumInput.trim(),
-                    expiry: cardExpiryInput.trim(),
-                    primary: cards.length === 0,
-                  };
-                  const updated = [...cards, newCard];
-                  setCards(updated);
-                  await AsyncStorage.setItem(`user_cards_${user.id}`, JSON.stringify(updated));
-                  setCardModalVisible(false);
-                  Alert.alert('Success', 'Card added successfully!');
-                }}
-              >
-                <LinearGradient colors={[COLORS.neon, COLORS.accent]} start={{x:0,y:0}} end={{x:1,y:1}} style={styles.modalSaveGradient}>
-                  <Text style={styles.modalSaveText}>Add Payment Card</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
+        <AddPaymentCardModal
+          visible={cardModalVisible}
+          onClose={() => setCardModalVisible(false)}
+          onAddCard={addCard}
+        />
 
         <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
           <Ionicons name="log-out-outline" size={24} color={COLORS.danger} />
@@ -718,169 +483,4 @@ function PreferenceToggle({ label, sub, value, onToggle }: any) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.bg },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 20 },
-  errorText: { color: COLORS.textSub, fontSize: 16 },
-  
-  header: {
-    flexDirection: 'row', alignItems: 'center', gap: 16,
-    paddingHorizontal: 20, paddingBottom: 16,
-    borderBottomWidth: 1, borderBottomColor: 'rgba(189,157,255,0.1)',
-  },
-  headerBackBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: COLORS.neon, letterSpacing: -0.5, flex: 1 },
 
-  scrollContent: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 120 },
-  
-  identitySection: { flexDirection: 'row', alignItems: 'center', gap: 20, marginBottom: 40 },
-  avatarContainer: { position: 'relative' },
-  avatarBorder: { 
-    position: 'absolute', top: -4, left: -4, right: -4, bottom: -4, 
-    borderRadius: 100, opacity: 0.6 
-  },
-  avatar: { width: 100, height: 100, borderRadius: 50, borderWidth: 4, borderColor: COLORS.bg },
-  editAvatarBtn: {
-    position: 'absolute', bottom: 0, right: 0,
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: COLORS.neon, alignItems: 'center', justifyContent: 'center',
-    borderWidth: 3, borderColor: COLORS.bg,
-  },
-  identityInfo: { flex: 1, minWidth: 0 },
-  username: { fontSize: 26, fontWeight: '900', color: COLORS.text, letterSpacing: -1, marginBottom: 6 },
-  identityBadges: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  premiumBadge: {
-    paddingHorizontal: 12, paddingVertical: 4,
-    backgroundColor: 'rgba(191,95,255,0.1)',
-    borderRadius: 100, borderWidth: 1, borderColor: 'rgba(191,95,255,0.2)',
-    alignSelf: 'flex-start',
-  },
-  premiumBadgeText: { fontSize: 9, fontWeight: '800', color: COLORS.neon, letterSpacing: 2 },
-  joinedText: { fontSize: 13, color: COLORS.textSub, marginTop: 4 },
-
-  freeFeatureList: { gap: 10, marginBottom: 24 },
-  freeFeatureRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  freeFeatureText: { fontSize: 13, color: COLORS.textMuted, fontWeight: '500' },
-
-  bentoCard: {
-    padding: 24, borderRadius: RADIUS.lg,
-    backgroundColor: 'rgba(25,25,29,0.4)',
-    borderWidth: 1, borderColor: 'rgba(189,157,255,0.05)',
-    marginBottom: 20,
-  },
-  bentoGlow: {
-    position: 'absolute', top: -40, right: -40,
-    width: 120, height: 120, backgroundColor: COLORS.neon,
-    borderRadius: 60, opacity: 0.05,
-  } as any,
-  bentoHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 24 },
-  bentoTitle: { fontSize: 24, fontWeight: '900', color: COLORS.text, marginBottom: 4 },
-  bentoSub: { fontSize: 13, color: COLORS.textSub, maxWidth: '80%' },
-  
-  bentoStats: { flexDirection: 'row', gap: 20, marginBottom: 24 },
-  bentoStat: {
-    flex: 1, padding: 16, backgroundColor: 'rgba(19,19,22,0.5)',
-    borderRadius: RADIUS.md, borderWidth: 1, borderColor: 'rgba(255,255,255,0.02)',
-  },
-  statLabel: { fontSize: 9, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 4 },
-  statValue: { fontSize: 18, fontWeight: '700', color: COLORS.text },
-
-  bentoActions: { flexDirection: 'column', gap: 10 },
-  primaryAction: { borderRadius: 100, overflow: 'hidden' },
-  actionGradient: { paddingVertical: 15, paddingHorizontal: 20, alignItems: 'center' },
-  primaryActionText: { color: '#000', fontWeight: '800', fontSize: 14 },
-  secondaryAction: {
-    paddingVertical: 14, alignItems: 'center',
-    borderRadius: 100, borderWidth: 1, borderColor: 'rgba(189,157,255,0.15)',
-  },
-  secondaryActionText: { color: COLORS.text, fontWeight: '700', fontSize: 14 },
-
-  gridRow: { flexDirection: 'row', gap: 20, marginBottom: 20 },
-  localizationCard: { flex: 1, padding: 24, borderRadius: RADIUS.lg, backgroundColor: 'rgba(25,25,29,0.4)', borderWidth: 1, borderColor: 'rgba(189,157,255,0.05)' },
-  halfCard: { flex: 1, padding: 20, borderRadius: 16, backgroundColor: 'rgba(25,25,29,0.4)', borderWidth: 1, borderColor: 'rgba(189,157,255,0.05)' },
-
-  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 20 },
-  cardTitle: { fontSize: 18, fontWeight: '800', color: COLORS.text },
-  cardBody: { gap: 16 },
-
-  actionRow: { 
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)',
-  },
-  rowContent: { flex: 1, gap: 2 },
-  actionLabel: { fontSize: 14, fontWeight: '600', color: COLORS.text },
-  actionSubText: { fontSize: 12, color: COLORS.textMuted },
-  actionValue: { fontSize: 12, color: COLORS.textSub, fontWeight: '500' },
-
-  paymentCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    padding: 16, backgroundColor: 'rgba(25,25,29,0.5)',
-    borderRadius: 12, borderWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
-  },
-  visaBox: {
-    width: 48, height: 32, backgroundColor: '#111', borderRadius: 6,
-    alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
-  },
-  visaText: { fontSize: 10, fontWeight: '900', color: COLORS.text, fontStyle: 'italic' },
-  cardNum: { fontSize: 14, fontWeight: '700', color: COLORS.text },
-  cardExpiry: { fontSize: 8, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 1 },
-  primaryPill: { paddingHorizontal: 8, paddingVertical: 2, backgroundColor: 'rgba(191,95,255,0.2)', borderRadius: 100, alignSelf: 'center' },
-  pillText: { fontSize: 8, fontWeight: '900', color: COLORS.neon },
-
-  addPaymentBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
-    paddingVertical: 16, borderStyle: 'dashed', borderWidth: 2, borderColor: 'rgba(189,157,255,0.1)',
-    borderRadius: 12, marginTop: 4,
-  },
-  addPaymentText: { fontSize: 12, fontWeight: '700', color: COLORS.textSub },
-
-  preferenceGrid: { gap: 24, marginTop: 10 },
-  prefItem: { flexDirection: 'row', alignItems: 'center', gap: 16 },
-  prefLabel: { fontSize: 15, fontWeight: '700', color: COLORS.text },
-  prefSub: { fontSize: 12, color: COLORS.textSub, marginTop: 2 },
-
-  // Playback toggle row
-  toggleRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 16,
-    paddingVertical: 4,
-  },
-  toggleLabel: { fontSize: 14, fontWeight: '700', color: COLORS.text },
-  toggleSub: { fontSize: 11, color: COLORS.textMuted, marginTop: 3, lineHeight: 16 },
-
-  signOutBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12,
-    marginTop: 40, paddingVertical: 20,
-  },
-  signOutText: { fontSize: 14, fontWeight: '900', color: COLORS.danger, letterSpacing: 3 },
-  versionText: { textAlign: 'center', fontSize: 10, color: COLORS.textMuted, opacity: 0.5, letterSpacing: 1.5, marginTop: 10 },
-  backBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border },
-
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)' },
-  modalSheet: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    backgroundColor: '#121214', borderTopLeftRadius: RADIUS.lg, borderTopRightRadius: RADIUS.lg,
-    borderWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
-    padding: 24, paddingBottom: 40,
-  },
-  modalHandle: {
-    width: 36, height: 4, borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.1)', alignSelf: 'center', marginBottom: 20,
-  },
-  modalTitle: { fontSize: 20, fontWeight: '900', color: COLORS.text, letterSpacing: -0.5, marginBottom: 20 },
-  modalLabel: { fontSize: 11, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8, marginTop: 16 },
-  modalInput: {
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: RADIUS.md, borderWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
-    color: COLORS.text, paddingHorizontal: 16, paddingVertical: 14, fontSize: 14,
-  },
-  modalSaveBtn: { marginTop: 24, borderRadius: 100, overflow: 'hidden' },
-  modalSaveGradient: { paddingVertical: 15, alignItems: 'center', justifyContent: 'center' },
-  modalSaveText: { color: '#000', fontWeight: '800', fontSize: 14 },
-  uploadImageBtn: { borderRadius: 100, overflow: 'hidden', marginTop: 8 },
-  uploadImageGradient: { paddingVertical: 14, alignItems: 'center', justifyContent: 'center' },
-  uploadImageText: { color: '#000', fontWeight: '800', fontSize: 14 },
-  modalDivider: { flexDirection: 'row', alignItems: 'center', marginVertical: 20 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.06)' },
-  dividerText: { marginHorizontal: 16, fontSize: 11, fontWeight: '800', color: COLORS.textMuted },
-});

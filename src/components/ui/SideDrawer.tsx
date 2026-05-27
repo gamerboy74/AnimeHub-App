@@ -27,18 +27,16 @@ interface SideDrawerProps {
 
 const NAV_ITEMS = [
   // ── Discover (not in bottom nav) ───────────────────────────
-  { label: 'Airing Schedule', icon: 'calendar-outline',       route: '/schedule'        },
-  { label: 'Trending',        icon: 'flame-outline',          route: '/trending'        },
-  { label: 'New Arrivals',    icon: 'sparkles-outline',       route: '/new-arrivals'    },
+  { label: 'Airing Schedule', icon: 'calendar-outline', route: '/schedule' },
+  { label: 'Trending', icon: 'flame-outline', route: '/trending' },
+  { label: 'New Arrivals', icon: 'sparkles-outline', route: '/new-arrivals' },
   // ── My Stuff ───────────────────────────────────────────────
-  { label: 'Favorites',       icon: 'heart-outline',          route: '/favorites'       },
-  { label: 'Watch History',   icon: 'time-outline',           route: '/history'         },
-  { label: 'Watchlist',       icon: 'list-outline',           route: '/watchlist'       },
-  { label: 'Downloads',       icon: 'download-outline',       route: '/downloads' },
-  { label: 'My Stats',        icon: 'stats-chart-outline',    route: '/stats'           },
+  { label: 'Favorites', icon: 'heart-outline', route: '/favorites' },
+  { label: 'Downloads', icon: 'download-outline', route: '/downloads' },
+  { label: 'My Stats', icon: 'stats-chart-outline', route: '/stats' },
   // ── App ────────────────────────────────────────────────────
-  { label: 'Notifications',   icon: 'notifications-outline',  route: '/notifications'   },
-  { label: 'Settings',        icon: 'settings-outline',       route: '/settings'        },
+  { label: 'Notifications', icon: 'notifications-outline', route: '/notifications' },
+  { label: 'Settings', icon: 'settings-outline', route: '/settings' },
 ] as const;
 
 export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
@@ -98,10 +96,17 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
     }, 220);
   }, [onClose, signOut, router]);
 
+  const handleSignIn = useCallback(() => {
+    onClose();
+    setTimeout(() => {
+      router.push('/auth/login' as any);
+    }, 220);
+  }, [onClose, router]);
+
   const initials = user?.username?.substring(0, 2).toUpperCase() ?? '??';
-  const hasValidAvatar = user?.avatar_url && 
-    user.avatar_url !== 'https://ieopfdxgjlmdsidikgbj.supabase.co' && 
-    user.avatar_url !== 'https://ieopfdxgjlmdsidikgbj.supabase.co/';
+  const hasValidAvatar = !!(user?.avatar_url &&
+    user.avatar_url !== 'https://ieopfdxgjlmdsidikgbj.supabase.co' &&
+    user.avatar_url !== 'https://ieopfdxgjlmdsidikgbj.supabase.co/');
 
   return (
     <Modal
@@ -128,25 +133,31 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
           {/* Profile header */}
           <View style={styles.profileSection}>
             <View style={styles.avatarWrap}>
-              {hasValidAvatar ? (
-                <Image source={{ uri: user!.avatar_url }} style={styles.avatarImage} contentFit="cover" transition={200} />
+              {user ? (
+                hasValidAvatar ? (
+                  <Image source={{ uri: user.avatar_url }} style={styles.avatarImage} contentFit="cover" transition={200} />
+                ) : (
+                  <View style={styles.avatarPlaceholder}>
+                    <Text style={styles.avatarInitials}>{initials}</Text>
+                  </View>
+                )
               ) : (
-                <View style={styles.avatarPlaceholder}>
-                  <Text style={styles.avatarInitials}>{initials}</Text>
+                <View style={[styles.avatarPlaceholder, { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: COLORS.border }]}>
+                  <Ionicons name="person-outline" size={20} color={COLORS.textMuted} />
                 </View>
               )}
-              <View style={styles.avatarRing} />
+              <View style={[styles.avatarRing, !user && { borderColor: COLORS.border }]} />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.username} numberOfLines={1}>
-                {user?.username ?? 'Guest'}
+                {user?.username ?? 'Guest User'}
               </Text>
               <Text style={styles.email} numberOfLines={1}>
-                {user?.email ?? ''}
+                {user?.email ?? 'Sign in to sync your profile'}
               </Text>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-              <Ionicons name="close" size={20} color={COLORS.textMuted} />
+            <TouchableOpacity onPress={onClose} style={styles.closeBtn} activeOpacity={0.7}>
+              <Ionicons name="close" size={16} color={COLORS.textSub} />
             </TouchableOpacity>
           </View>
 
@@ -159,15 +170,15 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
             contentContainerStyle={styles.navScrollContent}
           >
             <Text style={styles.navSection}>DISCOVER</Text>
-            {NAV_ITEMS.filter(i => ['Airing Schedule','Trending','New Arrivals'].includes(i.label)).map((item) => (
+            {NAV_ITEMS.filter(i => ['Airing Schedule', 'Trending', 'New Arrivals'].includes(i.label)).map((item) => (
               <NavRow key={item.label} item={item} onPress={() => navigate(item.route)} />
             ))}
             <Text style={styles.navSection}>MY STUFF</Text>
-            {NAV_ITEMS.filter(i => ['Favorites','Watch History','Watchlist','Downloads','My Stats'].includes(i.label)).map((item) => (
+            {NAV_ITEMS.filter(i => ['Favorites', 'Downloads', 'My Stats'].includes(i.label)).map((item) => (
               <NavRow key={item.label} item={item} onPress={() => navigate(item.route)} />
             ))}
             <Text style={styles.navSection}>APP</Text>
-            {NAV_ITEMS.filter(i => ['Notifications','Settings'].includes(i.label)).map((item) => (
+            {NAV_ITEMS.filter(i => ['Notifications', 'Settings'].includes(i.label)).map((item) => (
               <NavRow key={item.label} item={item} onPress={() => navigate(item.route)} />
             ))}
           </ScrollView>
@@ -175,10 +186,17 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
           {/* Footer — pinned below nav, above safe area */}
           <View style={[styles.footer, { paddingBottom: insets.bottom + 8 }]}>
             <View style={styles.divider} />
-            <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut} activeOpacity={0.7}>
-              <Ionicons name="log-out-outline" size={20} color={COLORS.neonPink} />
-              <Text style={styles.signOutText}>Sign Out</Text>
-            </TouchableOpacity>
+            {user ? (
+              <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut} activeOpacity={0.7}>
+                <Ionicons name="log-out-outline" size={20} color={COLORS.neonPink} />
+                <Text style={styles.signOutText}>Sign Out</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity style={styles.signInBtn} onPress={handleSignIn} activeOpacity={0.7}>
+                <Ionicons name="log-in-outline" size={20} color={COLORS.neon} />
+                <Text style={styles.signInText}>Sign In</Text>
+              </TouchableOpacity>
+            )}
             <Text style={styles.versionText}>AnimeHub v1.0.0</Text>
           </View>
         </View>
@@ -279,7 +297,16 @@ const styles = StyleSheet.create({
   },
   username: { fontSize: 15, color: COLORS.text, fontWeight: '700' },
   email: { fontSize: 11, color: COLORS.textMuted, marginTop: 1 },
-  closeBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
+  closeBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   divider: { height: 1, backgroundColor: COLORS.border, marginVertical: SPACING.sm },
   navScroll: { flex: 1 },
   navScrollContent: { paddingBottom: 8 },
@@ -329,5 +356,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.sm,
   },
   signOutText: { fontSize: 14, color: COLORS.neonPink, fontWeight: '700' },
+  signInBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    paddingVertical: 12,
+    paddingHorizontal: SPACING.sm,
+  },
+  signInText: { fontSize: 14, color: COLORS.neon, fontWeight: '700' },
   versionText: { fontSize: 11, color: COLORS.textMuted, textAlign: 'center', paddingVertical: 8, letterSpacing: 1 },
 });

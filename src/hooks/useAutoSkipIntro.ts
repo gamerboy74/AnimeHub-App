@@ -9,22 +9,41 @@
  *   const { autoSkipIntroEnabled } = useAutoSkipIntro();
  */
 
-import { useState, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { userAPI } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 
 export function useAutoSkipIntro() {
   const { user } = useAuth();
-  const [autoSkipIntroEnabled, setAutoSkipIntroEnabled] = useState(true); // default on
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
+  const { data: prefs } = useQuery({
+    queryKey: ['user', user?.id, 'preferences'],
+    queryFn: async () => {
+      if (!user?.id) return null;
+      const { data } = await userAPI.getPreferences(user.id);
+      return data;
+    },
+    enabled: !!user?.id,
+    staleTime: 10_000,
+  });
+
+  const autoSkipIntroEnabled = prefs?.auto_skip_intro !== false;
+
+  const setAutoSkipIntro = async (enabled: boolean) => {
     if (!user?.id) return;
-    userAPI.getPreferences(user.id).then(({ data }) => {
-      if (data && typeof data.auto_skip_intro === 'boolean') {
-        setAutoSkipIntroEnabled(data.auto_skip_intro);
-      }
-    });
-  }, [user?.id]);
+    
+    // Optimistically update the cache
+    const currentPrefs = queryClient.getQueryData<any>(['user', user.id, 'preferences']) || {};
+    const updatedPrefs = { ...currentPrefs, auto_skip_intro: enabled };
+    queryClient.setQueryData(['user', user.id, 'preferences'], updatedPrefs);
 
-  return { autoSkipIntroEnabled };
+    // Save to database
+    await userAPI.updatePreferences(user.id, updatedPrefs);
+    
+    // Invalidate query to trigger sync
+    queryClient.invalidateQueries({ queryKey: ['user', user.id, 'preferences'] });
+  };
+
+  return { autoSkipIntroEnabled, setAutoSkipIntro };
 }

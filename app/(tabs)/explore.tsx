@@ -54,6 +54,13 @@ const BENTO_GENRES = [
 
 const TRENDING_QUERIES = ['Chainsaw Man', 'Spy x Family', 'Oshi no Ko', 'Jujutsu Kaisen', 'Solo Leveling'];
 
+const truncateTitle = (title: string, maxLength = 16) => {
+  if (title.length > maxLength) {
+    return title.substring(0, maxLength).trim() + '...';
+  }
+  return title;
+};
+
 const STUDIOS = [
   { 
     id: '1', 
@@ -163,6 +170,22 @@ export default function SearchScreen() {
       return results.map(r => (r.data || []).filter((a: Anime) => a.poster_url));
     },
   });
+
+  const { data: trendingChipsData } = useQuery({
+    queryKey: ['explore', 'trendingChips'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: async () => {
+      const { data } = await animeAPI.getTrending(6);
+      return (data || []).map(a => a.title);
+    },
+  });
+
+  const trendingChips = useMemo(() => {
+    if (trendingChipsData && trendingChipsData.length > 0) {
+      return trendingChipsData.slice(0, 5);
+    }
+    return TRENDING_QUERIES;
+  }, [trendingChipsData]);
 
   // Derive random poster per genre from cached data (re-picks on mount, stable during session)
   const genreImages = useMemo<Record<string, string>>(() => {
@@ -298,17 +321,19 @@ export default function SearchScreen() {
 
           {/* Trending Chips */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.trendingRow}>
-            <TouchableOpacity
-              style={styles.trendingChipFeatured}
-              onPress={() => router.push('/genre/action')}
-              accessibilityLabel="Browse Action anime"
-            >
-              <Ionicons name="trending-up" size={14} color={COLORS.neon} />
-              <Text style={styles.trendingChipTextFeatured}>CHAINSAW MAN</Text>
-            </TouchableOpacity>
-            {TRENDING_QUERIES.map((q) => (
+            {trendingChips.length > 0 && (
+              <TouchableOpacity
+                style={styles.trendingChipFeatured}
+                onPress={() => { setQuery(trendingChips[0]); doSearch(trendingChips[0]); }}
+                accessibilityLabel={`Search ${trendingChips[0]} anime`}
+              >
+                <Ionicons name="trending-up" size={14} color={COLORS.neon} />
+                <Text style={styles.trendingChipTextFeatured}>{truncateTitle(trendingChips[0]).toUpperCase()}</Text>
+              </TouchableOpacity>
+            )}
+            {trendingChips.slice(1).map((q) => (
               <TouchableOpacity key={q} style={styles.trendingChip} onPress={() => { setQuery(q); doSearch(q); }}>
-                <Text style={styles.trendingChipText}>{q}</Text>
+                <Text style={styles.trendingChipText}>{truncateTitle(q)}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>

@@ -77,24 +77,51 @@ export default function LibraryScreen() {
     (p: any) => p.is_completed && p.total_episodes && p.episode_number === p.total_episodes,
     [],
   );
-  const continueWatching = useMemo(
-    () => uniqueProgress.filter(p => !isAnimeCompleted(p)).slice(0, 15),
-    [uniqueProgress, isAnimeCompleted],
+
+  const isAnimeDropped = useCallback(
+    (p: any) => {
+      if (isAnimeCompleted(p)) return false;
+      if (!p.last_watched) return false;
+      const lastWatchedDate = new Date(p.last_watched).getTime();
+      const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+      return lastWatchedDate < fourteenDaysAgo;
+    },
+    [isAnimeCompleted],
   );
+
+  const continueWatching = useMemo(
+    () => uniqueProgress.filter(p => !isAnimeCompleted(p) && !isAnimeDropped(p)).slice(0, 15),
+    [uniqueProgress, isAnimeCompleted, isAnimeDropped],
+  );
+
   const completed = useMemo(
     () => uniqueProgress.filter(p => isAnimeCompleted(p)),
     [uniqueProgress, isAnimeCompleted],
   );
+
+  const dropped = useMemo(
+    () => uniqueProgress.filter(p => isAnimeDropped(p)),
+    [uniqueProgress, isAnimeDropped],
+  );
+
   const watchlist = watchlistData;
 
   const tabData = useMemo(() => {
+    const mapProgressToAnime = (p: any) => ({
+      id: p.anime_id,
+      title: p.anime_title,
+      poster_url: p.poster_url,
+      rating: p.rating || 0,
+      type: p.type || 'Series',
+    });
+
     switch (activeTab) {
       case 'watchlist': return watchlist.map((item: any) => item.anime);
-      case 'completed': return completed;
-      case 'dropped':   return [];
+      case 'completed': return completed.map(mapProgressToAnime);
+      case 'dropped':   return dropped.map(mapProgressToAnime);
       default:           return [];
     }
-  }, [activeTab, watchlist, completed]);
+  }, [activeTab, watchlist, completed, dropped]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -105,7 +132,7 @@ export default function LibraryScreen() {
     setRefreshing(false);
   }, [queryClient, userId]);
 
-  // Only invalidate on focus if the cached data is already stale.
+  // Only invalidate on focus if the cached data is already stale or has been invalidated.
   // This prevents a network round-trip every single time the user taps
   // the Library tab when the data is still fresh.
   useFocusEffect(
@@ -115,10 +142,19 @@ export default function LibraryScreen() {
       const historyState = queryClient.getQueryState(['user', userId, 'history']);
       const wlState     = queryClient.getQueryState(['user', userId, 'watchlist']);
       const now = Date.now();
-      if (!historyState?.dataUpdatedAt || now - historyState.dataUpdatedAt > STALE_MS) {
+      
+      const isHistoryStale = !historyState?.dataUpdatedAt || 
+                             (now - historyState.dataUpdatedAt > STALE_MS) || 
+                             historyState?.isInvalidated;
+                             
+      const isWlStale = !wlState?.dataUpdatedAt || 
+                        (now - wlState.dataUpdatedAt > STALE_MS) || 
+                        wlState?.isInvalidated;
+
+      if (isHistoryStale) {
         queryClient.invalidateQueries({ queryKey: ['user', userId, 'history'] });
       }
-      if (!wlState?.dataUpdatedAt || now - wlState.dataUpdatedAt > STALE_MS) {
+      if (isWlStale) {
         queryClient.invalidateQueries({ queryKey: ['user', userId, 'watchlist'] });
       }
     }, [queryClient, userId])
@@ -132,14 +168,7 @@ export default function LibraryScreen() {
     router.push(`/anime/${animeId}`);
   }, [router]);
 
-  const getTabData = () => {
-    switch (activeTab) {
-      case 'watchlist': return watchlist.map(item => item.anime);
-      case 'completed': return completed.map(item => item); // In progressDetailed, 'anime' is nested too
-      case 'dropped': return [];
-      default: return [];
-    }
-  };
+  // Leftover helper replaced by memoized tabData
 
   if (!user) {
     return (
