@@ -146,6 +146,93 @@ export default function ProfileScreen() {
   const [editBio, setEditBio] = useState('');
   const [editAvatarUrl, setEditAvatarUrl] = useState('');
   const [editSaving, setEditSaving] = useState(false);
+  const [usernameStatus, setUsernameStatus] = useState<'checking' | 'available' | 'taken' | 'invalid' | 'current' | null>(null);
+
+  // Debounced username availability checker
+  useEffect(() => {
+    if (!editVisible) {
+      setUsernameStatus(null);
+      return;
+    }
+
+    const trimmed = editUsername.trim();
+    if (!trimmed) {
+      setUsernameStatus(null);
+      return;
+    }
+
+    if (trimmed === user?.username) {
+      setUsernameStatus('current');
+      return;
+    }
+
+    const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/;
+    if (!usernameRegex.test(trimmed)) {
+      setUsernameStatus('invalid');
+      return;
+    }
+
+    setUsernameStatus('checking');
+
+    const delayDebounceFn = setTimeout(async () => {
+      try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('username')
+          .eq('username', trimmed)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (data) {
+          setUsernameStatus('taken');
+        } else {
+          setUsernameStatus('available');
+        }
+      } catch (err) {
+        console.error('Error checking username availability:', err);
+        setUsernameStatus(null);
+      }
+    }, 500);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [editUsername, editVisible, user?.username]);
+
+  const renderUsernameStatus = () => {
+    if (!usernameStatus) return null;
+    
+    let text = '';
+    let color = COLORS.textMuted;
+    
+    switch (usernameStatus) {
+      case 'checking':
+        text = '🔍 Checking availability...';
+        color = COLORS.neonGold;
+        break;
+      case 'available':
+        text = '🟢 Username is available!';
+        color = COLORS.success || '#00F5B4';
+        break;
+      case 'taken':
+        text = '🔴 Username is already taken.';
+        color = COLORS.danger || '#FF2D78';
+        break;
+      case 'invalid':
+        text = '⚠️ Must be 3-20 characters (letters, numbers, _ only).';
+        color = COLORS.danger || '#FF2D78';
+        break;
+      case 'current':
+        text = '🟢 Your current username';
+        color = COLORS.neonCyan || '#00F5FF';
+        break;
+    }
+
+    return (
+      <Text style={[styles.statusText, { color }]}>
+        {text}
+      </Text>
+    );
+  };
 
   // ── Derived values — only recompute when dependencies change ─────────────────
   const streak    = useMemo(() => computeStreak(allProgress), [allProgress]);
@@ -470,6 +557,7 @@ export default function ProfileScreen() {
               autoCapitalize="none"
               maxLength={30}
             />
+            {renderUsernameStatus()}
             <Text style={styles.modalLabel}>Bio</Text>
             <TextInput
               style={[styles.modalInput, { height: 80, textAlignVertical: 'top' }]}
@@ -480,7 +568,14 @@ export default function ProfileScreen() {
               multiline
               maxLength={150}
             />
-            <TouchableOpacity style={styles.modalSaveBtn} onPress={saveEdit} disabled={editSaving}>
+            <TouchableOpacity
+              style={[
+                styles.modalSaveBtn,
+                (usernameStatus === 'taken' || usernameStatus === 'invalid' || usernameStatus === 'checking' || editSaving) && { opacity: 0.5 }
+              ]}
+              onPress={saveEdit}
+              disabled={usernameStatus === 'taken' || usernameStatus === 'invalid' || usernameStatus === 'checking' || editSaving}
+            >
               <LinearGradient colors={[COLORS.neon, COLORS.accent]} start={{x:0,y:0}} end={{x:1,y:1}} style={styles.modalSaveGradient}>
                 {editSaving
                   ? <ActivityIndicator color="#000" size="small" />
@@ -758,6 +853,7 @@ const styles = StyleSheet.create({
   modalSaveBtn: { borderRadius: 100, overflow: 'hidden' },
   modalSaveGradient: { paddingVertical: 16, alignItems: 'center' },
   modalSaveText: { color: '#000', fontWeight: '900', fontSize: 15 },
+  statusText: { fontSize: 12, fontWeight: '700', marginTop: -16, marginBottom: 20, marginLeft: 4 },
 
   horizontalList: { gap: 16, paddingRight: SPACING.md },
   animePosterCard: {
