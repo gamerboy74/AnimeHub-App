@@ -270,20 +270,48 @@ export const userAPI = {
     // 2. Decode base64 to binary ArrayBuffer/Uint8Array
     const arrayBuffer = base64ToUint8Array(base64);
 
-    // 3. Upload binary array to Supabase Storage inside their userId folder
-    // This perfectly satisfies standard Supabase RLS policies: storage.foldername(name)[1] = auth.uid()::text
+    // 3. Generate filename and path matching the webapp's naming scheme
     const fileExt = localUri.split('.').pop() || 'jpg';
-    const fileName = `${userId}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-    const filePath = `${userId}/${fileName}`;
-    const { error: uploadError } = await supabase.storage
-      .from('user-avatars')
-      .upload(filePath, arrayBuffer, {
-        contentType: `image/${fileExt}`,
-        upsert: true,
-      });
-    if (uploadError) throw uploadError;
-    const { data } = supabase.storage.from('user-avatars').getPublicUrl(filePath);
-    return data.publicUrl;
+    const fileName = `user-avatars/${userId}/avatar-${Date.now()}.${fileExt}`;
+
+    try {
+      // 4. Try uploading to 'user-avatars' bucket first
+      let uploadResult = await supabase.storage
+        .from('user-avatars')
+        .upload(fileName, arrayBuffer, {
+          cacheControl: '3600',
+          contentType: `image/${fileExt}`,
+          upsert: true,
+        });
+
+      // 5. Fallback to 'anime-posters' bucket if 'user-avatars' bucket has RLS restrictions
+      if (uploadResult.error && uploadResult.error.message.toLowerCase().includes('row-level security')) {
+        console.warn('user-avatars bucket has RLS restrictions, using anime-posters bucket as fallback');
+        
+        uploadResult = await supabase.storage
+          .from('anime-posters')
+          .upload(fileName, arrayBuffer, {
+            cacheControl: '3600',
+            contentType: `image/${fileExt}`,
+            upsert: true,
+          });
+      }
+
+      if (uploadResult.error) {
+        throw new Error(`Failed to upload avatar: ${uploadResult.error.message}`);
+      }
+
+      // 6. Resolve public URL from the bucket that succeeded
+      const bucket = uploadResult.data.path.includes('user-avatars') ? 'user-avatars' : 'anime-posters';
+      const { data } = supabase.storage
+        .from(bucket)
+        .getPublicUrl(uploadResult.data.path);
+
+      return data.publicUrl;
+    } catch (error) {
+      console.error('Avatar upload error:', error);
+      throw error;
+    }
   },
 
   getFavorites: (userId: string) =>
