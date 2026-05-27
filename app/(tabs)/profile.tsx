@@ -150,6 +150,8 @@ export default function ProfileScreen() {
 
   // Debounced username availability checker
   useEffect(() => {
+    let isCurrent = true;
+
     if (!editVisible) {
       setUsernameStatus(null);
       return;
@@ -184,18 +186,25 @@ export default function ProfileScreen() {
 
         if (error) throw error;
 
-        if (data) {
-          setUsernameStatus('taken');
-        } else {
-          setUsernameStatus('available');
+        if (isCurrent) {
+          if (data) {
+            setUsernameStatus('taken');
+          } else {
+            setUsernameStatus('available');
+          }
         }
       } catch (err) {
         console.error('Error checking username availability:', err);
-        setUsernameStatus(null);
+        if (isCurrent) {
+          setUsernameStatus(null);
+        }
       }
     }, 500);
 
-    return () => clearTimeout(delayDebounceFn);
+    return () => {
+      isCurrent = false;
+      clearTimeout(delayDebounceFn);
+    };
   }, [editUsername, editVisible, user?.username]);
 
   const renderUsernameStatus = () => {
