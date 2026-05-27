@@ -270,17 +270,19 @@ export const userAPI = {
     // 2. Decode base64 to binary ArrayBuffer/Uint8Array
     const arrayBuffer = base64ToUint8Array(base64);
 
-    // 3. Upload binary array to Supabase Storage (bypasses native Blob networking issues)
+    // 3. Upload binary array to Supabase Storage inside their userId folder
+    // This perfectly satisfies standard Supabase RLS policies: storage.foldername(name)[1] = auth.uid()::text
     const fileExt = localUri.split('.').pop() || 'jpg';
     const fileName = `${userId}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+    const filePath = `${userId}/${fileName}`;
     const { error: uploadError } = await supabase.storage
       .from('user-avatars')
-      .upload(fileName, arrayBuffer, {
+      .upload(filePath, arrayBuffer, {
         contentType: `image/${fileExt}`,
         upsert: true,
       });
     if (uploadError) throw uploadError;
-    const { data } = supabase.storage.from('user-avatars').getPublicUrl(fileName);
+    const { data } = supabase.storage.from('user-avatars').getPublicUrl(filePath);
     return data.publicUrl;
   },
 
