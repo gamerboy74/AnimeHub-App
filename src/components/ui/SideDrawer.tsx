@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useState } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { COLORS, RADIUS, SPACING } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
+import RequestAnimeModal from '../settings/RequestAnimeModal';
+import { useTranslation } from '../../context/LocalizationContext';
 
 const DRAWER_WIDTH = Math.min(Dimensions.get('window').width * 0.8, 320);
 
@@ -27,26 +29,28 @@ interface SideDrawerProps {
 
 const NAV_ITEMS = [
   // ── Discover (not in bottom nav) ───────────────────────────
-  { label: 'Airing Schedule', icon: 'calendar-outline', route: '/schedule' },
-  { label: 'Trending', icon: 'flame-outline', route: '/trending' },
-  { label: 'New Arrivals', icon: 'sparkles-outline', route: '/new-arrivals' },
+  { key: 'airingSchedule', label: 'Airing Schedule', icon: 'calendar-outline', route: '/schedule' },
+  { key: 'trending', label: 'Trending', icon: 'flame-outline', route: '/trending' },
+  { key: 'newArrivals', label: 'New Arrivals', icon: 'sparkles-outline', route: '/new-arrivals' },
   // ── My Stuff ───────────────────────────────────────────────
-  { label: 'Favorites', icon: 'heart-outline', route: '/favorites' },
-  { label: 'Downloads', icon: 'download-outline', route: '/downloads' },
-  { label: 'My Stats', icon: 'stats-chart-outline', route: '/stats' },
+  { key: 'favoritesLabel', label: 'Favorites', icon: 'heart-outline', route: '/favorites' },
+  { key: 'downloadsLabel', label: 'Downloads', icon: 'download-outline', route: '/downloads' },
+  { key: 'myStats', label: 'My Stats', icon: 'stats-chart-outline', route: '/stats' },
   // ── App ────────────────────────────────────────────────────
-  { label: 'Notifications', icon: 'notifications-outline', route: '/notifications' },
-  { label: 'Settings', icon: 'settings-outline', route: '/settings' },
+  { key: 'notifications', label: 'Notifications', icon: 'notifications-outline', route: '/notifications' },
+  { key: 'settings', label: 'Settings', icon: 'settings-outline', route: '/settings' },
 ] as const;
 
 export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, signOut } = useAuth();
+  const { t } = useTranslation();
 
   const translateX = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
   const overlayOpacity = useRef(new Animated.Value(0)).current;
   const [modalVisible, setModalVisible] = React.useState(false);
+  const [showRequest, setShowRequest] = useState(false);
 
   useEffect(() => {
     if (visible) {
@@ -109,111 +113,135 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
     user.avatar_url !== 'https://ieopfdxgjlmdsidikgbj.supabase.co/');
 
   return (
-    <Modal
-      visible={modalVisible}
-      transparent
-      animationType="none"
-      statusBarTranslucent
-      onRequestClose={onClose}
-    >
-      {/* Dimmed overlay — tapping closes drawer */}
-      <Animated.View style={[styles.overlay, { opacity: overlayOpacity }]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-      </Animated.View>
+    <>
+      <Modal
+        visible={modalVisible}
+        transparent
+        animationType="none"
+        statusBarTranslucent
+        onRequestClose={onClose}
+      >
+        {/* Dimmed overlay — tapping closes drawer */}
+        <Animated.View style={[styles.overlay, { opacity: overlayOpacity }]}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        </Animated.View>
 
-      {/* Drawer panel */}
-      <Animated.View style={[styles.drawer, { transform: [{ translateX }] }]}>
-        <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
+        {/* Drawer panel */}
+        <Animated.View style={[styles.drawer, { transform: [{ translateX }] }]}>
+          <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
 
-        {/* Right neon accent bar */}
-        <View style={styles.accentBar} />
+          {/* Right neon accent bar */}
+          <View style={styles.accentBar} />
 
-        <View style={[styles.drawerInner, { paddingTop: insets.top + 16 }]}>
+          <View style={[styles.drawerInner, { paddingTop: insets.top + 16 }]}>
 
-          {/* Profile header */}
-          <View style={styles.profileSection}>
-            <View style={styles.avatarWrap}>
-              {user ? (
-                hasValidAvatar ? (
-                  <Image source={{ uri: user.avatar_url }} style={styles.avatarImage} contentFit="cover" transition={200} />
+            {/* Profile header */}
+            <View style={styles.profileSection}>
+              <View style={styles.avatarWrap}>
+                {user ? (
+                  hasValidAvatar ? (
+                    <Image source={{ uri: user.avatar_url }} style={styles.avatarImage} contentFit="cover" transition={200} />
+                  ) : (
+                    <View style={styles.avatarPlaceholder}>
+                      <Text style={styles.avatarInitials}>{initials}</Text>
+                    </View>
+                  )
                 ) : (
-                  <View style={styles.avatarPlaceholder}>
-                    <Text style={styles.avatarInitials}>{initials}</Text>
+                  <View style={[styles.avatarPlaceholder, { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: COLORS.border }]}>
+                    <Ionicons name="person-outline" size={20} color={COLORS.textMuted} />
                   </View>
-                )
-              ) : (
-                <View style={[styles.avatarPlaceholder, { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: COLORS.border }]}>
-                  <Ionicons name="person-outline" size={20} color={COLORS.textMuted} />
-                </View>
-              )}
-              <View style={[styles.avatarRing, !user && { borderColor: COLORS.border }]} />
+                )}
+                <View style={[styles.avatarRing, !user && { borderColor: COLORS.border }]} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.username} numberOfLines={1}>
+                  {user?.username ?? t('guestUser')}
+                </Text>
+                <Text style={styles.email} numberOfLines={1}>
+                  {user?.email ?? t('signInSync')}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={onClose} style={styles.closeBtn} activeOpacity={0.7}>
+                <Ionicons name="close" size={16} color={COLORS.textSub} />
+              </TouchableOpacity>
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.username} numberOfLines={1}>
-                {user?.username ?? 'Guest User'}
-              </Text>
-              <Text style={styles.email} numberOfLines={1}>
-                {user?.email ?? 'Sign in to sync your profile'}
-              </Text>
-            </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn} activeOpacity={0.7}>
-              <Ionicons name="close" size={16} color={COLORS.textSub} />
-            </TouchableOpacity>
-          </View>
 
-          <View style={styles.divider} />
-
-          {/* Scrollable nav items — fills remaining space */}
-          <ScrollView
-            style={styles.navScroll}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.navScrollContent}
-          >
-            <Text style={styles.navSection}>DISCOVER</Text>
-            {NAV_ITEMS.filter(i => ['Airing Schedule', 'Trending', 'New Arrivals'].includes(i.label)).map((item) => (
-              <NavRow key={item.label} item={item} onPress={() => navigate(item.route)} />
-            ))}
-            <Text style={styles.navSection}>MY STUFF</Text>
-            {NAV_ITEMS.filter(i => ['Favorites', 'Downloads', 'My Stats'].includes(i.label)).map((item) => (
-              <NavRow key={item.label} item={item} onPress={() => navigate(item.route)} />
-            ))}
-            <Text style={styles.navSection}>APP</Text>
-            {NAV_ITEMS.filter(i => ['Notifications', 'Settings'].includes(i.label)).map((item) => (
-              <NavRow key={item.label} item={item} onPress={() => navigate(item.route)} />
-            ))}
-          </ScrollView>
-
-          {/* Footer — pinned below nav, above safe area */}
-          <View style={[styles.footer, { paddingBottom: insets.bottom + 8 }]}>
             <View style={styles.divider} />
-            {user ? (
-              <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut} activeOpacity={0.7}>
-                <Ionicons name="log-out-outline" size={20} color={COLORS.neonPink} />
-                <Text style={styles.signOutText}>Sign Out</Text>
+
+            {/* Scrollable nav items — fills remaining space */}
+            <ScrollView
+              style={styles.navScroll}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.navScrollContent}
+            >
+              <Text style={styles.navSection}>{t('discover')}</Text>
+              {NAV_ITEMS.filter(i => ['Airing Schedule', 'Trending', 'New Arrivals'].includes(i.label)).map((item) => (
+                <NavRow key={item.key} item={item} label={t(item.key as any)} onPress={() => navigate(item.route)} />
+              ))}
+
+              {/* ── Request an Anime ─────────────────────────────── */}
+              <TouchableOpacity
+                style={styles.requestRow}
+                onPress={() => { onClose(); setTimeout(() => setShowRequest(true), 250); }}
+                activeOpacity={0.75}
+              >
+                <View style={styles.requestIconWrap}>
+                  <Ionicons name="paper-plane-outline" size={18} color="#fff" />
+                </View>
+                <Text style={styles.requestLabel}>{t('requestAnime')}</Text>
+                <View style={styles.newBadge}>
+                  <Text style={styles.newBadgeText}>NEW</Text>
+                </View>
               </TouchableOpacity>
-            ) : (
-              <TouchableOpacity style={styles.signInBtn} onPress={handleSignIn} activeOpacity={0.7}>
-                <Ionicons name="log-in-outline" size={20} color={COLORS.neon} />
-                <Text style={styles.signInText}>Sign In</Text>
-              </TouchableOpacity>
-            )}
-            <Text style={styles.versionText}>AnimeHub v1.0.0</Text>
+
+              <Text style={styles.navSection}>{t('myStuff')}</Text>
+              {NAV_ITEMS.filter(i => ['Favorites', 'Downloads', 'My Stats'].includes(i.label)).map((item) => (
+                <NavRow key={item.key} item={item} label={t(item.key as any)} onPress={() => navigate(item.route)} />
+              ))}
+              <Text style={styles.navSection}>{t('appLabel')}</Text>
+              {NAV_ITEMS.filter(i => ['Notifications', 'Settings'].includes(i.label)).map((item) => (
+                <NavRow key={item.key} item={item} label={t(item.key as any)} onPress={() => navigate(item.route)} />
+              ))}
+            </ScrollView>
+
+            {/* Footer — pinned below nav, above safe area */}
+            <View style={[styles.footer, { paddingBottom: insets.bottom + 8 }]}>
+              <View style={styles.divider} />
+              {user ? (
+                <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut} activeOpacity={0.7}>
+                  <Ionicons name="log-out-outline" size={20} color={COLORS.neonPink} />
+                  <Text style={styles.signOutText}>{t('signOut')}</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity style={styles.signInBtn} onPress={handleSignIn} activeOpacity={0.7}>
+                  <Ionicons name="log-in-outline" size={20} color={COLORS.neon} />
+                  <Text style={styles.signInText}>{t('signIn')}</Text>
+                </TouchableOpacity>
+              )}
+              <Text style={styles.versionText}>AnimeHub v1.0.0</Text>
+            </View>
           </View>
-        </View>
-      </Animated.View>
-    </Modal>
+        </Animated.View>
+      </Modal>
+
+      {/* Request modal lives outside the drawer Modal so it renders on top */}
+      <RequestAnimeModal
+        visible={showRequest}
+        onClose={() => setShowRequest(false)}
+      />
+    </>
   );
 }
 
 // ─── Reusable nav row ─────────────────────────────────────────────────────────
 const NavRow = React.memo(
-  ({ item, onPress }: { item: any; onPress: () => void }) => {
+  ({ item, label, onPress }: { item: any; label: string; onPress: () => void }) => {
     return (
       <TouchableOpacity style={styles.navItem} onPress={onPress} activeOpacity={0.7}>
         <View style={styles.navIconWrap}>
           <Ionicons name={item.icon as any} size={20} color={COLORS.neon} />
         </View>
-        <Text style={styles.navLabel}>{item.label}</Text>
+        <Text style={styles.navLabel}>{label}</Text>
         {item.badge ? (
           <View style={styles.soonBadge}>
             <Text style={styles.soonText}>{item.badge}</Text>
@@ -226,9 +254,10 @@ const NavRow = React.memo(
   },
   (prevProps, nextProps) => {
     return (
-      prevProps.item.label === nextProps.item.label &&
+      prevProps.item.key === nextProps.item.key &&
       prevProps.item.icon === nextProps.item.icon &&
-      prevProps.item.badge === nextProps.item.badge
+      prevProps.item.badge === nextProps.item.badge &&
+      prevProps.label === nextProps.label
     );
   }
 );
@@ -365,4 +394,36 @@ const styles = StyleSheet.create({
   },
   signInText: { fontSize: 14, color: COLORS.neon, fontWeight: '700' },
   versionText: { fontSize: 11, color: COLORS.textMuted, textAlign: 'center', paddingVertical: 8, letterSpacing: 1 },
+
+  // ── Request an Anime row ──────────────────────────────────────────
+  requestRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    paddingVertical: 12,
+    paddingHorizontal: SPACING.sm,
+    borderRadius: RADIUS.md,
+    marginTop: 2,
+    backgroundColor: 'rgba(191,95,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(191,95,255,0.15)',
+  },
+  requestIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.neon,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  requestLabel: { flex: 1, fontSize: 14, color: COLORS.text, fontWeight: '700' },
+  newBadge: {
+    backgroundColor: 'rgba(191,95,255,0.2)',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: COLORS.neon,
+  },
+  newBadgeText: { fontSize: 9, color: COLORS.neon, fontWeight: '900', letterSpacing: 1 },
 });

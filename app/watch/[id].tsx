@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import {
   View,
   Text,
@@ -27,7 +27,7 @@ import {
 import { usePremium } from "../../src/hooks/usePremium";
 import { useAutoPlay } from "../../src/hooks/useAutoPlay";
 import { useAutoSkipIntro } from "../../src/hooks/useAutoSkipIntro";
-import { useServerSelection } from "../../src/hooks/useServerSelection";
+import { useServerSelection, ServerLang } from "../../src/hooks/useServerSelection";
 import ServerPickerSheet from "../../src/components/ui/ServerPickerSheet";
 import { supabase, userAPI } from "../../src/lib/supabase";
 import { useAuth } from "../../src/context/AuthContext";
@@ -255,7 +255,24 @@ export default function WatchScreen() {
   }
 
   // ── Server selection hook ──────────────────────────────────────────────────
-  const srv = useServerSelection(episode?.video_servers, episode?.video_url, isPremium);
+  const { data: prefs } = useQuery({
+    queryKey: ['user', user?.id, 'preferences'],
+    queryFn: async () => {
+      if (!user?.id) return null;
+      const { data } = await userAPI.getPreferences(user.id);
+      return data;
+    },
+    enabled: !!user?.id,
+  });
+
+  const preferredLang: ServerLang = prefs?.audio_preference === 'English Dub' ? 'dub' : 'sub';
+
+  const srv = useServerSelection(
+    episode?.video_servers,
+    episode?.video_url,
+    isPremium,
+    preferredLang
+  );
 
   const embedOrigin = useMemo(() => {
     try {

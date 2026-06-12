@@ -186,16 +186,16 @@ export default function HomeScreen() {
 // ─── MEMOIZED LOCAL ANIME CARD WRAPPER ─────────────────────────────────────────
 interface HomeAnimeCardProps {
   item: AnimeWithStats;
-  router: any;
+  onPress: (id: string) => void;
   showStats: boolean;
 }
 
 const HomeAnimeCard = React.memo(
-  ({ item, router, showStats }: HomeAnimeCardProps) => {
+  ({ item, onPress, showStats }: HomeAnimeCardProps) => {
     return (
       <AnimeCard
         anime={item}
-        onPress={() => router.push(`/anime/${item.id}`)}
+        onPress={onPress}
         showStats={showStats}
       />
     );
@@ -213,13 +213,17 @@ const AnimeRow = React.memo(
   ({ title, subtitle, data, router, showStats = false, seeAllRoute }: any) => {
     if (!data?.length) return null;
 
+    const handleCardPress = useCallback((id: string) => {
+      router.push(`/anime/${id}`);
+    }, [router]);
+
     const renderItem = useCallback(({ item }: { item: any }) => (
       <HomeAnimeCard
         item={item}
-        router={router}
+        onPress={handleCardPress}
         showStats={showStats}
       />
-    ), [router, showStats]);
+    ), [handleCardPress, showStats]);
 
     const keyExtractor = useCallback((item: any) => item.id, []);
 

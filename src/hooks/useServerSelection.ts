@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export type ServerLang = 'sub' | 'dub';
@@ -49,8 +49,9 @@ export function useServerSelection(
   rawServers: unknown,
   fallbackUrl?: string | null,
   isPremium = false,
+  preferredLang: ServerLang = 'sub',
 ): ServerSelectionResult {
-  const [lang, setLang] = useState<ServerLang>('sub');
+  const [lang, setLang] = useState<ServerLang>(preferredLang);
   const [index, setIndex] = useState(0);
 
   // ── Normalise raw input ──────────────────────────────────────────────────
@@ -86,6 +87,36 @@ export function useServerSelection(
     [grouped],
   );
 
+  const lastServersKeyRef = useRef<string>('');
+  const lastPreferredLangRef = useRef<ServerLang>(preferredLang);
+
+  const serversKey = useMemo(() => {
+    if (Array.isArray(rawServers)) {
+      return rawServers.map(s => `${s.name}-${s.url}-${(s as any).lang ?? ''}`).join('|');
+    }
+    return fallbackUrl || '';
+  }, [rawServers, fallbackUrl]);
+
+  // ── Auto sync default language based on user preferences & availability ──
+  useEffect(() => {
+    if (availableLangs.length > 0) {
+      const isNewServers = lastServersKeyRef.current !== serversKey;
+      const isNewPreference = lastPreferredLangRef.current !== preferredLang;
+
+      if (isNewServers || isNewPreference) {
+        if (availableLangs.includes(preferredLang)) {
+          setLang(preferredLang);
+        } else {
+          setLang(availableLangs[0]);
+        }
+        setIndex(0);
+
+        lastServersKeyRef.current = serversKey;
+        lastPreferredLangRef.current = preferredLang;
+      }
+    }
+  }, [availableLangs, preferredLang, serversKey]);
+
   // ── Derived values ───────────────────────────────────────────────────────
   const filteredServers = grouped[lang] ?? [];
   const currentServer   = filteredServers[index] ?? filteredServers[0];
@@ -113,7 +144,13 @@ export function useServerSelection(
   }
 
   function reset() {
-    setLang('sub');
+    if (availableLangs.includes(preferredLang)) {
+      setLang(preferredLang);
+    } else if (availableLangs.length > 0) {
+      setLang(availableLangs[0]);
+    } else {
+      setLang('sub');
+    }
     setIndex(0);
   }
 

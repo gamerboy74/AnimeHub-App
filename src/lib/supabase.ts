@@ -168,10 +168,29 @@ export const animeAPI = {
     supabase.from('anime').select('*').contains('studios', [studio]).limit(limit),
 
 
-  search: (query: string) =>
-    supabase.from('anime').select('*')
+  search: async (query: string) => {
+    // 1. Query the raw 'anime' table first to match against English/Romaji/Japanese titles
+    const { data: matchedAnime, error: matchError } = await supabase
+      .from('anime')
+      .select('id')
       .or(`title.ilike.%${query}%,title_english.ilike.%${query}%,title_romaji.ilike.%${query}%`)
-      .limit(30),
+      .limit(30);
+
+    if (matchError) {
+      return { data: [], error: matchError };
+    }
+
+    if (!matchedAnime || matchedAnime.length === 0) {
+      return { data: [], error: null };
+    }
+
+    // 2. Fetch stats for these matched IDs from the 'anime_with_stats' view
+    const matchedIds = matchedAnime.map(a => a.id);
+    return supabase
+      .from('anime_with_stats')
+      .select('id, title, poster_url, age_rating, type, year, user_rating_avg, premium_episode_count')
+      .in('id', matchedIds);
+  },
 
   getTrending: (limit = 10) =>
     supabase.from('anime_with_stats').select('*').order('total_watches', { ascending: false }).limit(limit),
@@ -425,7 +444,7 @@ export const userAPI = {
     supabase.from('user_preferences').select('*').eq('user_id', userId).maybeSingle(),
 
   updatePreferences: (userId: string, data: any) =>
-    supabase.from('user_preferences').upsert({ user_id: userId, ...data }),
+    supabase.from('user_preferences').upsert({ user_id: userId, ...data }, { onConflict: 'user_id' }),
 
   /** Safely update ONLY subscription_meta — never touches other pref columns.
    *  Use this instead of updatePreferences when writing billing data,
@@ -437,6 +456,50 @@ export const userAPI = {
         { user_id: userId, subscription_meta: meta },
         { onConflict: 'user_id', ignoreDuplicates: false },
       ),
+};
+
+export type AnimeRequest = {
+  id: string;
+  user_id: string | null;
+  title: string;
+  mal_id?: number | null;
+  notes?: string | null;
+  status: 'pending' | 'approved' | 'rejected';
+  vote_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export const requestAPI = {
+  /** Submit a new anime request. Returns error if duplicate for this user. */
+  submit: (userId: string, title: string, malId: number | null, notes: string) =>
+    supabase.from('anime_requests').insert({
+      user_id: userId,
+      title: title.trim(),
+      mal_id: malId || null,
+      notes: notes.trim() || null,
+    }),
+
+  /** Get current user's own submitted requests */
+  getUserRequests: (userId: string) =>
+    supabase
+      .from('anime_requests')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false }),
+
+  /** Get top pending requests by vote_count (for a "Most Wanted" screen) */
+  getTopRequests: (limit = 20) =>
+    supabase
+      .from('anime_requests')
+      .select('*')
+      .eq('status', 'pending')
+      .order('vote_count', { ascending: false })
+      .limit(limit),
+
+  /** Upvote a request atomically via DB function */
+  upvote: (requestId: string) =>
+    supabase.rpc('upvote_anime_request', { request_id: requestId }),
 };
 
 export const reviewAPI = {

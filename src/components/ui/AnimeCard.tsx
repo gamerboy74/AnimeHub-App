@@ -11,7 +11,7 @@ const { width } = Dimensions.get('window');
 
 type Props = {
   anime: Anime | AnimeWithStats;
-  onPress: () => void;
+  onPress: (id: string) => void;
   size?: 'sm' | 'md' | 'lg';
   showStats?: boolean;
 };
@@ -29,7 +29,7 @@ const AnimeCard = React.memo(function AnimeCard({ anime, onPress, size = 'md', s
 
   return (
     <TouchableOpacity
-      onPress={onPress}
+      onPress={() => onPress(anime.id)}
       onLongPress={() => prefetchAnime(anime.id)}
       activeOpacity={0.85}
       style={[styles.container, { width: cardWidth }]}

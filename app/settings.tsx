@@ -18,12 +18,18 @@ import { usePaymentCards } from '../src/hooks/usePaymentCards';
 import ChangePasswordModal from '../src/components/settings/ChangePasswordModal';
 import AddPaymentCardModal from '../src/components/settings/AddPaymentCardModal';
 import AvatarModal from '../src/components/settings/AvatarModal';
+import TwoFactorModal from '../src/components/settings/TwoFactorModal';
+import Disable2FAModal from '../src/components/settings/Disable2FAModal';
+import LogOutOthersModal from '../src/components/settings/LogOutOthersModal';
+import { useTranslation } from '../src/context/LocalizationContext';
+import PickerBottomSheet, { PickerOption } from '../src/components/settings/PickerBottomSheet';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user, signOut, refreshUser } = useAuth();
   const queryClient = useQueryClient();
+  const { t, locale } = useTranslation();
 
   // Fetch preferences via TanStack Query
   const { data: prefs, isLoading: loading } = useQuery({
@@ -31,16 +37,15 @@ export default function SettingsScreen() {
     queryFn: async () => {
       if (!user?.id) return null;
       const { data } = await userAPI.getPreferences(user.id);
-      return data || { 
-        auto_play_next: true, 
+      return data || {
+        auto_play_next: true,
         auto_skip_intro: true,
-        quality_preference: 'auto', 
-        theme_preference: 'dark', 
+        quality_preference: 'auto',
+        theme_preference: 'dark',
         notification_settings: { push: true, email: true, recommendations: true },
         privacy_settings: { profile_public: true, watch_history_public: false },
-        display_language: 'English (US)',
+        preferred_language: 'en',
         audio_preference: 'Japanese (Original)',
-        content_region: 'North America',
         two_factor_enabled: false,
       };
     },
@@ -49,8 +54,8 @@ export default function SettingsScreen() {
 
   // Re-fetch user profile and invalidate preferences query every time this screen is focused.
   // Ensures subscription_type and preferences are current even if changed externally.
-  useFocusEffect(useCallback(() => { 
-    refreshUser(); 
+  useFocusEffect(useCallback(() => {
+    refreshUser();
     if (user?.id) {
       queryClient.invalidateQueries({ queryKey: ['user', user.id, 'preferences'] });
     }
@@ -61,41 +66,77 @@ export default function SettingsScreen() {
   const [avatarModalVisible, setAvatarModalVisible] = useState(false);
   const [passwordModalVisible, setPasswordModalVisible] = useState(false);
   const [cardModalVisible, setCardModalVisible] = useState(false);
+  const [twoFactorModalVisible, setTwoFactorModalVisible] = useState(false);
+  const [disableModalVisible, setDisableModalVisible] = useState(false);
+  const [logOutOthersModalVisible, setLogOutOthersModalVisible] = useState(false);
+
+  const [languagePickerVisible, setLanguagePickerVisible] = useState(false);
+  const [audioPickerVisible, setAudioPickerVisible] = useState(false);
 
   const handleEditAvatarPress = () => {
     setAvatarModalVisible(true);
   };
 
+  const languageOptions: PickerOption[] = [
+    { value: 'en', label: 'English (US)', icon: 'language-outline' },
+    { value: 'ja', label: '日本語 (Japanese)', icon: 'language-outline' },
+  ];
 
+  const audioOptions: PickerOption[] = [
+    { value: 'Japanese (Original)', label: 'Japanese (Original)', icon: 'musical-notes-outline' },
+    { value: 'English Dub', label: 'English Dub', icon: 'volume-medium-outline' },
+  ];
 
   const updatePref = async (key: string, value: any) => {
     if (!user) return;
     const current = queryClient.getQueryData<any>(['user', user.id, 'preferences']) || {};
     const updated = { ...current, [key]: value };
-    
+
+    console.log(`[Settings] Updating preference: ${key} =`, value);
+
     // Optimistic update
     queryClient.setQueryData(['user', user.id, 'preferences'], updated);
-    
-    // DB save
-    await userAPI.updatePreferences(user.id, updated);
-    
-    // Invalidate query to sync across other screens
-    queryClient.invalidateQueries({ queryKey: ['user', user.id, 'preferences'] });
+
+    try {
+      // DB save
+      const { error } = await userAPI.updatePreferences(user.id, updated);
+      if (error) {
+        console.error(`[Settings] DB error updating preference ${key}:`, error.message);
+        // Revert optimistic update
+        queryClient.setQueryData(['user', user.id, 'preferences'], current);
+        Alert.alert(t('error'), 'Failed to save preference to cloud.');
+      } else {
+        console.log(`[Settings] DB save successful for: ${key}`);
+      }
+    } catch (err: any) {
+      console.error(`[Settings] Exception updating preference ${key}:`, err);
+      queryClient.setQueryData(['user', user.id, 'preferences'], current);
+    } finally {
+      // Invalidate query to sync across other screens
+      queryClient.invalidateQueries({ queryKey: ['user', user.id, 'preferences'] });
+    }
   };
 
   const handleSignOut = () => {
-    Alert.alert('Sign Out', 'Log out of Neon Katana?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Log Out', style: 'destructive', onPress: signOut },
+    Alert.alert(t('signOutTitle'), t('signOutSub'), [
+      { text: t('cancel'), style: 'cancel' },
+      { text: t('logOut'), style: 'destructive', onPress: signOut },
     ]);
   };
 
-  const joinedDate = user?.created_at ? new Date(user.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'June 2023';
+  const getLocaleTag = (loc: string) => {
+    if (loc === 'ja') return 'ja-JP';
+    return 'en-US';
+  };
+
+  const formattedJoinedDate = user?.created_at
+    ? new Date(user.created_at).toLocaleDateString(getLocaleTag(locale), { month: 'long', year: 'numeric' })
+    : (locale === 'ja' ? '2023年6月' : 'June 2023');
 
   if (!user) {
     return (
       <View style={[styles.container, styles.center]}>
-        <Text style={styles.errorText}>Please sign in to view settings.</Text>
+        <Text style={styles.errorText}>{t('pleaseSignInSettings')}</Text>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color={COLORS.neon} />
         </TouchableOpacity>
@@ -110,21 +151,21 @@ export default function SettingsScreen() {
         <TouchableOpacity style={styles.headerBackBtn} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={24} color={COLORS.neon} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>Profile Settings</Text>
+        <Text style={styles.headerTitle} numberOfLines={1}>{t('profileSettings')}</Text>
       </BlurView>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* User Identity Section */}
         <View style={styles.identitySection}>
           <View style={styles.avatarContainer}>
-            <LinearGradient 
-              colors={[COLORS.neon, COLORS.neonCyan, '#ff7346']} 
-              start={{x:0, y:0}} end={{x:1, y:1}} 
+            <LinearGradient
+              colors={[COLORS.neon, COLORS.neonCyan, '#ff7346']}
+              start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
               style={styles.avatarBorder}
             />
-            <Image 
-              source={{ uri: user.avatar_url || 'https://images.unsplash.com/photo-1511367461989-f85a21fda167?q=80&w=200' }} 
-              style={styles.avatar} 
+            <Image
+              source={{ uri: user.avatar_url || 'https://images.unsplash.com/photo-1511367461989-f85a21fda167?q=80&w=200' }}
+              style={styles.avatar}
               contentFit="cover"
               transition={200}
             />
@@ -140,10 +181,10 @@ export default function SettingsScreen() {
             <View style={styles.identityBadges}>
               <View style={[styles.premiumBadge, user.subscription_type === 'premium' && { backgroundColor: 'rgba(255,214,0,0.1)', borderColor: 'rgba(255,214,0,0.3)' }]}>
                 <Text style={[styles.premiumBadgeText, user.subscription_type === 'premium' && { color: COLORS.neonGold }]}>
-                  {user.subscription_type === 'premium' ? 'PREMIUM MEMBER' : 'FREE PLAN'}
+                  {user.subscription_type === 'premium' ? t('premiumMember') : t('freePlan')}
                 </Text>
               </View>
-              <Text style={styles.joinedText}>Joined {joinedDate}</Text>
+              <Text style={styles.joinedText}>{t('joined', { date: formattedJoinedDate })}</Text>
             </View>
           </View>
         </View>
@@ -153,11 +194,11 @@ export default function SettingsScreen() {
           <View style={styles.bentoGlow} />
           <View style={styles.bentoHeader}>
             <View>
-              <Text style={styles.bentoTitle}>Subscription</Text>
+              <Text style={styles.bentoTitle}>{t('subscription')}</Text>
               {user.subscription_type === 'premium' ? (
-                <Text style={styles.bentoSub}>You are on the <Text style={{color: COLORS.neonGold, fontWeight: '700'}}>Premium</Text> plan.</Text>
+                <Text style={styles.bentoSub}>{t('premiumPlanText')}</Text>
               ) : (
-                <Text style={styles.bentoSub}>You are on the <Text style={{color: COLORS.textSub, fontWeight: '700'}}>Free</Text> plan. Upgrade for HD streaming, offline downloads, and more.</Text>
+                <Text style={styles.bentoSub}>{t('freePlanText')}</Text>
               )}
             </View>
             <Ionicons name="ribbon" size={28} color={user.subscription_type === 'premium' ? COLORS.neonGold : COLORS.textMuted} />
@@ -165,24 +206,32 @@ export default function SettingsScreen() {
           {user.subscription_type === 'premium' ? (
             <View style={styles.bentoStats}>
               <View style={styles.bentoStat}>
-                <Text style={styles.statLabel}>Plan</Text>
-                <Text style={styles.statValue}>Premium</Text>
+                <Text style={styles.statLabel}>{t('plan')}</Text>
+                <Text style={styles.statValue}>{t('premium')}</Text>
               </View>
               <View style={styles.bentoStat}>
-                <Text style={styles.statLabel}>Member Since</Text>
+                <Text style={styles.statLabel}>{t('memberSince')}</Text>
                 <Text style={styles.statValue}>
-                  {user.created_at ? new Date(user.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '—'}
+                  {user.created_at ? new Date(user.created_at).toLocaleDateString(getLocaleTag(locale), { month: 'short', year: 'numeric' }) : '—'}
                 </Text>
               </View>
             </View>
           ) : (
             <View style={styles.freeFeatureList}>
-              {['Unlimited Anime Access', 'HD Streaming', 'Offline Downloads', 'No Ads'].map(f => (
-                <View key={f} style={styles.freeFeatureRow}>
-                  <Ionicons name="lock-closed-outline" size={14} color={COLORS.textMuted} />
-                  <Text style={styles.freeFeatureText}>{f}</Text>
-                </View>
-              ))}
+              {['Unlimited Anime Access', 'HD Streaming', 'Offline Downloads', 'No Ads'].map(f => {
+                const featuresDict: Record<string, string> = {
+                  'Unlimited Anime Access': locale === 'ja' ? 'アニメ見放題' : 'Unlimited Anime Access',
+                  'HD Streaming': locale === 'ja' ? 'HD配信' : 'HD Streaming',
+                  'Offline Downloads': locale === 'ja' ? 'オフライン再生' : 'Offline Downloads',
+                  'No Ads': locale === 'ja' ? '広告非表示' : 'No Ads',
+                };
+                return (
+                  <View key={f} style={styles.freeFeatureRow}>
+                    <Ionicons name="lock-closed-outline" size={14} color={COLORS.textMuted} />
+                    <Text style={styles.freeFeatureText}>{featuresDict[f] || f}</Text>
+                  </View>
+                );
+              })}
             </View>
           )}
           <View style={styles.bentoActions}>
@@ -191,14 +240,14 @@ export default function SettingsScreen() {
                 <TouchableOpacity style={styles.primaryAction} onPress={() => router.push('/manage-plan' as any)}>
                   <LinearGradient
                     colors={[COLORS.neonGold, '#ff7346']}
-                    start={{x:0, y:0}} end={{x:1, y:0}}
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
                     style={styles.actionGradient}
                   >
-                    <Text style={styles.primaryActionText}>⚙️ Manage Plan</Text>
+                    <Text style={styles.primaryActionText}>⚙️ {t('managePlan')}</Text>
                   </LinearGradient>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.secondaryAction} onPress={() => router.push('/plans' as any)}>
-                  <Text style={styles.secondaryActionText}>View All Plans</Text>
+                  <Text style={styles.secondaryActionText}>{t('viewAllPlans')}</Text>
                 </TouchableOpacity>
               </>
             ) : (
@@ -206,14 +255,14 @@ export default function SettingsScreen() {
                 <TouchableOpacity style={styles.primaryAction} onPress={() => router.push('/premium' as any)}>
                   <LinearGradient
                     colors={[COLORS.neonGold, '#ff7346']}
-                    start={{x:0, y:0}} end={{x:1, y:0}}
+                    start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
                     style={styles.actionGradient}
                   >
-                    <Text style={styles.primaryActionText}>⚡ Upgrade to Premium</Text>
+                    <Text style={styles.primaryActionText}>⚡ {t('upgradeToPremium')}</Text>
                   </LinearGradient>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.secondaryAction} onPress={() => router.push('/plans' as any)}>
-                  <Text style={styles.secondaryActionText}>Compare Plans</Text>
+                  <Text style={styles.secondaryActionText}>{t('comparePlans')}</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -224,16 +273,14 @@ export default function SettingsScreen() {
         <BlurView intensity={30} style={styles.bentoCard}>
           <View style={styles.cardHeader}>
             <Ionicons name="play-circle" size={20} color={COLORS.neonCyan} />
-            <Text style={styles.cardTitle}>Playback</Text>
+            <Text style={styles.cardTitle}>{t('playback')}</Text>
           </View>
           <View style={styles.cardBody}>
             {/* Auto-play next episode toggle */}
             <View style={styles.toggleRow}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.toggleLabel}>Auto-play Next Episode</Text>
-                <Text style={styles.toggleSub}>
-                  Automatically starts the next episode when the current one ends (5 second countdown)
-                </Text>
+                <Text style={styles.toggleLabel}>{t('autoPlayLabel')}</Text>
+                <Text style={styles.toggleSub}>{t('autoPlaySub')}</Text>
               </View>
               <Switch
                 value={prefs?.auto_play_next !== false}
@@ -246,10 +293,8 @@ export default function SettingsScreen() {
             {/* Auto-skip intro & outro toggle */}
             <View style={[styles.toggleRow, { marginTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.04)', paddingTop: 16 }]}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.toggleLabel}>Auto-skip Intro &amp; Outro</Text>
-                <Text style={styles.toggleSub}>
-                  Automatically skips opening/ending credits when a skip button is available in the player
-                </Text>
+                <Text style={styles.toggleLabel}>{t('autoSkipLabel')}</Text>
+                <Text style={styles.toggleSub}>{t('autoSkipSub')}</Text>
               </View>
               <Switch
                 value={prefs?.auto_skip_intro !== false}
@@ -266,45 +311,22 @@ export default function SettingsScreen() {
         <BlurView intensity={30} style={styles.bentoCard}>
           <View style={styles.cardHeader}>
             <Ionicons name="language" size={20} color={COLORS.neonCyan} />
-            <Text style={styles.cardTitle}>Localization</Text>
+            <Text style={styles.cardTitle}>{t('localization')}</Text>
           </View>
           <View style={styles.cardBody}>
-            <ActionRow 
-              label="Display Language" 
-              value={prefs?.display_language || 'English (US)'} 
-              onPress={() => {
-                Alert.alert('Display Language', 'Select display language:', [
-                  { text: 'English (US)', onPress: () => updatePref('display_language', 'English (US)') },
-                  { text: '日本語 (Japanese)', onPress: () => updatePref('display_language', '日本語 (Japanese)') },
-                  { text: 'Español (Spanish)', onPress: () => updatePref('display_language', 'Español (Spanish)') },
-                  { text: 'Cancel', style: 'cancel' },
-                ]);
-              }}
+            <ActionRow
+              label={t('displayLanguage')}
+              value={
+                prefs?.preferred_language === 'ja' || prefs?.preferred_language === '日本語 (Japanese)'
+                  ? '日本語 (Japanese)'
+                  : 'English (US)'
+              }
+              onPress={() => setLanguagePickerVisible(true)}
             />
-            <ActionRow 
-              label="Audio Preference" 
-              value={prefs?.audio_preference || 'Japanese (Original)'} 
-              onPress={() => {
-                Alert.alert('Audio Preference', 'Select audio track:', [
-                  { text: 'Japanese (Original)', onPress: () => updatePref('audio_preference', 'Japanese (Original)') },
-                  { text: 'English Dub', onPress: () => updatePref('audio_preference', 'English Dub') },
-                  { text: 'Spanish Dub', onPress: () => updatePref('audio_preference', 'Spanish Dub') },
-                  { text: 'Cancel', style: 'cancel' },
-                ]);
-              }}
-            />
-            <ActionRow 
-              label="Content Region" 
-              value={prefs?.content_region || 'North America'} 
-              onPress={() => {
-                Alert.alert('Content Region', 'Select stream gateway region:', [
-                  { text: 'North America', onPress: () => updatePref('content_region', 'North America') },
-                  { text: 'Europe', onPress: () => updatePref('content_region', 'Europe') },
-                  { text: 'Asia', onPress: () => updatePref('content_region', 'Asia') },
-                  { text: 'Global', onPress: () => updatePref('content_region', 'Global') },
-                  { text: 'Cancel', style: 'cancel' },
-                ]);
-              }}
+            <ActionRow
+              label={t('audioPreference')}
+              value={prefs?.audio_preference || 'Japanese (Original)'}
+              onPress={() => setAudioPickerVisible(true)}
             />
           </View>
         </BlurView>
@@ -313,40 +335,31 @@ export default function SettingsScreen() {
         <BlurView intensity={30} style={styles.bentoCard}>
           <View style={styles.cardHeader}>
             <Ionicons name="shield-checkmark" size={20} color="#ff7346" />
-            <Text style={styles.cardTitle}>Security &amp; Login</Text>
+            <Text style={styles.cardTitle}>{t('securityLogin')}</Text>
           </View>
           <View style={styles.cardBody}>
-            <ActionRow 
-              label="Change Password" 
-              sub="Update account password securely" 
+            <ActionRow
+              label={t('changePassword')}
+              sub={t('changePasswordSub')}
               onPress={() => setPasswordModalVisible(true)}
             />
-            <ActionRow 
-              label="Two-Factor Auth" 
-              value={prefs?.two_factor_enabled ? 'Enabled' : 'Disabled'} 
+            <ActionRow
+              label={t('twoFactorAuth')}
+              value={prefs?.two_factor_enabled ? t('enabled') : t('disabled')}
               isValueHighlighted={prefs?.two_factor_enabled}
               onPress={() => {
                 const current = prefs?.two_factor_enabled ?? false;
-                Alert.alert('Two-Factor Auth', `${current ? 'Disable' : 'Enable'} 2FA protection?`, [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: current ? 'Disable' : 'Enable', onPress: () => updatePref('two_factor_enabled', !current) }
-                ]);
+                if (current) {
+                  setDisableModalVisible(true);
+                } else {
+                  setTwoFactorModalVisible(true);
+                }
               }}
             />
-            <ActionRow 
-              label="Connected Devices" 
-              sub="Log out other active sessions" 
-              onPress={() => {
-                Alert.alert('Log out all other sessions?', 'This signs out your account from all other apps, tablets, and devices.', [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Log Out Others', style: 'destructive', onPress: async () => {
-                      const { error } = await supabase.auth.signOut({ scope: 'others' });
-                      if (error) Alert.alert('Error', 'Failed to log out other devices.');
-                      else Alert.alert('Success', 'Logged out all other active sessions.');
-                    }
-                  }
-                ]);
-              }}
+            <ActionRow
+              label={t('connectedDevices')}
+              sub={t('connectedDevicesSub')}
+              onPress={() => setLogOutOthersModalVisible(true)}
             />
           </View>
         </BlurView>
@@ -355,14 +368,14 @@ export default function SettingsScreen() {
         <BlurView intensity={30} style={styles.bentoCard}>
           <View style={styles.cardHeader}>
             <Ionicons name="card" size={20} color={COLORS.neon} />
-            <Text style={styles.cardTitle}>Payment Methods</Text>
+            <Text style={styles.cardTitle}>{t('paymentMethods')}</Text>
           </View>
           <View style={styles.cardBody}>
             {loadingCards ? (
               <ActivityIndicator size="small" color={COLORS.neon} style={{ marginVertical: 16 }} />
             ) : cards.length === 0 ? (
               <Text style={{ fontSize: 13, color: COLORS.textMuted, textAlign: 'center', marginVertical: 16 }}>
-                No payment methods registered.
+                {t('noPaymentMethods')}
               </Text>
             ) : (
               cards.map(c => (
@@ -373,15 +386,15 @@ export default function SettingsScreen() {
                     <Text style={styles.cardExpiry}>EXPIRES {c.expiry}</Text>
                   </View>
                   {c.primary ? (
-                    <View style={styles.primaryPill}><Text style={styles.pillText}>PRIMARY</Text></View>
+                    <View style={styles.primaryPill}><Text style={styles.pillText}>{t('primary')}</Text></View>
                   ) : (
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       onPress={() => setPrimaryCard(c.id)}
                     >
-                      <Text style={{ fontSize: 9, fontWeight: '700', color: COLORS.textMuted }}>SET PRIMARY</Text>
+                      <Text style={{ fontSize: 9, fontWeight: '700', color: COLORS.textMuted }}>{t('setPrimary')}</Text>
                     </TouchableOpacity>
                   )}
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     onPress={() => deleteCard(c.id)}
                     style={{ marginLeft: 10 }}
                   >
@@ -390,12 +403,12 @@ export default function SettingsScreen() {
                 </View>
               ))
             )}
-             <TouchableOpacity 
+            <TouchableOpacity
               style={styles.addPaymentBtn}
               onPress={() => setCardModalVisible(true)}
             >
               <Ionicons name="add-circle-outline" size={16} color={COLORS.textSub} />
-              <Text style={styles.addPaymentText}>Add New Payment Method</Text>
+              <Text style={styles.addPaymentText}>{t('addNewPayment')}</Text>
             </TouchableOpacity>
           </View>
         </BlurView>
@@ -404,18 +417,18 @@ export default function SettingsScreen() {
         <BlurView intensity={30} style={styles.bentoCard}>
           <View style={styles.cardHeader}>
             <Ionicons name="notifications" size={20} color={COLORS.neonCyan} />
-            <Text style={styles.cardTitle}>Preferences</Text>
+            <Text style={styles.cardTitle}>{t('preferences')}</Text>
           </View>
           <View style={styles.preferenceGrid}>
-            <PreferenceToggle 
-              label="New Episode Alerts" 
-              sub="Push & Email notifications" 
+            <PreferenceToggle
+              label={t('newEpisodeAlerts')}
+              sub={t('newEpisodeSub')}
               value={prefs?.notification_settings?.push ?? true}
               onToggle={(v: boolean) => updatePref('notification_settings', { ...prefs?.notification_settings, push: v })}
             />
-            <PreferenceToggle 
-              label="Marketing Emails" 
-              sub="Exclusive deals and news" 
+            <PreferenceToggle
+              label={t('marketingEmails')}
+              sub={t('marketingSub')}
               value={prefs?.notification_settings?.email ?? false}
               onToggle={(v: boolean) => updatePref('notification_settings', { ...prefs?.notification_settings, email: v })}
             />
@@ -443,15 +456,59 @@ export default function SettingsScreen() {
           onAddCard={addCard}
         />
 
+        {/* Two-Factor Auth Setup Modal */}
+        <TwoFactorModal
+          visible={twoFactorModalVisible}
+          onClose={() => setTwoFactorModalVisible(false)}
+          onSuccess={() => updatePref('two_factor_enabled', true)}
+          t={t}
+        />
+
+        {/* Two-Factor Auth Disable Modal */}
+        <Disable2FAModal
+          visible={disableModalVisible}
+          onClose={() => setDisableModalVisible(false)}
+          onSuccess={() => updatePref('two_factor_enabled', false)}
+          t={t}
+        />
+
+        {/* Log Out Others Modal */}
+        <LogOutOthersModal
+          visible={logOutOthersModalVisible}
+          onClose={() => setLogOutOthersModalVisible(false)}
+          t={t}
+        />
+
+        {/* Custom Frosted-Glass Language Picker Bottom Sheet */}
+        <PickerBottomSheet
+          visible={languagePickerVisible}
+          onClose={() => setLanguagePickerVisible(false)}
+          title={t('displayLanguage')}
+          options={languageOptions}
+          selectedValue={prefs?.preferred_language || 'en'}
+          onSelect={(v) => updatePref('preferred_language', v)}
+        />
+
+        {/* Custom Frosted-Glass Audio Picker Bottom Sheet */}
+        <PickerBottomSheet
+          visible={audioPickerVisible}
+          onClose={() => setAudioPickerVisible(false)}
+          title={t('audioPreference')}
+          options={audioOptions}
+          selectedValue={prefs?.audio_preference || 'Japanese (Original)'}
+          onSelect={(v) => updatePref('audio_preference', v)}
+        />
+
         <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
           <Ionicons name="log-out-outline" size={24} color={COLORS.danger} />
-          <Text style={styles.signOutText}>SIGN OUT</Text>
+          <Text style={styles.signOutText}>{t('signOut')}</Text>
         </TouchableOpacity>
-        <Text style={styles.versionText}>APP VERSION 1.0.0-NEON</Text>
+        <Text style={styles.versionText}>{t('version')}</Text>
       </ScrollView>
     </View>
   );
 }
+
 
 function ActionRow({ label, value, sub, isValueHighlighted, onPress }: any) {
   return (
@@ -473,8 +530,8 @@ function PreferenceToggle({ label, sub, value, onToggle }: any) {
         <Text style={styles.prefLabel}>{label}</Text>
         <Text style={styles.prefSub}>{sub}</Text>
       </View>
-      <Switch 
-        value={value} 
+      <Switch
+        value={value}
         onValueChange={onToggle}
         trackColor={{ false: COLORS.border, true: COLORS.neon }}
         thumbColor="#FFFFFF"

@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { useAuth } from '../../src/context/AuthContext';
+import { supabase } from '../../src/lib/supabase';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -40,8 +41,16 @@ export default function LoginScreen() {
     setError(null);
     try {
       const { error: signInError } = await signIn(email, password);
-      if (signInError) setError(signInError.message);
-      else router.replace('/(tabs)');
+      if (signInError) {
+        setError(signInError.message);
+      } else {
+        const { data: aalData, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        if (!aalError && aalData && aalData.nextLevel === 'aal2' && aalData.currentLevel === 'aal1') {
+          router.replace('/auth/mfa');
+        } else {
+          router.replace('/(tabs)');
+        }
+      }
     } catch (e: any) {
       setError(e.message || 'An unexpected error occurred');
     } finally {

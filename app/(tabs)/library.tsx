@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
   Dimensions, RefreshControl, ActivityIndicator, FlatList, Alert,
+  Modal, Pressable,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,6 +14,7 @@ import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { userAPI } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
 import AnimeCard from '../../src/components/ui/AnimeCard';
+import { BlurView } from 'expo-blur';
 
 
 const { width } = Dimensions.get('window');
@@ -30,6 +32,19 @@ export default function LibraryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   const scrollOffset = useRef(0);
+  const [sortBy, setSortBy] = useState<'recent' | 'title' | 'rating'>('recent');
+  const [isGridView, setIsGridView] = useState(true);
+  const [showSortSheet, setShowSortSheet] = useState(false);
+
+  const sortOptions = [
+    { id: 'recent', label: 'Recently Added', icon: 'time-outline' },
+    { id: 'title', label: 'Title (A-Z)', icon: 'text-outline' },
+    { id: 'rating', label: 'Highest Rating', icon: 'star-outline' },
+  ] as const;
+
+  const handleSortPress = useCallback(() => {
+    setShowSortSheet(true);
+  }, []);
 
   const cardWidth = width * 0.75 + SPACING.md;
 
@@ -113,15 +128,41 @@ export default function LibraryScreen() {
       poster_url: p.poster_url,
       rating: p.rating || 0,
       type: p.type || 'Series',
+      genres: p.genres || [],
+      created_at: p.last_watched || p.created_at,
     });
 
+    let items: any[] = [];
     switch (activeTab) {
-      case 'watchlist': return watchlist.map((item: any) => item.anime);
-      case 'completed': return completed.map(mapProgressToAnime);
-      case 'dropped':   return dropped.map(mapProgressToAnime);
-      default:           return [];
+      case 'watchlist': 
+        items = watchlist.map((item: any) => ({
+          ...item.anime,
+          created_at: item.created_at,
+        }));
+        break;
+      case 'completed': 
+        items = completed.map(mapProgressToAnime);
+        break;
+      case 'dropped':   
+        items = dropped.map(mapProgressToAnime);
+        break;
+      default:           
+        items = [];
     }
-  }, [activeTab, watchlist, completed, dropped]);
+
+    // Apply sorting dynamically
+    return [...items].sort((a, b) => {
+      if (sortBy === 'title') {
+        return (a.title || '').localeCompare(b.title || '');
+      }
+      if (sortBy === 'rating') {
+        return (b.rating || 0) - (a.rating || 0);
+      }
+      const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return dateB - dateA;
+    });
+  }, [activeTab, watchlist, completed, dropped, sortBy]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -270,12 +311,12 @@ export default function LibraryScreen() {
           </View>
           
           <View style={styles.filterBar}>
-            <TouchableOpacity style={styles.filterBtn}>
-              <Ionicons name="filter-outline" size={16} color={COLORS.textSub} />
-              <Text style={styles.filterText}>SORT: RECENT</Text>
+            <TouchableOpacity style={styles.filterBtn} onPress={handleSortPress}>
+              <Ionicons name="filter-outline" size={16} color={COLORS.neon} />
+              <Text style={styles.filterText}>SORT: {sortBy.toUpperCase()}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.gridBtn}>
-              <Ionicons name="grid" size={16} color={COLORS.textSub} />
+            <TouchableOpacity style={styles.gridBtn} onPress={() => setIsGridView(!isGridView)}>
+              <Ionicons name={isGridView ? 'list-outline' : 'grid-outline'} size={18} color={COLORS.neon} />
             </TouchableOpacity>
           </View>
 
@@ -287,18 +328,71 @@ export default function LibraryScreen() {
               <Text style={styles.emptyGridText}>NO DATA IN {activeTab.toUpperCase()}</Text>
             </View>
           ) : (
-            <View style={styles.grid}>
+            <View style={isGridView ? styles.grid : styles.listColumn}>
               {tabData.map((anime: any, idx: number) => (
                 <LibraryGridItem
                   key={anime?.id || anime?.anime_id || `grid-${idx}`}
                   anime={anime}
                   onPress={handleGridItemPress}
+                  isGridView={isGridView}
                 />
               ))}
             </View>
           )}
         </View>
       </ScrollView>
+
+      {/* Sort Bottom Sheet Modal */}
+      <Modal 
+        visible={showSortSheet} 
+        transparent 
+        animationType="slide" 
+        onRequestClose={() => setShowSortSheet(false)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setShowSortSheet(false)} />
+        <BlurView intensity={70} tint="dark" style={styles.sortSheet}>
+          <View style={styles.sortHandle} />
+
+          <Text style={styles.sortSheetTitle}>LIBRARY SORTING</Text>
+
+          <Text style={styles.sortSectionLabel}>Sort Collection By</Text>
+          <View style={styles.sortOptions}>
+            {sortOptions.map((opt) => {
+              const isActive = sortBy === opt.id;
+              return (
+                <TouchableOpacity
+                  key={opt.id}
+                  style={[styles.sortOptionRow, isActive && styles.sortOptionRowActive]}
+                  onPress={() => {
+                    setSortBy(opt.id as any);
+                    setShowSortSheet(false);
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <View style={[styles.sortIconWrap, isActive && styles.sortIconWrapActive]}>
+                    <Ionicons 
+                      name={opt.icon} 
+                      size={18} 
+                      color={isActive ? '#0a0a12' : COLORS.neon} 
+                    />
+                  </View>
+                  <Text style={[styles.sortOptionText, isActive && styles.sortOptionTextActive]}>
+                    {opt.label}
+                  </Text>
+                  {isActive && (
+                    <Ionicons 
+                      name="checkmark-circle" 
+                      size={20} 
+                      color={COLORS.neon} 
+                      style={styles.checkIcon} 
+                    />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </BlurView>
+      </Modal>
     </View>
   );
 }
@@ -407,6 +501,124 @@ const styles = StyleSheet.create({
 
   emptyGrid: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 60, gap: SPACING.md },
   emptyGridText: { fontSize: 11, color: COLORS.textMuted, fontWeight: '800', letterSpacing: 2 },
+
+  // ── Sort modal ───────────────────────────────────────────────────
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)' },
+  sortSheet: {
+    borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    padding: 24, paddingBottom: 48,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(10,10,18,0.96)',
+    borderTopWidth: 1, borderColor: 'rgba(191,95,255,0.15)',
+  },
+  sortHandle: {
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignSelf: 'center', marginBottom: 20,
+  },
+  sortSheetTitle: { fontSize: 11, fontWeight: '900', color: COLORS.neon, letterSpacing: 3, marginBottom: 24 },
+  sortSectionLabel: { fontSize: 10, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 16 },
+  sortOptions: { gap: 12 },
+  sortOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  sortOptionRowActive: {
+    backgroundColor: 'rgba(191,95,255,0.08)',
+    borderColor: 'rgba(191,95,255,0.3)',
+  },
+  sortIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(191,95,255,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
+  sortIconWrapActive: {
+    backgroundColor: COLORS.neon,
+  },
+  sortOptionText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.textSub,
+  },
+  sortOptionTextActive: {
+    color: COLORS.text,
+    fontWeight: '800',
+  },
+  checkIcon: {
+    marginLeft: 'auto',
+  },
+
+  listColumn: { flexDirection: 'column', paddingHorizontal: SPACING.sm, gap: SPACING.sm },
+  listItem: {
+    flexDirection: 'row',
+    backgroundColor: '#161622',
+    borderRadius: RADIUS.md,
+    padding: SPACING.sm,
+    marginBottom: SPACING.xs,
+    alignItems: 'center',
+    gap: SPACING.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.03)',
+  },
+  listPoster: {
+    width: 60,
+    height: 84,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.bgCard,
+  },
+  listInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  listTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: COLORS.text,
+  },
+  listMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  listRating: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.textSub,
+  },
+  listSeparator: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+  },
+  listType: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+  },
+  listGenreRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: 4,
+  },
+  listGenrePill: {
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  listGenreText: {
+    fontSize: 8,
+    color: COLORS.textSub,
+    fontWeight: '600',
+  },
 });
 
 // ─── MEMOIZED CONTINUE WATCHING ITEM ───────────────────────────────────────────
@@ -478,11 +690,50 @@ const ContinueWatchingItem = React.memo(
 interface LibraryGridItemProps {
   anime: any;
   onPress: (animeId: string) => void;
+  isGridView?: boolean;
 }
 
 const LibraryGridItem = React.memo(
-  ({ anime, onPress }: LibraryGridItemProps) => {
+  ({ anime, onPress, isGridView = true }: LibraryGridItemProps) => {
     if (!anime) return null;
+
+    if (!isGridView) {
+      // List Row Layout
+      return (
+        <TouchableOpacity 
+          style={styles.listItem}
+          onPress={() => onPress(anime.id || anime.anime_id)}
+          activeOpacity={0.8}
+        >
+          <Image 
+            source={{ uri: anime.poster_url }} 
+            style={styles.listPoster} 
+            contentFit="cover"
+            transition={200}
+          />
+          <View style={styles.listInfo}>
+            <Text style={styles.listTitle} numberOfLines={1}>{anime.title}</Text>
+            <View style={styles.listMeta}>
+              <Ionicons name="star" size={12} color={COLORS.neonCyan} />
+              <Text style={styles.listRating}>{Number(anime.rating || 0).toFixed(1)}</Text>
+              <Text style={styles.listSeparator}>•</Text>
+              <Text style={styles.listType}>{anime.type || 'Series'}</Text>
+            </View>
+            {anime.genres && anime.genres.length > 0 && (
+              <View style={styles.listGenreRow}>
+                {anime.genres.slice(0, 3).map((g: string) => (
+                  <View key={g} style={styles.listGenrePill}>
+                    <Text style={styles.listGenreText}>{g}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        </TouchableOpacity>
+      );
+    }
+
+    // Grid Item Layout
     return (
       <TouchableOpacity 
         style={styles.gridItem}
@@ -515,6 +766,7 @@ const LibraryGridItem = React.memo(
     const idA = prevProps.anime?.id || prevProps.anime?.anime_id;
     const idB = nextProps.anime?.id || nextProps.anime?.anime_id;
     return (
+      prevProps.isGridView === nextProps.isGridView &&
       idA === idB &&
       prevProps.anime?.poster_url === nextProps.anime?.poster_url &&
       prevProps.anime?.title === nextProps.anime?.title &&

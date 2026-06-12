@@ -4,7 +4,11 @@ import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { AuthProvider, useAuth } from '../src/context/AuthContext';
+import { LocalizationProvider } from '../src/context/LocalizationContext';
+import { supabase } from '../src/lib/supabase';
+import CustomAlertModal from '../src/components/ui/CustomAlertModal';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { usePushNotifications } from '../src/hooks/usePushNotifications';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -43,8 +47,11 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
-            <StatusBar style="light" />
-            <AuthGuard />
+            <LocalizationProvider>
+              <StatusBar style="light" />
+              <AuthGuard />
+              <CustomAlertModal />
+            </LocalizationProvider>
           </AuthProvider>
         </QueryClientProvider>
       </SafeAreaProvider>
@@ -74,6 +81,9 @@ function AuthGuard() {
   const pathname = usePathname();
   const { session, loading } = useAuth();
 
+  // Initialize push notification listeners & token database registration
+  usePushNotifications();
+
   useEffect(() => {
     // Wait for the initial session load before redirecting
     if (loading) return;
@@ -82,6 +92,16 @@ function AuthGuard() {
       if (isProtected) {
         router.replace('/auth/login');
       }
+    } else {
+      const checkAAL = async () => {
+        const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        if (!error && data && data.nextLevel === 'aal2' && data.currentLevel === 'aal1') {
+          if (pathname !== '/auth/mfa') {
+            router.replace('/auth/mfa');
+          }
+        }
+      };
+      checkAAL();
     }
   }, [session, loading, pathname]);
 
@@ -96,6 +116,7 @@ function AuthGuard() {
       <Stack.Screen name="downloads" options={{ headerShown: false }} />
       <Stack.Screen name="auth/login" options={{ presentation: 'modal' }} />
       <Stack.Screen name="auth/signup" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="auth/mfa" options={{ presentation: 'modal' }} />
       <Stack.Screen name="auth/callback" options={{ headerShown: false }} />
     </Stack>
   );

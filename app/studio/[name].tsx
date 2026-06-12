@@ -69,7 +69,7 @@ export default function StudioBrowseScreen() {
     <AnimeCard
       anime={item}
       size="sm"
-      onPress={() => handleCardPress(item.id)}
+      onPress={handleCardPress}
     />
   ), [handleCardPress]);
 

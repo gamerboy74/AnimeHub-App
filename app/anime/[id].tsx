@@ -617,6 +617,39 @@ function TrailerModal({ onClose, url }: { onClose: () => void; url: string }) {
   );
 }
 
+function normalizeDescription(desc: string | null | undefined): string {
+  if (!desc) return '';
+  let clean = desc;
+  
+  // 1. Remove [Source: MAL] or (Source: MAL, Wikipedia, etc.) footnotes
+  clean = clean.replace(/\(Source:.*?\)/gi, '');
+  clean = clean.replace(/Source:.*?$/gi, '');
+  
+  // 2. Remove BBCode url links: [url=http...]text[/url] -> text
+  clean = clean.replace(/\[url=.*?\](.*?)\[\/url\]/gi, '$1');
+  
+  // 3. Remove Markdown links: [text](http...) -> text
+  clean = clean.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+  
+  // 4. Remove standalone bracketed URLs: [http...] -> empty
+  clean = clean.replace(/\[https?:\/\/[^\]]+\]/g, '');
+  
+  // 5. Remove bold/italic markdown: **text** -> text, __text__ -> text
+  clean = clean.replace(/\*\*([^*]+)\*\*/g, '$1');
+  clean = clean.replace(/__([^_]+)__/g, '$1');
+  clean = clean.replace(/\*([^*]+)\*/g, '$1');
+  clean = clean.replace(/_([^_]+)_/g, '$1');
+  
+  // 6. Remove HTML tags if any
+  clean = clean.replace(/<[^>]*>/g, '');
+  
+  // 7. Clean up double spacing and redundant empty lines
+  clean = clean.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  clean = clean.replace(/\n{3,}/g, '\n\n');
+  
+  return clean.trim();
+}
+
 function CharacterModal({ visible, onClose, character }: { visible: boolean; onClose: () => void; character: Character | null }) {
   if (!character) return null;
 
@@ -701,7 +734,7 @@ function CharacterModal({ visible, onClose, character }: { visible: boolean; onC
                 <Text style={styles.charModalSectionTitle}>Description</Text>
               </View>
               <View style={styles.charDescBox}>
-                <Text style={styles.charDescText}>{character.description}</Text>
+                <Text style={styles.charDescText}>{normalizeDescription(character.description)}</Text>
               </View>
             </View>
           ) : null}

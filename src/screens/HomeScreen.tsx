@@ -195,6 +195,11 @@ export default function HomeScreen({ navigation }: any) {
 
 function AnimeRow({ title, subtitle, data, navigation, showStats = false }: any) {
   if (!data?.length) return null;
+
+  const handleCardPress = useCallback((id: string) => {
+    navigation.navigate('AnimeDetail', { animeId: id });
+  }, [navigation]);
+
   return (
     <View style={styles.section}>
       <View style={styles.sectionHeader}>
@@ -213,7 +218,7 @@ function AnimeRow({ title, subtitle, data, navigation, showStats = false }: any)
         renderItem={({ item }) => (
           <AnimeCard
             anime={item}
-            onPress={() => navigation.navigate('AnimeDetail', { animeId: item.id })}
+            onPress={handleCardPress}
             showStats={showStats}
           />
         )}

@@ -15,6 +15,7 @@ import { userAPI } from '../../src/lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../../src/lib/supabase';
+import { useTranslation } from '../../src/context/LocalizationContext';
 
 const BADGE_DEFS = [
   { id: '1', name: 'FIRST EP', icon: 'play-circle', color: COLORS.neon, check: (p: any[], s: number, w: any[]) => p.length >= 1 },
@@ -83,6 +84,32 @@ export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const { user, signOut, refreshUser } = useAuth();
   const userId = user?.id;
+  const { t, locale } = useTranslation();
+
+  const getLocaleTag = (loc: string) => {
+    if (loc === 'ja') return 'ja-JP';
+    return 'en-US';
+  };
+
+  const getLocalizedRelativeTime = (isoString: string, loc: string) => {
+    const diff = Date.now() - new Date(isoString).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (loc === 'ja') {
+      if (mins < 60) return `${mins}分前`;
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return `${hrs}時間前`;
+      const days = Math.floor(hrs / 24);
+      if (days < 7) return `${days}日前`;
+      return `${Math.floor(days / 7)}週間前`;
+    } else {
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return `${hrs}h ago`;
+      const days = Math.floor(hrs / 24);
+      if (days < 7) return `${days}d ago`;
+      return `${Math.floor(days / 7)}w ago`;
+    }
+  };
 
   // ── TanStack Query — shared cache with Library / History screens ────────────
   const { data: allProgress = [], isLoading: loadingProgress } = useQuery({
@@ -214,23 +241,23 @@ export default function ProfileScreen() {
     
     switch (usernameStatus) {
       case 'checking':
-        text = '🔍 Checking availability...';
+        text = `🔍 ${t('checkingAvailability')}`;
         color = COLORS.neonGold;
         break;
       case 'available':
-        text = '🟢 Username is available!';
+        text = `🟢 ${t('usernameAvailable')}`;
         color = COLORS.success || '#00F5B4';
         break;
       case 'taken':
-        text = '🔴 Username is already taken.';
+        text = `🔴 ${t('usernameTaken')}`;
         color = COLORS.danger || '#FF2D78';
         break;
       case 'invalid':
-        text = '⚠️ Must be 3-20 characters (letters, numbers, _ only).';
+        text = `⚠️ ${t('usernameInvalid')}`;
         color = COLORS.danger || '#FF2D78';
         break;
       case 'current':
-        text = '🟢 Your current username';
+        text = `🟢 ${t('currentUsername')}`;
         color = COLORS.neonCyan || '#00F5FF';
         break;
     }
@@ -263,8 +290,8 @@ export default function ProfileScreen() {
     const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/;
     if (!usernameRegex.test(editUsername.trim())) {
       Alert.alert(
-        'Invalid Username',
-        'Username must be 3-20 characters long and can only contain letters, numbers, and underscores.'
+        t('invalidUsernameTitle'),
+        t('invalidUsernameMsg')
       );
       return;
     }
@@ -290,15 +317,15 @@ export default function ProfileScreen() {
         (error as any)?.code === '23505'
       ) {
         Alert.alert(
-          'Username Taken',
-          'This username is already taken. Please try another one.'
+          t('usernameTakenTitle'),
+          t('usernameTakenMsg')
         );
       } else {
-        Alert.alert('Error', `Could not update profile: ${errMsg || 'Unknown error'}`);
+        Alert.alert(t('error'), t('profileUpdateError', { error: errMsg || 'Unknown error' }));
       }
     } else if (!updatedRows || (updatedRows as any[]).length === 0) {
       // RLS blocked the update silently — row was filtered out
-      Alert.alert('Error', 'Update blocked. Check Supabase RLS policy allows users to update their own row.');
+      Alert.alert(t('error'), t('profileUpdateBlock'));
     } else {
       setBio(editBio.trim());
       setEditVisible(false);
@@ -312,9 +339,9 @@ export default function ProfileScreen() {
         <View style={styles.guestIcon}>
           <Ionicons name="person-outline" size={40} color={COLORS.neon} />
         </View>
-        <Text style={styles.guestTitle}>NOT SIGNED IN</Text>
+        <Text style={styles.guestTitle}>{t('notSignedIn')}</Text>
         <TouchableOpacity style={styles.signInBtn} onPress={() => router.push('/auth/login')}>
-          <Text style={styles.signInText}>SIGN IN</Text>
+          <Text style={styles.signInText}>{t('signIn')}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -324,15 +351,15 @@ export default function ProfileScreen() {
     return (
       <View style={[styles.container, styles.center]}>
         <ActivityIndicator size="large" color={COLORS.neon} />
-        <Text style={[styles.guestTitle, { fontSize: 12, marginTop: 16, color: COLORS.textMuted, letterSpacing: 1 }]}>LOADING PROFILE…</Text>
+        <Text style={[styles.guestTitle, { fontSize: 12, marginTop: 16, color: COLORS.textMuted, letterSpacing: 1 }]}>{t('loadingProfile')}</Text>
       </View>
     );
   }
 
   const handleSignOut = () => {
-    Alert.alert('Sign Out', 'Log out of Neon Katana?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Log Out', style: 'destructive', onPress: signOut },
+    Alert.alert(t('signOutTitle'), t('signOutSub'), [
+      { text: t('cancel'), style: 'cancel' },
+      { text: t('logOut'), style: 'destructive', onPress: signOut },
     ]);
   };
 
@@ -370,11 +397,11 @@ export default function ProfileScreen() {
               styles.premiumBadgeText,
               user.subscription_type === 'premium' && { color: COLORS.neonGold },
             ]}>
-              {user.subscription_type === 'premium' ? 'PREMIUM MEMBER' : 'FREE PLAN'}
+              {user.subscription_type === 'premium' ? t('premiumMember') : t('freePlan')}
             </Text>
           </View>
           <Text style={styles.heroBio}>
-            {bio || `@${user.username} · Anime fan`}
+            {bio || `@${user.username} · ${t('animeFan')}`}
           </Text>
           
           <View style={styles.heroActions}>
@@ -384,11 +411,11 @@ export default function ProfileScreen() {
                 start={{x:0, y:0}} end={{x:1, y:1}} 
                 style={styles.gradientBtn}
               >
-                <Text style={styles.editBtnText}>Edit Profile</Text>
+                <Text style={styles.editBtnText}>{t('editProfile')}</Text>
               </LinearGradient>
             </TouchableOpacity>
             <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.push('/settings')}>
-              <Text style={styles.secondaryBtnText}>Settings</Text>
+              <Text style={styles.secondaryBtnText}>{t('settings')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -402,8 +429,8 @@ export default function ProfileScreen() {
               <Ionicons name="stats-chart" size={22} color={COLORS.neon} />
             </View>
             <View>
-              <Text style={styles.statsCardTitle}>My Stats</Text>
-              <Text style={styles.statsCardSub}>Streak · Badges · Genre breakdown</Text>
+              <Text style={styles.statsCardTitle}>{t('myStats')}</Text>
+              <Text style={styles.statsCardSub}>{t('statsSubtitle')}</Text>
             </View>
           </View>
           <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
@@ -413,9 +440,9 @@ export default function ProfileScreen() {
       {/* Watchlist Section */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>My Watchlist</Text>
+          <Text style={styles.sectionTitle}>{t('myWatchlist')}</Text>
           <TouchableOpacity onPress={() => router.push('/watchlist')}>
-            <Text style={styles.seeAllText}>VIEW ALL</Text>
+            <Text style={styles.seeAllText}>{t('viewAll')}</Text>
           </TouchableOpacity>
         </View>
         {watchlist.length > 0 ? (
@@ -436,7 +463,7 @@ export default function ProfileScreen() {
         ) : (
           <BlurView intensity={10} style={styles.emptyCard}>
             <Ionicons name="list" size={32} color={COLORS.textMuted} />
-            <Text style={styles.emptyText}>Your watchlist is empty</Text>
+            <Text style={styles.emptyText}>{t('watchlistEmpty')}</Text>
           </BlurView>
         )}
       </View>
@@ -444,9 +471,9 @@ export default function ProfileScreen() {
       {/* Favorites Section */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Top Favorites</Text>
+          <Text style={styles.sectionTitle}>{t('topFavorites')}</Text>
           <TouchableOpacity onPress={() => router.push('/favorites')}>
-            <Text style={styles.seeAllText}>VIEW ALL</Text>
+            <Text style={styles.seeAllText}>{t('viewAll')}</Text>
           </TouchableOpacity>
         </View>
         {favorites.length > 0 ? (
@@ -463,7 +490,7 @@ export default function ProfileScreen() {
         ) : (
           <BlurView intensity={10} style={styles.emptyCard}>
             <Ionicons name="heart-outline" size={32} color={COLORS.textMuted} />
-            <Text style={styles.emptyText}>No favorites yet</Text>
+            <Text style={styles.emptyText}>{t('favoritesEmpty')}</Text>
           </BlurView>
         )}
       </View>
@@ -471,14 +498,14 @@ export default function ProfileScreen() {
       {/* Recent Activity */}
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Recent Activity</Text>
-          <TouchableOpacity onPress={() => router.push('/history')}><Text style={styles.seeAllText}>VIEW ALL</Text></TouchableOpacity>
+          <Text style={styles.sectionTitle}>{t('recentActivity')}</Text>
+          <TouchableOpacity onPress={() => router.push('/history')}><Text style={styles.seeAllText}>{t('viewAll')}</Text></TouchableOpacity>
         </View>
         <View style={styles.activityList}>
           {recentActivity.length === 0 ? (
             <BlurView intensity={10} style={styles.emptyCard}>
               <Ionicons name="time-outline" size={32} color={COLORS.textMuted} />
-              <Text style={styles.emptyText}>No watch history yet</Text>
+              <Text style={styles.emptyText}>{t('historyEmpty')}</Text>
             </BlurView>
           ) : (
             recentActivity.map((activity, idx) => (
@@ -488,7 +515,7 @@ export default function ProfileScreen() {
                 title={activity.anime_title}
                 episode={activity.episode_number}
                 progress={activity.progress_percentage || activity.progress_percent || 0}
-                time={activity.last_watched ? relativeTime(activity.last_watched) : ''}
+                time={activity.last_watched ? getLocalizedRelativeTime(activity.last_watched, locale) : ''}
                 onPress={() => router.push(`/anime/${activity.anime_id}`)}
               />
             ))
@@ -499,14 +526,14 @@ export default function ProfileScreen() {
 
       {/* Account Info Card */}
       <View style={styles.section}>
-        <Text style={[styles.gridSectionTitle, { marginBottom: 14 }]}>Account Info</Text>
+        <Text style={[styles.gridSectionTitle, { marginBottom: 14 }]}>{t('accountInfo')}</Text>
         <View style={styles.accountCard}>
           <View style={styles.accountRow}>
             <View style={styles.accountRowIcon}>
               <Ionicons name="mail-outline" size={16} color={COLORS.neonCyan} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.accountRowLabel}>Email</Text>
+              <Text style={styles.accountRowLabel}>{t('email')}</Text>
               <Text style={styles.accountRowValue} numberOfLines={1}>{user.email}</Text>
             </View>
           </View>
@@ -516,9 +543,9 @@ export default function ProfileScreen() {
               <Ionicons name="calendar-outline" size={16} color={COLORS.neonPulse} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.accountRowLabel}>Member Since</Text>
+              <Text style={styles.accountRowLabel}>{t('memberSince')}</Text>
               <Text style={styles.accountRowValue}>
-                {user.created_at ? new Date(user.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—'}
+                {user.created_at ? new Date(user.created_at).toLocaleDateString(getLocaleTag(locale), { month: 'long', day: 'numeric', year: 'numeric' }) : '—'}
               </Text>
             </View>
           </View>
@@ -528,14 +555,14 @@ export default function ProfileScreen() {
               <Ionicons name={user.subscription_type === 'premium' ? 'ribbon' : 'person-outline'} size={16} color={user.subscription_type === 'premium' ? COLORS.neonGold : COLORS.textMuted} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.accountRowLabel}>Plan</Text>
+              <Text style={styles.accountRowLabel}>{t('plan')}</Text>
               <Text style={[styles.accountRowValue, user.subscription_type === 'premium' && { color: COLORS.neonGold }]}>
-                {user.subscription_type === 'premium' ? 'Premium' : 'Free'}
+                {user.subscription_type === 'premium' ? t('premium') : t('free')}
               </Text>
             </View>
             {user.subscription_type !== 'premium' && (
               <TouchableOpacity style={styles.upgradePill} onPress={() => router.push('/settings')}>
-                <Text style={styles.upgradePillText}>UPGRADE</Text>
+                <Text style={styles.upgradePillText}>{t('upgrade')}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -544,7 +571,7 @@ export default function ProfileScreen() {
 
       <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
         <Ionicons name="log-out-outline" size={20} color={COLORS.danger} />
-        <Text style={styles.signOutText}>SIGN OUT</Text>
+        <Text style={styles.signOutText}>{t('signOut')}</Text>
       </TouchableOpacity>
 
       {/* Edit Profile Modal */}
@@ -553,24 +580,24 @@ export default function ProfileScreen() {
           <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setEditVisible(false)} />
           <View style={styles.modalSheet}>
             <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>Edit Profile</Text>
-            <Text style={styles.modalLabel}>Username</Text>
+            <Text style={styles.modalTitle}>{t('editProfile')}</Text>
+            <Text style={styles.modalLabel}>{t('usernameLabel')}</Text>
             <TextInput
               style={styles.modalInput}
               value={editUsername}
               onChangeText={setEditUsername}
-              placeholder="Enter username"
+              placeholder={t('enterUsername')}
               placeholderTextColor={COLORS.textMuted}
               autoCapitalize="none"
               maxLength={30}
             />
             {renderUsernameStatus()}
-            <Text style={styles.modalLabel}>Bio</Text>
+            <Text style={styles.modalLabel}>{t('bioLabel')}</Text>
             <TextInput
               style={[styles.modalInput, { height: 80, textAlignVertical: 'top' }]}
               value={editBio}
               onChangeText={setEditBio}
-              placeholder="Tell people about yourself…"
+              placeholder={t('tellPeopleBio')}
               placeholderTextColor={COLORS.textMuted}
               multiline
               maxLength={150}
@@ -586,7 +613,7 @@ export default function ProfileScreen() {
               <LinearGradient colors={[COLORS.neon, COLORS.accent]} start={{x:0,y:0}} end={{x:1,y:1}} style={styles.modalSaveGradient}>
                 {editSaving
                   ? <ActivityIndicator color="#000" size="small" />
-                  : <Text style={styles.modalSaveText}>Save Changes</Text>
+                  : <Text style={styles.modalSaveText}>{t('saveChanges')}</Text>
                 }
               </LinearGradient>
             </TouchableOpacity>
@@ -610,6 +637,7 @@ function StatTile({ value, label, color, isStreak }: any) {
 }
 
 function ActivityItem({ poster, title, episode, progress, time, onPress }: any) {
+  const { t } = useTranslation();
   return (
     <TouchableOpacity style={styles.activityItem} onPress={onPress} activeOpacity={0.8}>
       <Image source={{ uri: poster || 'https://via.placeholder.com/100x150' }} style={styles.activityPoster} />
@@ -618,7 +646,7 @@ function ActivityItem({ poster, title, episode, progress, time, onPress }: any) 
           <Text style={styles.activityTitle} numberOfLines={1}>{title}</Text>
           <Text style={styles.activityTime}>{time}</Text>
         </View>
-        <Text style={styles.activitySub}>Episode <Text style={{color: COLORS.text}}>{episode}</Text></Text>
+        <Text style={styles.activitySub}>{t('episodeNumber', { number: episode })}</Text>
         <View style={styles.activityProgressContainer}>
           <View style={styles.activityProgressLine}>
             <View style={[styles.activityProgressFill, { width: `${Math.min(progress, 100)}%` }]} />

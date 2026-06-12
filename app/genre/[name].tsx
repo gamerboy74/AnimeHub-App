@@ -37,7 +37,7 @@ export default function GenreBrowseScreen() {
     <AnimeCard
       anime={item}
       size="sm"
-      onPress={() => handleCardPress(item.id)}
+      onPress={handleCardPress}
     />
   ), [handleCardPress]);
 

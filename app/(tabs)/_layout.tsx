@@ -6,8 +6,11 @@ import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import UniversalHeader from '../../src/components/ui/UniversalHeader';
+import { useTranslation } from '../../src/context/LocalizationContext';
 
 export default function TabLayout() {
+  const { t } = useTranslation();
+
   return (
     <Tabs
       tabBar={(props) => <CustomTabBar {...props} />}
@@ -17,22 +20,23 @@ export default function TabLayout() {
         tabBarStyle: { position: 'absolute' },
       }}
     >
-      <Tabs.Screen name="index" options={{ title: 'Home' }} />
-      <Tabs.Screen name="explore" options={{ title: 'Explore' }} />
-      <Tabs.Screen name="library" options={{ title: 'Library' }} />
-      <Tabs.Screen name="profile" options={{ title: 'Profile' }} />
+      <Tabs.Screen name="index" options={{ title: t('home') }} />
+      <Tabs.Screen name="explore" options={{ title: t('exploreLabel') }} />
+      <Tabs.Screen name="library" options={{ title: t('libraryLabel') }} />
+      <Tabs.Screen name="profile" options={{ title: t('profileLabel') }} />
     </Tabs>
   );
 }
 
 function CustomTabBar({ state, navigation }: any) {
   const insets = useSafeAreaInsets();
+  const { t } = useTranslation();
   
   const TABS = [
-    { name: 'index', icon: 'home', iconOutline: 'home-outline', label: 'Home' },
-    { name: 'explore', icon: 'search', iconOutline: 'search-outline', label: 'Explore' },
-    { name: 'library', icon: 'bookmark', iconOutline: 'bookmark-outline', label: 'Library' },
-    { name: 'profile', icon: 'person', iconOutline: 'person-outline', label: 'Profile' },
+    { name: 'index', icon: 'home', iconOutline: 'home-outline', label: t('home') },
+    { name: 'explore', icon: 'search', iconOutline: 'search-outline', label: t('exploreLabel') },
+    { name: 'library', icon: 'bookmark', iconOutline: 'bookmark-outline', label: t('libraryLabel') },
+    { name: 'profile', icon: 'person', iconOutline: 'person-outline', label: t('profileLabel') },
   ];
 
   return (
