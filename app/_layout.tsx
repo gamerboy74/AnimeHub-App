@@ -32,9 +32,12 @@ export default function RootLayout() {
     'BeVietnamPro': require('../assets/fonts/BeVietnamPro-Medium.ttf'),
   });
 
+  // Don't hide the splash until fonts are ready — auth readiness is handled
+  // inside AuthGuard (which has access to the AuthContext).
   useEffect(() => {
     if (loaded || error) {
-      SplashScreen.hideAsync();
+      // Fonts ready — AuthGuard will release the splash once auth resolves too.
+      // We do NOT call hideAsync() here; AuthGuard owns that responsibility.
     }
   }, [loaded, error]);
 
@@ -79,14 +82,23 @@ const PROTECTED_PREFIXES = [
 function AuthGuard() {
   const router = useRouter();
   const pathname = usePathname();
-  const { session, loading } = useAuth();
+  const { session, loading, isAuthReady } = useAuth();
 
   // Initialize push notification listeners & token database registration
   usePushNotifications();
 
+  // Hide the splash screen only AFTER auth state is resolved.
+  // This prevents the "logged-out flash" that occurs when fonts load fast
+  // but the Supabase AsyncStorage session hydration hasn't finished yet.
+  useEffect(() => {
+    if (isAuthReady) {
+      SplashScreen.hideAsync();
+    }
+  }, [isAuthReady]);
+
   useEffect(() => {
     // Wait for the initial session load before redirecting
-    if (loading) return;
+    if (!isAuthReady) return;
     if (!session) {
       const isProtected = PROTECTED_PREFIXES.some(p => pathname.startsWith(p));
       if (isProtected) {
@@ -103,7 +115,7 @@ function AuthGuard() {
       };
       checkAAL();
     }
-  }, [session, loading, pathname]);
+  }, [session, isAuthReady, pathname]);
 
   return (
     <Stack screenOptions={{

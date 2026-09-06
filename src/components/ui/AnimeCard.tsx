@@ -5,19 +5,21 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, RADIUS, SPACING } from '../../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { Anime, AnimeWithStats } from '../../lib/supabase';
-import { usePrefetch } from '../../hooks/usePrefetch';
 
 const { width } = Dimensions.get('window');
 
 type Props = {
   anime: Anime | AnimeWithStats;
   onPress: (id: string) => void;
+  /** Optional: called on long-press. Hoist usePrefetch to the parent
+   *  and pass `() => prefetchAnime(anime.id)` so this hook runs once
+   *  per list instead of once per card. */
+  onLongPress?: () => void;
   size?: 'sm' | 'md' | 'lg';
   showStats?: boolean;
 };
 
-const AnimeCard = React.memo(function AnimeCard({ anime, onPress, size = 'md', showStats = false }: Props) {
-  const { prefetchAnime } = usePrefetch();
+const AnimeCard = React.memo(function AnimeCard({ anime, onPress, onLongPress, size = 'md', showStats = false }: Props) {
   // Memoized per `size` — avoids recalculating on every render triggered by parent
   const { cardWidth, cardHeight } = useMemo(() => {
     const w = size === 'sm' ? 120 : size === 'lg' ? width - 32 : 160;
@@ -30,7 +32,7 @@ const AnimeCard = React.memo(function AnimeCard({ anime, onPress, size = 'md', s
   return (
     <TouchableOpacity
       onPress={() => onPress(anime.id)}
-      onLongPress={() => prefetchAnime(anime.id)}
+      onLongPress={onLongPress}
       activeOpacity={0.85}
       style={[styles.container, { width: cardWidth }]}
     >

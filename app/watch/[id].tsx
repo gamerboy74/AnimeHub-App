@@ -29,6 +29,7 @@ import { useAutoPlay } from "../../src/hooks/useAutoPlay";
 import { useAutoSkipIntro } from "../../src/hooks/useAutoSkipIntro";
 import { useServerSelection, ServerLang } from "../../src/hooks/useServerSelection";
 import ServerPickerSheet from "../../src/components/ui/ServerPickerSheet";
+import { useHlsDownloader } from "../../src/hooks/useHlsDownloader";
 import { supabase, userAPI } from "../../src/lib/supabase";
 import { useAuth } from "../../src/context/AuthContext";
 import { COLORS } from "../../src/constants/theme";
@@ -42,6 +43,7 @@ import EpisodeSelectorSheet from "../../src/components/player/EpisodeSelectorShe
 import NextUpCard from "../../src/components/player/NextUpCard";
 import StreamErrorOverlay from "../../src/components/player/StreamErrorOverlay";
 import PlayerHUDOverlay from "../../src/components/player/PlayerHUDOverlay";
+import DoubleTapSeek from "../../src/components/player/DoubleTapSeek";
 
 // ─── CONSTANTS ─────────────────────────────────────────────────────────────────
 const NEAR_END_THRESHOLD_FALLBACK = 60;
@@ -133,7 +135,7 @@ export default function WatchScreen() {
 
   // Initialize HLS downloader Hook
   const { status: downloadStatus, progress: downloadProgress, startDownload, cancelDownload, handleDownloadMessage } =
-    require("../../src/hooks/useHlsDownloader").useHlsDownloader();
+    useHlsDownloader();
 
   const webviewRef = useRef<WebViewType>(null);
   const nearEndFired = useRef(false);
@@ -145,7 +147,6 @@ export default function WatchScreen() {
   const playerTickerRef = useRef<ReturnType<typeof setInterval> | null>(null); // 1s real-time ticker
   const seekTargetRef = useRef<number | null>(null);
   const lastSeekTimeRef = useRef<number>(0);
-  const hasAppliedResumeRef = useRef(false);
 
   // Dynamic redirect tracking refs
   const isPageLoadedRef = useRef(false);
@@ -231,7 +232,7 @@ export default function WatchScreen() {
   const { data: episode, isLoading: loadingEp } = useEpisodeDetails(id as string);
   const { data: anime, isLoading: loadingAnime } = useAnimeDetails(episode?.anime_id);
   const { data: episodes } = useEpisodes(episode?.anime_id);
-  const { data: savedProgress } = useWatchProgress(id as string);
+  const { data: savedProgress, isLoading: loadingProgress } = useWatchProgress(id as string);
 
   const resumeSeconds = savedProgress?.progress_seconds ?? 0;
 
@@ -387,8 +388,10 @@ export default function WatchScreen() {
       console.error("[Watch] Progress save failed:", JSON.stringify(error));
     } else {
       console.log(`[Watch] ✓ Progress saved: ${current}s / ${duration}s (ep: ${eid})`);
-      // Invalidate watch queries so lists show fresh progress immediately
-      queryClient.invalidateQueries({ queryKey: ["user", uid] });
+      // Only invalidate the exact episode's progress key during active playback.
+      // The broad user invalidation runs on unmount to avoid flooding all user
+      // queries (history, profile, anime-progress) every 5 seconds.
+      queryClient.invalidateQueries({ queryKey: ["user", uid, "progress", eid] });
     }
   }, [queryClient]);
 
@@ -438,7 +441,8 @@ export default function WatchScreen() {
         (async () => {
           try {
             await userAPI.upsertProgress(uid, eid, current, duration > 0 && current > duration * 0.9);
-            // Invalidate queries so that Continue Watching is 100% accurate
+            // Broad invalidation on unmount (once) — updates Continue Watching,
+            // history, and anime-progress lists after the user leaves the player.
             queryClient.invalidateQueries({ queryKey: ["user", uid] });
           } catch (err) {
             console.error("[Watch] [Unmount] Final progress save error:", err);
@@ -582,20 +586,10 @@ export default function WatchScreen() {
         if (msg.type === "player_ready") {
           setPlayerReady(true);
           setPlayerError(false);
-          if (initialResumeSecondsRef.current > 5 && !hasAppliedResumeRef.current) {
-            hasAppliedResumeRef.current = true;
-            console.log(`[Watch] [player_ready] Seeking to initial resume position: ${initialResumeSecondsRef.current}s`);
-            setTimeout(() => embeddedSeekTo(initialResumeSecondsRef.current), 500);
-          }
         }
 
         if (msg.type === "player_not_found") {
           setPlayerReady(true);
-          if (initialResumeSecondsRef.current > 5 && !hasAppliedResumeRef.current) {
-            hasAppliedResumeRef.current = true;
-            console.log(`[Watch] [player_not_found] Seeking to initial resume position: ${initialResumeSecondsRef.current}s`);
-            setTimeout(() => embeddedSeekTo(initialResumeSecondsRef.current), 500);
-          }
         }
 
         if (msg.type === "episode_complete") {
@@ -731,7 +725,6 @@ export default function WatchScreen() {
   useEffect(() => {
     nearEndFired.current = false;
     lastSavedRef.current = 0;
-    hasAppliedResumeRef.current = false;
     hasShownResumeToastRef.current = false;
     setShowNextUp(false);
     setPlayerReady(false);
@@ -776,7 +769,6 @@ export default function WatchScreen() {
   useEffect(() => {
     setPlayerReady(false);
     setPlayerError(false);
-    hasAppliedResumeRef.current = false;
     setSniffedMediaUrl(null);
     setSniffedReferer("");
     setSniffedManifestCache({});
@@ -798,13 +790,18 @@ export default function WatchScreen() {
     startSpinnerTimeout();
   }, [srv.embedUrl, startSpinnerTimeout]);
 
+  // Re-build injected JS whenever the episode changes OR saved progress is loaded.
+  // Previously this only depended on autoSkipIntroEnabled / useNativePlayerOnly,
+  // so navigating from "Continue Watching" always injected resumeSeconds=0 because
+  // initialResumeSecondsRef.current had updated but the memo never recomputed.
   const injectedJS = useMemo(
     () => buildCombinedJS(initialResumeSecondsRef.current, autoSkipIntroEnabled, useNativePlayerOnly),
-    [autoSkipIntroEnabled, useNativePlayerOnly]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [id, resumeSeconds, autoSkipIntroEnabled, useNativePlayerOnly]
   );
 
   // ── Guards ────────────────────────────────────────────────────────────────
-  if (loadingEp || loadingAnime) {
+  if (loadingEp || loadingAnime || (loadingProgress && !!user)) {
     return (
       <View style={styles.fullCenter}>
         <ActivityIndicator size="large" color={COLORS.neon} />
@@ -959,6 +956,16 @@ export default function WatchScreen() {
           return true;
         }}
       />
+
+      {/* ── NETFLIX-STYLE DOUBLE-TAP SEEK ── */}
+      {/* Sits above the WebView but below HUD overlays. Left zone = -10s, right = +10s.
+          Single-tap is forwarded to toggleHud so the HUD toggle still works. */}
+      {!playerError && playerReady && (
+        <DoubleTapSeek
+          onSeekRelative={handleSeekRelative}
+          onSingleTap={toggleHud}
+        />
+      )}
 
       {/* ── LOADING INDICATOR ── */}
       {!playerReady && !playerError && (

@@ -112,17 +112,16 @@ export default function ProfileScreen() {
   };
 
   // ── TanStack Query — shared cache with Library / History screens ────────────
+  // IMPORTANT: queryFn must be identical to library.tsx so both screens share
+  // the same ['user', userId, 'history'] cache entry. If they diverge, one
+  // screen will always re-fetch on mount even though the data is fresh.
   const { data: allProgress = [], isLoading: loadingProgress } = useQuery({
     queryKey: ['user', userId, 'history'],
     staleTime: 30 * 1000,
     gcTime: 5 * 60 * 1000,
     enabled: !!userId,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('user_watch_progress_detailed')
-        .select('*')
-        .eq('user_id', userId!)
-        .order('last_watched', { ascending: false });
+      const { data, error } = await userAPI.getProgress(userId!);
       if (error) throw error;
       return data ?? [];
     },

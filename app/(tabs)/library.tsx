@@ -202,6 +202,12 @@ export default function LibraryScreen() {
   );
 
   const handleContinueWatchingPress = useCallback((episodeId: string) => {
+    // Guard: episode_id may be null/undefined for progress rows that were saved before
+    // the episode record was fully populated. Skip navigation in that case.
+    if (!episodeId) {
+      console.warn('[Library] Continue Watching: missing episode_id, skipping navigation');
+      return;
+    }
     router.push(`/watch/${episodeId}`);
   }, [router]);
 

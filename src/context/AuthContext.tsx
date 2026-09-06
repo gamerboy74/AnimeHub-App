@@ -12,6 +12,7 @@ type AuthContextType = {
   session: Session | null;
   user: User | null;
   loading: boolean;
+  isAuthReady: boolean;  // true once the initial session check is complete
   signIn: (email: string, password: string) => Promise<{ error: any }>;
   signUp: (email: string, password: string, username: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
@@ -26,51 +27,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  // isAuthReady becomes true exactly once — after the very first session check.
+  // Components should gate their auth-dependent renders on this flag, not `loading`,
+  // to avoid the brief "logged-out" flash while AsyncStorage is being hydrated.
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const isInitializedRef = React.useRef(false);
 
   useEffect(() => {
-    // Safely load the initial session.
-    // If the stored refresh token is invalid/expired, Supabase throws
-    // AuthApiError: "Refresh Token Not Found". We catch that, sign out
-    // cleanly (clears AsyncStorage), and treat the user as logged-out.
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
-      if (error) {
-        // Invalid / expired token — wipe it and start fresh
-        console.warn('[Auth] Stale session detected, signing out:', error.message);
-        supabase.auth.signOut();
+    // ── Single authoritative source of truth: onAuthStateChange ──────────────
+    // Supabase fires INITIAL_SESSION synchronously from AsyncStorage on mount,
+    // which is BEFORE any network call. Using both getSession() AND the listener
+    // creates a race condition where both try to set state at the same time.
+    // Using the listener alone avoids the flash: by the time the app renders,
+    // the INITIAL_SESSION event has already fired with the cached session.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('[Auth] onAuthStateChange event:', event, 'Has session:', !!session);
+
+      if (event === 'SIGNED_OUT' || (event === 'TOKEN_REFRESHED' && !session)) {
         setSession(null);
         setUser(null);
         setLoading(false);
+        if (!isInitializedRef.current) {
+          isInitializedRef.current = true;
+          setIsAuthReady(true);
+        }
         return;
       }
-      setSession(session);
-      if (session?.user) fetchUserProfile(session.user.id, session.user);
-      else setLoading(false);
-    }).catch((err) => {
-      // Network error or unexpected throw — treat same as invalid token
-      console.warn('[Auth] getSession threw unexpectedly:', err);
-      supabase.auth.signOut();
-      setSession(null);
-      setUser(null);
-      setLoading(false);
-    });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log('[Auth] onAuthStateChange event:', event, 'Has session:', !!session);
-      // Fix: explicit parentheses to make operator precedence clear
-      if (event === 'SIGNED_OUT' || (event === 'TOKEN_REFRESHED' && !session)) {
-        // Token refresh failed or explicit sign-out — clear everything
+      // Handle stale / invalid tokens gracefully
+      if (event === 'INITIAL_SESSION' && session === null) {
+        // No stored session — user is definitely logged out
         setSession(null);
         setUser(null);
         setLoading(false);
+        if (!isInitializedRef.current) {
+          isInitializedRef.current = true;
+          setIsAuthReady(true);
+        }
         return;
       }
 
       setSession(session);
       if (session?.user) {
         console.log('[Auth] Fetching profile for user ID:', session.user.id);
-        fetchUserProfile(session.user.id, session.user);
+        // fetchUserProfile sets isAuthReady inside its finally block
+        await fetchUserProfile(session.user.id, session.user, event === 'INITIAL_SESSION');
+      } else {
+        setUser(null);
+        setLoading(false);
+        if (!isInitializedRef.current) {
+          isInitializedRef.current = true;
+          setIsAuthReady(true);
+        }
       }
-      else { setUser(null); setLoading(false); }
     });
 
     return () => subscription.unsubscribe();
@@ -105,6 +114,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [session?.user?.id]);
 
   // ── Sync user subscription cache to AsyncStorage for offline verification ──
+  // Only runs when the subscription tier changes (not on every user field
+  // update) to avoid a redundant DB round-trip + AsyncStorage write on every
+  // realtime event (e.g. watch_count, username).
   useEffect(() => {
     if (user) {
       console.log('[Auth] Syncing subscription cache to AsyncStorage for:', user.email);
@@ -130,15 +142,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } else {
       AsyncStorage.removeItem('animehub:sub_cache');
     }
-  }, [user]);
+  // Intentionally scoped to id + subscription_type — not the full user object.
+  // Realtime field updates (username, watch_count, etc.) must not trigger this.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, user?.subscription_type]);
 
-  const fetchUserProfile = useCallback(async (userId: string, authUser?: any) => {
+  const fetchUserProfile = useCallback(async (userId: string, authUser?: any, isInitial = false) => {
     try {
       console.log('[Auth] fetchUserProfile starting for:', userId);
       const { data, error } = await userAPI.getProfile(userId);
       console.log('[Auth] fetchUserProfile getProfile result:', !!data, 'Error:', error?.message);
       if (error || !data) {
-        // Profile row missing (e.g. insert failed on signup, or first-time OAuth login)
+        // If it is a real network/transient error (not "row not found"), do NOT wipe user profile or log out
+        if (error && error.code !== 'PGRST116') {
+          console.warn('[Auth] Temporary DB/network error fetching profile. Keeping cached profile.');
+          return;
+        }
+
         console.warn('[Auth] Profile row missing for user:', userId, error?.message || 'No data');
         
         // Auto-heal / auto-create profile if we have active user session metadata (e.g., for Google OAuth)
@@ -174,7 +194,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
  
           if (createError) {
             console.error('[Auth] Failed to auto-create user profile:', createError.message);
-            setUser(null);
+            // Keep existing user if we have one
+            setUser(prev => prev);
           } else {
             setUser(createdData);
           }
@@ -186,11 +207,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (e) {
       console.error('[Auth] fetchUserProfile threw:', e);
-      setUser(null);
+      // Keep existing user if we have one
     } finally {
       setLoading(false);
+      // Mark auth as ready after the very first profile resolution
+      if (isInitial && !isInitializedRef.current) {
+        isInitializedRef.current = true;
+        setIsAuthReady(true);
+      }
     }
-  }, [session?.user]);
+  }, [session?.user?.id]);  // stable string primitive -- not session?.user (new object every auth event)
 
   const signIn = useCallback(async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -302,10 +328,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (e: any) {
       return { error: e };
     }
-  }, [session?.user]);
+  }, [session?.user?.id]);  // stable string primitive -- not session?.user (new object every auth event)
 
   return (
-    <AuthContext.Provider value={{ session, user, loading, signIn, signUp, signOut, refreshUser, signInWithGoogle, resetPassword }}>
+    <AuthContext.Provider value={{ session, user, loading, isAuthReady, signIn, signUp, signOut, refreshUser, signInWithGoogle, resetPassword }}>
       {children}
     </AuthContext.Provider>
   );

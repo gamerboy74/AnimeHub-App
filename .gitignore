@@ -42,4 +42,11 @@ yarn-error.*
 
 # scratch / test scripts
 scratch/
+captured_streams.txt
 
+# Supabase CLI internal state
+supabase/.temp/
+.temp/
+
+# Logs
+*.log

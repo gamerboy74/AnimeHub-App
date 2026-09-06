@@ -1,12 +1,13 @@
 {
   "name": "animehub-mobile",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
     "postinstall": "patch-package"
   },
   "dependencies": {

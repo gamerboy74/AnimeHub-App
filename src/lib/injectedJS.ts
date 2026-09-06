@@ -393,6 +393,19 @@ export const buildMainInjectedJS = (resumeSeconds: number, autoSkipIntro: boolea
     function startPolling(p) {
       attachErrorListeners(p);
 
+      function trySeekJW() {
+        try {
+          if (!resumeApplied_jw && ${resumeSeconds} > 5) {
+            var dur = p.getDuration();
+            if (dur > 5) {
+              resumeApplied_jw = true;
+              p.seek(${resumeSeconds});
+              console.log('[RN] Applied resume to JWPlayer:', ${resumeSeconds});
+            }
+          }
+        } catch(err) {}
+      }
+
       // ── EVENT-DRIVEN quality levels push ────────────────────────────────────
       // JWPlayer fires 'levels' when the quality list is populated from the
       // manifest. We push immediately to RN — no setTimeout or polling needed.
@@ -480,8 +493,9 @@ export const buildMainInjectedJS = (resumeSeconds: number, autoSkipIntro: boolea
           }));
         } catch(e) {}
       }
-      try { p.on('play',    function() { pushPlayState(true);  }); } catch(e) {}
-      try { p.on('playing', function() { pushPlayState(true);  }); } catch(e) {}
+      try { p.on('ready',   trySeekJW); } catch(e) {}
+      try { p.on('play',    function() { pushPlayState(true);  trySeekJW(); }); } catch(e) {}
+      try { p.on('playing', function() { pushPlayState(true);  trySeekJW(); }); } catch(e) {}
       try { p.on('pause',   function() { pushPlayState(false); }); } catch(e) {}
       try { p.on('idle',    function() { pushPlayState(false); }); } catch(e) {}
       // Push current state immediately so HUD is correct from the start
@@ -504,15 +518,17 @@ export const buildMainInjectedJS = (resumeSeconds: number, autoSkipIntro: boolea
           }
         } catch(e) {}
       }
-      try { p.on('firstFrame', pushProgress); } catch(e) {}
+      try { p.on('firstFrame', function() { pushProgress(); trySeekJW(); }); } catch(e) {}
       try { p.on('time', function _onFirstTime(d) {
         // 'time' fires continuously during playback — send once to establish duration,
         // then unsubscribe to avoid flooding the bridge.
         try { p.off('time', _onFirstTime); } catch(_e) {}
         pushProgress();
+        trySeekJW();
       }); } catch(e) {}
       // Also push now if duration already populated (e.g. player was paused/resumed)
       pushProgress();
+      trySeekJW();
 
       pollInterval = setInterval(function() {
         try {
@@ -520,11 +536,6 @@ export const buildMainInjectedJS = (resumeSeconds: number, autoSkipIntro: boolea
           var current  = Math.floor(p.getPosition());
           var duration = Math.floor(p.getDuration());
           var state    = p.getState();
-
-          if (!resumeApplied_jw && duration > 5 && ${resumeSeconds} > 5) {
-            resumeApplied_jw = true;
-            p.seek(${resumeSeconds});
-          }
 
           window.ReactNativeWebView.postMessage(JSON.stringify({
             type:     'progress',
@@ -562,11 +573,16 @@ export const buildMainInjectedJS = (resumeSeconds: number, autoSkipIntro: boolea
       clearInterval(videoInterval);
       clearInterval(readyCheck); // Fix 6: HTML5 won — stop JWPlayer poller
 
-      vid.addEventListener('loadedmetadata', function() {
+      function applyResumeHTML5() {
         if (!resumeApplied_vid && ${resumeSeconds} > 5) {
           resumeApplied_vid = true;
           vid.currentTime = ${resumeSeconds};
+          console.log('[RN] Applied resume to HTML5 video:', ${resumeSeconds});
         }
+      }
+
+      vid.addEventListener('loadedmetadata', function() {
+        applyResumeHTML5();
         // Immediately report duration so the progress bar appears right away
         if (!isNaN(vid.duration) && vid.duration > 0) {
           window.ReactNativeWebView.postMessage(JSON.stringify({
@@ -577,17 +593,7 @@ export const buildMainInjectedJS = (resumeSeconds: number, autoSkipIntro: boolea
           }));
         }
       });
-      if (!resumeApplied_vid && ${resumeSeconds} > 5 && vid.readyState >= 1) {
-        resumeApplied_vid = true;
-        vid.currentTime = ${resumeSeconds};
-      }
 
-      // ── Episode complete (HTML5 'ended' event) ──────────────────────────────
-      vid.addEventListener('ended', function() {
-        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'episode_complete' }));
-      });
-
-      // ── Instant play/pause for HTML5 video ───────────────────────────────────
       function pushVidPlayState() {
         try {
           window.ReactNativeWebView.postMessage(JSON.stringify({
@@ -595,11 +601,27 @@ export const buildMainInjectedJS = (resumeSeconds: number, autoSkipIntro: boolea
           }));
         } catch(e) {}
       }
-      vid.addEventListener('play',    pushVidPlayState);
-      vid.addEventListener('playing', pushVidPlayState);
+
+      vid.addEventListener('play', function() {
+        pushVidPlayState();
+        applyResumeHTML5();
+      });
+      vid.addEventListener('playing', function() {
+        pushVidPlayState();
+        applyResumeHTML5();
+      });
       vid.addEventListener('pause',   pushVidPlayState);
       vid.addEventListener('waiting', function() {
         window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', playing: false }));
+      });
+
+      if (!resumeApplied_vid && ${resumeSeconds} > 5 && vid.readyState >= 1) {
+        applyResumeHTML5();
+      }
+
+      // ── Episode complete (HTML5 'ended' event) ──────────────────────────────
+      vid.addEventListener('ended', function() {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'episode_complete' }));
       });
 
       // Forward HTML5 video errors
@@ -740,13 +762,43 @@ export const buildHideControlsJS = () => `
   })();
 `;
 
-export const buildNativePlayerOnlyJS = () => `
+export const buildNativePlayerOnlyJS = (resumeSeconds: number, pollIntervalMs: number = 5000) => `
   (function() {
-    // Tap → Toggle HUD listener
-    // Listen for any click/tap inside the WebView page. The event is NOT
-    // cancelled so the player's own controls still fire normally. We just
-    // piggyback on it to notify React Native so it can show/hide the HUD.
-    // Fix 1: top-frame guard (same as buildMainInjectedJS — prevents N messages per tap)
+    // 1) Block popups and redirects
+    window.open = function() { return null; };
+    window.alert = function() {};
+    window.confirm = function() { return false; };
+    window.prompt = function() { return null; };
+
+    try {
+      window.location.replace = function() { console.log('[RN] Blocked location.replace'); };
+      window.location.assign  = function() { console.log('[RN] Blocked location.assign'); };
+    } catch(e) {}
+
+    try {
+      var _locDesc = Object.getOwnPropertyDescriptor(window.location, 'href')
+                  || Object.getOwnPropertyDescriptor(Location.prototype, 'href');
+      if (_locDesc && _locDesc.set) {
+        Object.defineProperty(window.location, 'href', {
+          get: _locDesc.get,
+          set: function(url) {
+            try {
+              var dest = new URL(url, window.location.href);
+              if (dest.hostname === window.location.hostname) {
+                _locDesc.set.call(window.location, url);
+              } else {
+                console.log('[RN] Blocked location.href →', url);
+              }
+            } catch(e) {
+              _locDesc.set.call(window.location, url);
+            }
+          },
+          configurable: true,
+        });
+      }
+    } catch(e) {}
+
+    // 2) Tap → Toggle HUD listener
     document.addEventListener('click', function() {
       try {
         if (window === window.top) {
@@ -755,20 +807,77 @@ export const buildNativePlayerOnlyJS = () => `
           window.parent.postMessage(JSON.stringify({ type: 'iframe_click' }), '*');
         }
       } catch(e) {}
-    }, true); // capture phase — fires before the player's own handlers
+    }, true);
 
     window.addEventListener('message', function(e) {
       try {
         var data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
-        if (data && data.type === 'iframe_click') {
+        if (data && data.type === 'rn_command') {
+          var v = document.querySelector('video');
+          if (v) {
+            if (data.command === 'play') v.play();
+            else if (data.command === 'pause') v.pause();
+            else if (data.command === 'seek') v.currentTime = data.seconds;
+          }
+        } else if (data && data.type === 'iframe_click') {
           if (window === window.top) {
             window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'player_tap' }));
           } else {
             window.parent.postMessage(JSON.stringify({ type: 'iframe_click' }), '*');
           }
+        } else if (data && data.type && window === window.top && window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify(data));
         }
       } catch(err) {}
     });
+
+    // 3) Monitor <video> element
+    var resumeApplied = false;
+    var videoInterval = setInterval(function() {
+      var videos = document.querySelectorAll('video');
+      if (videos.length === 0) return;
+      var vid = videos[0];
+      clearInterval(videoInterval);
+
+      // Report player_ready
+      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'player_ready' }));
+
+      function applyResume() {
+        if (!resumeApplied && ${resumeSeconds} > 5) {
+          resumeApplied = true;
+          vid.currentTime = ${resumeSeconds};
+          console.log('[RN] Applied resume to native player:', ${resumeSeconds});
+        }
+      }
+
+      vid.addEventListener('loadedmetadata', applyResume);
+      vid.addEventListener('play', function() {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', playing: true }));
+      });
+      vid.addEventListener('playing', function() {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', playing: true }));
+      });
+      vid.addEventListener('pause', function() {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'playstate', playing: false }));
+      });
+      vid.addEventListener('ended', function() {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'episode_complete' }));
+      });
+
+      if (vid.readyState >= 1) {
+        applyResume();
+      }
+
+      setInterval(function() {
+        if (isNaN(vid.duration)) return;
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'progress',
+          current: Math.floor(vid.currentTime),
+          duration: Math.floor(vid.duration),
+          playing: !vid.paused,
+        }));
+      }, ${pollIntervalMs});
+    }, 1000);
   })();
   true;
 `;
@@ -781,7 +890,7 @@ export const buildCombinedJS = (
   pollIntervalMs: number = 5000
 ) => {
   if (useNativePlayerOnly) {
-    return buildSnifferJS() + '\n' + buildNativePlayerOnlyJS();
+    return buildSnifferJS() + '\n' + buildNativePlayerOnlyJS(resumeSeconds, pollIntervalMs);
   }
   return (
     buildSnifferJS() +

@@ -52,7 +52,7 @@ export default function ReviewsScreen() {
     
     setSubmitting(true);
     try {
-      await reviewAPI.upsert(user.id, animeId, rating, text, isSpoiler);
+      await reviewAPI.upsert(user.id, animeId, rating * 2, text, isSpoiler);
       const { data } = await reviewAPI.getByAnime(animeId);
       setReviews(data || []);
       setRating(0); 
@@ -166,7 +166,7 @@ const ReviewCard = React.memo(
             <Text style={styles.reviewUser}>{item.users?.username || 'Anonymous'}</Text>
             <View style={styles.stars}>
               {[1, 2, 3, 4, 5].map(i => (
-                <Ionicons key={i} name={i <= (item.rating || 0) ? 'star' : 'star-outline'} size={11} color={COLORS.neonGold} />
+                <Ionicons key={i} name={i <= Math.round((item.rating || 0) / 2) ? 'star' : 'star-outline'} size={11} color={COLORS.neonGold} />
               ))}
             </View>
           </View>

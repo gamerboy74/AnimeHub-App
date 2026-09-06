@@ -1,7 +1,8 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, FlatList,
   TouchableOpacity, Dimensions, RefreshControl, ActivityIndicator,
+  Animated,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,13 +12,17 @@ import { useQueryClient } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { AnimeWithStats } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
-import { useTrendingAnime, useTopRatedAnime, useRecentAnime, useHeroAnime } from '../../src/hooks/useQueries';
+import { useTrendingAnime, useTopRatedAnime, useRecentAnime } from '../../src/hooks/useQueries';
 import { usePrefetch } from '../../src/hooks/usePrefetch';
 import AnimeCard from '../../src/components/ui/AnimeCard';
 
 const { width } = Dimensions.get('window');
 
 const GENRES = ['Action', 'Romance', 'Comedy', 'Drama', 'Fantasy', 'Horror', 'Sci-Fi', 'Slice of Life', 'Sports', 'Mystery'];
+
+// ── HERO CAROUSEL INTERVAL (ms) ───────────────────────────────────────────────
+const HERO_INTERVAL_MS = 5000;
+const HERO_SLIDE_COUNT = 5;
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -32,10 +37,22 @@ export default function HomeScreen() {
   const { data: topRated = [], isLoading: loadingRated } = useTopRatedAnime();
   const { data: recent = [], isLoading: loadingRecent } = useRecentAnime();
 
-  // Hero: first trending item that has a banner_url (guaranteed by useHeroAnime)
-  const { data: hero } = useHeroAnime();
+  // ── Hero carousel — top N trending anime that have a banner or poster ──────────────
+  const heroSlides = useMemo(
+    () => trending.filter(a => !!(a.banner_url || a.poster_url)).slice(0, HERO_SLIDE_COUNT),
+    [trending],
+  );
 
-  const loading = loadingTrend || loadingRated || loadingRecent;
+  const [heroIndex, setHeroIndex] = useState(0);
+  const heroIndexRef = useRef(0);
+  const autoPlayRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isUserScrollingRef = useRef(false);
+  const flatListRef = useRef<FlatList>(null);
+
+  // Sync index to ref to avoid stale closures in setInterval without recreating the timer
+  useEffect(() => {
+    heroIndexRef.current = heroIndex;
+  }, [heroIndex]);
 
   // Silently warm the cache for the top 5 visible cards while the user
   // looks at the hero section — navigation feels instant afterward
@@ -44,6 +61,45 @@ export default function HomeScreen() {
       prefetchAnimeList(trending.map(a => a.id), 5);
     }
   }, [trending, prefetchAnimeList]);
+
+  const startAutoPlay = useCallback(() => {
+    if (autoPlayRef.current) clearInterval(autoPlayRef.current);
+    if (heroSlides.length <= 1) return;
+    autoPlayRef.current = setInterval(() => {
+      if (!isUserScrollingRef.current) {
+        const next = (heroIndexRef.current + 1) % heroSlides.length;
+        setHeroIndex(next);
+        flatListRef.current?.scrollToIndex({ index: next, animated: true });
+      }
+    }, HERO_INTERVAL_MS);
+  }, [heroSlides.length]);
+
+  useEffect(() => {
+    startAutoPlay();
+    return () => {
+      if (autoPlayRef.current) clearInterval(autoPlayRef.current);
+    };
+  }, [startAutoPlay]);
+
+  const handleScroll = useCallback((e: any) => {
+    const offsetX = e.nativeEvent.contentOffset.x;
+    const cardWidth = width - SPACING.md * 2;
+    const index = Math.round(offsetX / cardWidth);
+    if (index >= 0 && index < heroSlides.length && index !== heroIndexRef.current) {
+      setHeroIndex(index);
+    }
+  }, [heroSlides.length]);
+
+  const scrollToIndex = useCallback((index: number) => {
+    setHeroIndex(index);
+    flatListRef.current?.scrollToIndex({ index, animated: true });
+  }, []);
+
+  const getItemLayout = useCallback((_: any, index: number) => ({
+    length: width - SPACING.md * 2,
+    offset: (width - SPACING.md * 2) * index,
+    index,
+  }), [width]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -75,65 +131,120 @@ export default function HomeScreen() {
       {/* Space for Universal Header overlap if needed, otherwise start content */}
       <View style={{ height: SPACING.md }} />
 
-      {/* Hero Banner */}
-      {hero && (
-        <TouchableOpacity
-          style={styles.hero}
-          onPress={() => router.push(`/anime/${hero.id}`)}
-          activeOpacity={0.92}
-        >
-          <Image
-            source={{ uri: hero.banner_url || hero.poster_url || '' }}
-            style={styles.heroBg}
-            contentFit="cover"
-            transition={200}
-          />
-          <View style={styles.heroOverlay} />
-          {/* Scan line effect */}
-          <View style={styles.scanLines} />
+      {/* ── Auto-Rotating Hero Paging Carousel ── */}
+      {heroSlides.length > 0 && (
+        <View style={styles.hero}>
+          <FlatList
+            ref={flatListRef}
+            data={heroSlides}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            keyExtractor={(item) => item.id}
+            getItemLayout={getItemLayout}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+            onScrollBeginDrag={() => {
+              isUserScrollingRef.current = true;
+              if (autoPlayRef.current) {
+                clearInterval(autoPlayRef.current);
+                autoPlayRef.current = null;
+              }
+            }}
+            onScrollEndDrag={() => {
+              isUserScrollingRef.current = false;
+              startAutoPlay();
+            }}
+            onMomentumScrollEnd={(e) => {
+              isUserScrollingRef.current = false;
+              const offsetX = e.nativeEvent.contentOffset.x;
+              const cardWidth = width - SPACING.md * 2;
+              const index = Math.round(offsetX / cardWidth);
+              if (index >= 0 && index < heroSlides.length) {
+                setHeroIndex(index);
+              }
+              startAutoPlay();
+            }}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                activeOpacity={0.95}
+                style={{ width: width - SPACING.md * 2, height: 420 }}
+                onPress={() => router.push(`/anime/${item.id}`)}
+              >
+                <Image
+                  source={{ uri: item.banner_url || item.poster_url || '' }}
+                  style={styles.heroBg}
+                  contentFit="cover"
+                  transition={200}
+                />
+                <View style={styles.heroOverlay} />
+                <View style={styles.scanLines} />
 
-          <View style={styles.heroContent}>
-            <View style={styles.heroTrendingBadge}>
-              <View style={styles.trendingDot} />
-              <Text style={styles.trendingText}>// TRENDING NOW</Text>
-            </View>
-            <Text style={styles.heroTitle}>{hero.title}</Text>
-            {hero.title_japanese && (
-              <Text style={styles.heroTitleJp}>{hero.title_japanese}</Text>
-            )}
-            <View style={styles.heroMeta}>
-              {hero.year && <Text style={styles.heroMetaText}>{hero.year}</Text>}
-              {hero.type && <Text style={styles.heroMetaText}>• {hero.type}</Text>}
-              {hero.status && <Text style={styles.heroMetaText}>• {hero.status}</Text>}
-              {hero.user_rating_avg && (
-                <View style={styles.heroRating}>
-                  <Ionicons name="star" size={12} color={COLORS.neonGold} />
-                  <Text style={styles.heroRatingText}>{Number(hero.user_rating_avg).toFixed(1)}</Text>
+                <View style={styles.heroContent}>
+                  <View style={styles.heroTrendingBadge}>
+                    <View style={styles.trendingDot} />
+                    <Text style={styles.trendingText}>// TRENDING NOW</Text>
+                  </View>
+                  <Text style={styles.heroTitle} numberOfLines={2}>{item.title}</Text>
+                  {item.title_japanese && (
+                    <Text style={styles.heroTitleJp} numberOfLines={1}>{item.title_japanese}</Text>
+                  )}
+                  <View style={styles.heroMeta}>
+                    {item.year && <Text style={styles.heroMetaText}>{item.year}</Text>}
+                    {item.type && <Text style={styles.heroMetaText}>• {item.type}</Text>}
+                    {item.status && <Text style={styles.heroMetaText}>• {item.status}</Text>}
+                    {item.user_rating_avg && (
+                      <View style={styles.heroRating}>
+                        <Ionicons name="star" size={12} color={COLORS.neonGold} />
+                        <Text style={styles.heroRatingText}>{Number(item.user_rating_avg).toFixed(1)}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <View style={styles.heroButtons}>
+                    <TouchableOpacity
+                      style={styles.playBtn}
+                      onPress={() => router.push(`/anime/episodes/${item.id}`)}
+                    >
+                      <Ionicons name="play" size={16} color={COLORS.bg} />
+                      <Text style={styles.playBtnText}>PLAY NOW</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.infoBtn}
+                      onPress={() => router.push(`/anime/${item.id}`)}
+                    >
+                      <Ionicons name="information-circle-outline" size={16} color={COLORS.neon} />
+                      <Text style={styles.infoBtnText}>MORE INFO</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
-              )}
-            </View>
-            <View style={styles.heroButtons}>
-              <TouchableOpacity
-                style={styles.playBtn}
-                onPress={() => router.push(`/anime/episodes/${hero.id}`)}
-              >
-                <Ionicons name="play" size={16} color={COLORS.bg} />
-                <Text style={styles.playBtnText}>PLAY NOW</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.infoBtn}
-                onPress={() => router.push(`/anime/${hero.id}`)}
-              >
-                <Ionicons name="information-circle-outline" size={16} color={COLORS.neon} />
-                <Text style={styles.infoBtnText}>MORE INFO</Text>
-              </TouchableOpacity>
+            )}
+          />
+
+          {/* Dot indicators overlayed on the bottom center */}
+          {heroSlides.length > 1 && (
+            <View style={styles.heroDotRow}>
+              {heroSlides.map((_, i) => (
+                <TouchableOpacity
+                  key={i}
+                  onPress={() => scrollToIndex(i)}
+                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                >
+                  <View
+                    style={[
+                      styles.heroDot,
+                      i === heroIndex && styles.heroDotActive,
+                    ]}
+                  />
+                </TouchableOpacity>
+              ))}
             </View>
-          </View>
+          )}
 
           {/* Neon corner accent */}
-          <View style={styles.heroCornerTL} />
-          <View style={styles.heroCornerBR} />
-        </TouchableOpacity>
+          <View style={styles.heroCornerTL} pointerEvents="none" />
+          <View style={styles.heroCornerBR} pointerEvents="none" />
+        </View>
       )}
 
       {/* Genre Pills */}
@@ -187,15 +298,17 @@ export default function HomeScreen() {
 interface HomeAnimeCardProps {
   item: AnimeWithStats;
   onPress: (id: string) => void;
+  onLongPress: (id: string) => void;
   showStats: boolean;
 }
 
 const HomeAnimeCard = React.memo(
-  ({ item, onPress, showStats }: HomeAnimeCardProps) => {
+  ({ item, onPress, onLongPress, showStats }: HomeAnimeCardProps) => {
     return (
       <AnimeCard
         anime={item}
         onPress={onPress}
+        onLongPress={() => onLongPress(item.id)}
         showStats={showStats}
       />
     );
@@ -213,17 +326,25 @@ const AnimeRow = React.memo(
   ({ title, subtitle, data, router, showStats = false, seeAllRoute }: any) => {
     if (!data?.length) return null;
 
+    // One hook call per list row — not per card. Cards receive a stable callback.
+    const { prefetchAnime } = usePrefetch();
+
     const handleCardPress = useCallback((id: string) => {
       router.push(`/anime/${id}`);
     }, [router]);
+
+    const handleLongPress = useCallback((id: string) => {
+      prefetchAnime(id);
+    }, [prefetchAnime]);
 
     const renderItem = useCallback(({ item }: { item: any }) => (
       <HomeAnimeCard
         item={item}
         onPress={handleCardPress}
+        onLongPress={handleLongPress}
         showStats={showStats}
       />
-    ), [handleCardPress, showStats]);
+    ), [handleCardPress, handleLongPress, showStats]);
 
     const keyExtractor = useCallback((item: any) => item.id, []);
 
@@ -313,6 +434,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 0, left: 0, right: 0,
     padding: SPACING.lg,
+    paddingBottom: SPACING.xl,
     backgroundColor: 'rgba(8,8,16,0.7)',
   },
   heroTrendingBadge: {
@@ -363,6 +485,34 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(191,95,255,0.1)',
   },
   infoBtnText: { color: COLORS.neon, fontWeight: '700', fontSize: 12, letterSpacing: 1 },
+
+  // ── Hero carousel dots & nav ──────────────────────────────────────────────
+  heroDotRow: {
+    position: 'absolute',
+    bottom: 12,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    zIndex: 10,
+  },
+  heroDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+  },
+  heroDotActive: {
+    width: 20,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: COLORS.neon,
+    shadowColor: COLORS.neon,
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
+  },
 
   heroCornerTL: {
     position: 'absolute', top: 0, left: 0,

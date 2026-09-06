@@ -14,6 +14,7 @@ import { supabase, animeAPI, Anime, AnimeWithStats } from '../../src/lib/supabas
 import AnimeCard from '../../src/components/ui/AnimeCard';
 import { BlurView } from 'expo-blur';
 import RequestAnimeModal from '../../src/components/settings/RequestAnimeModal';
+import { usePrefetch } from '../../src/hooks/usePrefetch';
 
 const BENTO_GENRES = [
   {
@@ -150,6 +151,9 @@ export default function SearchScreen() {
   const [sortBy, setSortBy] = useState<'top_rated' | 'trending' | 'recent'>('top_rated');
   const [isFocused, setIsFocused] = useState(false);
 
+  // Hoist prefetch here so AnimeCard doesn't run useQueryClient() per-card
+  const { prefetchAnime } = usePrefetch();
+
   const GENRE_IDS = ['action', 'sci-fi', 'fantasy', 'adventure', 'romance'] as const;
   const GENRE_NAMES = ['Action', 'Sci-Fi', 'Fantasy', 'Adventure', 'Romance'];
 
@@ -158,7 +162,7 @@ export default function SearchScreen() {
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       if (sortBy === 'trending') return (await animeAPI.getTrending(8)).data || [];
-      if (sortBy === 'recent')   return (await animeAPI.getRecent(8)).data   || [];
+      if (sortBy === 'recent') return (await animeAPI.getRecent(8)).data || [];
       return (await animeAPI.getTopRated(8)).data || [];
     },
   });
@@ -288,10 +292,24 @@ export default function SearchScreen() {
   const recommendationKeyExtractor = useCallback((item: AnimeWithStats) => item.id, []);
   const searchResultKeyExtractor = useCallback((item: Anime) => item.id, []);
 
-  // Whether user has typed enough to be in "search mode"
   const isSearchActive = query.trim().length > 0;
 
-  const renderContent = () => {
+  // Memoized recommendation renderer so AnimeCard gets a stable onLongPress ref
+  const renderRecommItem = useCallback(({ item }: { item: AnimeWithStats }) => (
+    <AnimeCard
+      anime={item}
+      onPress={handleCardPress}
+      onLongPress={() => prefetchAnime(item.id)}
+      showStats
+    />
+  ), [handleCardPress, prefetchAnime]);
+
+  const recommKeyExtractor = useCallback((item: AnimeWithStats) => item.id, []);
+
+  // Wrapping renderContent in useCallback prevents it from being recreated on
+  // every keystroke / isFocused toggle, which would otherwise unmount and
+  // remount the entire explore tree on each character typed.
+  const renderContent = useCallback(() => {
     if (loading) {
       return (
         <View style={styles.center}>
@@ -413,7 +431,13 @@ export default function SearchScreen() {
               style={[styles.bentoTile, styles.bentoTileWide]}
               onPress={() => onGenrePress('Action')}
             >
-              <Image source={{ uri: genreImages['action'] ?? BENTO_GENRES[0].img }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
+              <Image
+                source={{ uri: genreImages['action'] ?? BENTO_GENRES[0].img }}
+                placeholder={{ uri: BENTO_GENRES[0].img }}
+                style={StyleSheet.absoluteFill}
+                contentFit="cover"
+                transition={400}
+              />
               <View style={styles.bentoDim} />
               <LinearGradient colors={['transparent', 'rgba(255,115,70,0.5)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
               <View style={styles.bentoContent}>
@@ -424,7 +448,13 @@ export default function SearchScreen() {
 
             <View style={styles.bentoRow}>
               <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Sci-Fi')}>
-                <Image source={{ uri: genreImages['sci-fi'] ?? BENTO_GENRES[1].img }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
+                <Image
+                  source={{ uri: genreImages['sci-fi'] ?? BENTO_GENRES[1].img }}
+                  placeholder={{ uri: BENTO_GENRES[1].img }}
+                  style={StyleSheet.absoluteFill}
+                  contentFit="cover"
+                  transition={400}
+                />
                 <View style={styles.bentoDim} />
                 <LinearGradient colors={['transparent', 'rgba(0,245,255,0.5)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
@@ -433,7 +463,13 @@ export default function SearchScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Fantasy')}>
-                <Image source={{ uri: genreImages['fantasy'] ?? BENTO_GENRES[2].img }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
+                <Image
+                  source={{ uri: genreImages['fantasy'] ?? BENTO_GENRES[2].img }}
+                  placeholder={{ uri: BENTO_GENRES[2].img }}
+                  style={StyleSheet.absoluteFill}
+                  contentFit="cover"
+                  transition={400}
+                />
                 <View style={styles.bentoDim} />
                 <LinearGradient colors={['transparent', 'rgba(191,95,255,0.5)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
@@ -444,7 +480,13 @@ export default function SearchScreen() {
 
             <View style={[styles.bentoRow, { marginTop: SPACING.md }]}>
               <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Adventure')}>
-                <Image source={{ uri: genreImages['adventure'] ?? BENTO_GENRES[3].img }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
+                <Image
+                  source={{ uri: genreImages['adventure'] ?? BENTO_GENRES[3].img }}
+                  placeholder={{ uri: BENTO_GENRES[3].img }}
+                  style={StyleSheet.absoluteFill}
+                  contentFit="cover"
+                  transition={400}
+                />
                 <View style={styles.bentoDim} />
                 <LinearGradient colors={['transparent', 'rgba(255,184,48,0.5)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
@@ -453,7 +495,13 @@ export default function SearchScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity style={styles.bentoTileSq} onPress={() => onGenrePress('Romance')}>
-                <Image source={{ uri: genreImages['romance'] ?? BENTO_GENRES[4].img }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
+                <Image
+                  source={{ uri: genreImages['romance'] ?? BENTO_GENRES[4].img }}
+                  placeholder={{ uri: BENTO_GENRES[4].img }}
+                  style={StyleSheet.absoluteFill}
+                  contentFit="cover"
+                  transition={400}
+                />
                 <View style={styles.bentoDim} />
                 <LinearGradient colors={['transparent', 'rgba(255,45,120,0.5)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
@@ -464,19 +512,21 @@ export default function SearchScreen() {
           </View>
         </View>
 
-        {/* Popular Recommendations */}
+        {/* Popular Recommendations — FlatList for virtualization */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Popular Recommendations</Text>
-          <View style={styles.gridContainer}>
-            {recommendations.map((item) => (
-              <AnimeCard
-                key={item.id}
-                anime={item}
-                onPress={handleCardPress}
-                showStats
-              />
-            ))}
-          </View>
+          <FlatList
+            data={recommendations}
+            keyExtractor={recommKeyExtractor}
+            renderItem={renderRecommItem}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: SPACING.sm, paddingVertical: SPACING.sm }}
+            removeClippedSubviews
+            windowSize={3}
+            maxToRenderPerBatch={4}
+            initialNumToRender={4}
+          />
         </View>
 
         {/* Top Studios */}
@@ -516,24 +566,28 @@ export default function SearchScreen() {
         </View>
       </ScrollView>
     );
-  };
+  }, [
+    loading, results, debouncedQuery, isSearchActive, trendingChips, genreImages,
+    recommendations, onGenrePress, handleCardPress, renderRecommItem, recommKeyExtractor,
+    clearSearch, router, setShowRequest, setQuery,
+  ]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
 
       {/* ── Persistent search bar — always visible, never unmounts ── */}
       <View style={styles.searchSection}>
-        <View 
+        <View
           style={[
-            styles.searchBar, 
+            styles.searchBar,
             isFocused && styles.searchBarFocused,
             isFocused && { borderColor: COLORS.neonCyan }
           ]}
         >
-          <Ionicons 
-            name="search" 
-            size={20} 
-            color={isFocused ? COLORS.neonCyan : COLORS.textMuted} 
+          <Ionicons
+            name="search"
+            size={20}
+            color={isFocused ? COLORS.neonCyan : COLORS.textMuted}
           />
           <TextInput
             style={styles.input}
@@ -553,7 +607,7 @@ export default function SearchScreen() {
               <Ionicons name="close-circle" size={20} color={isFocused ? COLORS.neonCyan : COLORS.textMuted} />
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={() => setShowFilter(true)}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             >

@@ -13,7 +13,7 @@ import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { supabase, userAPI, AnimeWithStats, Episode, Review, Character, RelatedAnime } from '../../src/lib/supabase';
 import { styles } from '../../src/screens/animeDetail.styles';
 import { useAuth } from '../../src/context/AuthContext';
-import { useAnimeDetails, useEpisodes, useAnimeCharacters, useAnimeRelations } from '../../src/hooks/useQueries';
+import { useAnimeDetails, useEpisodes, useAnimeCharacters, useAnimeRelations, useAnimeWatchProgress } from '../../src/hooks/useQueries';
 import { useToggleFavorite, useToggleWatchlist } from '../../src/hooks/useOptimisticMutations';
 import { getAllDownloads } from '../../src/hooks/useHlsDownloader';
 
@@ -40,6 +40,7 @@ export default function AnimeDetailScreen() {
   );
   const { data: characters = [] } = useAnimeCharacters(animeId);
   const { data: relations = [] } = useAnimeRelations(animeId);
+  const { data: watchProgressMap = new Map() } = useAnimeWatchProgress(animeId);
 
   // ── User-specific state (not cached globally — per-user) ──────────────────
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -310,7 +311,7 @@ export default function AnimeDetailScreen() {
 
         {/* Tab content */}
         {activeTab === 'episodes' && (
-          <EpisodesTab episodes={episodes} anime={anime} router={router} user={user} downloadedIds={downloadedIds} />
+          <EpisodesTab episodes={episodes} anime={anime} router={router} user={user} downloadedIds={downloadedIds} watchProgressMap={watchProgressMap} />
         )}
         {activeTab === 'reviews' && (
           <ReviewsTab reviews={reviews} anime={anime} router={router} user={user} />
@@ -356,8 +357,21 @@ const StatItem = React.memo(function StatItem({ icon, value, label }: { icon: an
   );
 });
 
-const EpisodesTab = React.memo(function EpisodesTab({ episodes, anime, router, user, downloadedIds }: any) {
+const EpisodesTab = React.memo(function EpisodesTab({ episodes, anime, router, user, downloadedIds, watchProgressMap }: any) {
   const isPremiumUser = user?.subscription_type === 'premium';
+
+  const handleEpPress = useCallback((ep: Episode) => {
+    if (ep.is_premium && user?.subscription_type !== 'premium') {
+      Alert.alert('Premium Required', 'Upgrade to watch premium episodes.');
+      return;
+    }
+    router.push(`/watch/${ep.id}?animeTitle=${encodeURIComponent(anime.title)}`);
+  }, [router, anime.title, user?.subscription_type]);
+
+  const handleEpDownload = useCallback((ep: Episode) => {
+    router.push(`/watch/${ep.id}?animeTitle=${encodeURIComponent(anime.title)}&autoDownload=true`);
+  }, [router, anime.title]);
+
   return (
     <View style={styles.tabContent}>
       {episodes.length === 0 ? (
@@ -368,31 +382,43 @@ const EpisodesTab = React.memo(function EpisodesTab({ episodes, anime, router, u
         <>
           {episodes.slice(0, 5).map((ep: Episode) => {
             const isDownloaded = downloadedIds?.has(ep.id);
+            const progress = watchProgressMap?.get(ep.id);
+            const isWatched = progress?.is_completed ?? false;
+            const progressSeconds = progress?.progress_seconds ?? 0;
+            const isInProgress = !isWatched && progressSeconds > 5;
+            const progressRatio = ep.duration && ep.duration > 0
+              ? Math.min(progressSeconds / ep.duration, 1) : 0;
             return (
-              <View key={ep.id} style={styles.epRow}>
+              <View key={ep.id} style={[styles.epRow, isWatched && { borderLeftWidth: 2, borderLeftColor: COLORS.success, paddingLeft: 6 }]}>
                 <TouchableOpacity
                   style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: SPACING.sm }}
-                  onPress={() => {
-                    if (ep.is_premium && user?.subscription_type !== 'premium') {
-                      Alert.alert('Premium Required', 'Upgrade to watch premium episodes.');
-                      return;
-                    }
-                    router.push(`/watch/${ep.id}?animeTitle=${encodeURIComponent(anime.title)}`);
-                  }}
+                  onPress={() => handleEpPress(ep)}
                 >
-                  <View style={styles.epNumWrap}>
-                    {ep.is_premium ? (
+                  <View style={[
+                    styles.epNumWrap,
+                    isWatched && { backgroundColor: 'rgba(0,245,180,0.12)', borderColor: 'rgba(0,245,180,0.5)' },
+                    { overflow: 'hidden', position: 'relative' },
+                  ]}>
+                    {isWatched ? (
+                      <Ionicons name="checkmark" size={16} color={COLORS.success} />
+                    ) : ep.is_premium ? (
                       <Ionicons name="star" size={14} color={COLORS.neonGold} />
                     ) : (
                       <Text style={styles.epNum}>{ep.episode_number}</Text>
                     )}
+                    {isInProgress && progressRatio > 0 && (
+                      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 3, backgroundColor: 'rgba(191,95,255,0.2)' }}>
+                        <View style={{ height: 3, width: `${Math.round(progressRatio * 100)}%` as any, backgroundColor: COLORS.neon }} />
+                      </View>
+                    )}
                   </View>
                   <View style={styles.epInfo}>
-                    <Text style={styles.epTitle} numberOfLines={1}>
+                    <Text style={[styles.epTitle, isWatched && { color: COLORS.textSub }]} numberOfLines={1}>
                       {ep.title || `Episode ${ep.episode_number}`}
                     </Text>
                     <Text style={styles.epMeta}>
                       {ep.duration ? `${Math.round(ep.duration / 60)}m` : ''}{ep.air_date ? ` • ${ep.air_date}` : ''}
+                      {isWatched ? ' • Watched' : isInProgress ? ` • ${Math.floor(progressSeconds / 60)}m watched` : ''}
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -404,11 +430,9 @@ const EpisodesTab = React.memo(function EpisodesTab({ episodes, anime, router, u
                       <Ionicons name="cloud-done" size={18} color={COLORS.neonCyan} />
                     </View>
                   ) : (
-                    user?.subscription_type === 'premium' && (
+                    isPremiumUser && (
                       <TouchableOpacity
-                        onPress={() => {
-                          router.push(`/watch/${ep.id}?animeTitle=${encodeURIComponent(anime.title)}&autoDownload=true`);
-                        }}
+                        onPress={() => handleEpDownload(ep)}
                         style={styles.epDownloadBtn}
                       >
                         <Ionicons name="cloud-download-outline" size={18} color={COLORS.textSub} />
@@ -416,15 +440,15 @@ const EpisodesTab = React.memo(function EpisodesTab({ episodes, anime, router, u
                     )
                   )}
 
-                  {ep.is_premium && user?.subscription_type !== 'premium' ? (
+                  {ep.is_premium && !isPremiumUser ? (
                     <Ionicons name="lock-closed" size={16} color={COLORS.neonGold} />
                   ) : (
-                    <TouchableOpacity
-                      onPress={() => {
-                        router.push(`/watch/${ep.id}?animeTitle=${encodeURIComponent(anime.title)}`);
-                      }}
-                    >
-                      <Ionicons name="play-circle-outline" size={22} color={COLORS.neon} />
+                    <TouchableOpacity onPress={() => handleEpPress(ep)}>
+                      <Ionicons
+                        name={isWatched ? 'play-circle' : 'play-circle-outline'}
+                        size={22}
+                        color={isWatched ? COLORS.success : COLORS.neon}
+                      />
                     </TouchableOpacity>
                   )}
                 </View>
@@ -496,7 +520,7 @@ const ReviewsTab = React.memo(function ReviewsTab({ reviews, anime, router, user
                   <Text style={styles.reviewUsername}>{r.users?.username || 'Anonymous'}</Text>
                   <View style={styles.reviewStars}>
                     {[1, 2, 3, 4, 5].map(i => (
-                      <Ionicons key={i} name={i <= (r.rating || 0) ? 'star' : 'star-outline'} size={11} color={COLORS.neonGold} />
+                      <Ionicons key={i} name={i <= Math.round((r.rating || 0) / 2) ? 'star' : 'star-outline'} size={11} color={COLORS.neonGold} />
                     ))}
                   </View>
                 </View>
@@ -651,6 +675,13 @@ function normalizeDescription(desc: string | null | undefined): string {
 }
 
 function CharacterModal({ visible, onClose, character }: { visible: boolean; onClose: () => void; character: Character | null }) {
+  // Memoize expensive regex-based normalization — description never changes while
+  // the modal is open, so this runs at most once per character open.
+  const cleanDescription = useMemo(
+    () => normalizeDescription(character?.description),
+    [character?.description],
+  );
+
   if (!character) return null;
 
   const isMain = character.role?.toLowerCase() === 'main';
@@ -734,7 +765,7 @@ function CharacterModal({ visible, onClose, character }: { visible: boolean; onC
                 <Text style={styles.charModalSectionTitle}>Description</Text>
               </View>
               <View style={styles.charDescBox}>
-                <Text style={styles.charDescText}>{normalizeDescription(character.description)}</Text>
+                <Text style={styles.charDescText}>{cleanDescription}</Text>
               </View>
             </View>
           ) : null}

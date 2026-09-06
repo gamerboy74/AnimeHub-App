@@ -217,6 +217,39 @@ export function useWatchProgress(episodeId?: string) {
   });
 }
 
+/**
+ * Returns a Map<episodeId, { is_completed, progress_seconds }> for all episodes
+ * of a given anime that the current user has watched. Used to show watch status
+ * indicators (✓ watched / progress bar) in episode lists.
+ */
+export function useAnimeWatchProgress(animeId?: string) {
+  const { user } = useAuth();
+  const userId = user?.id;
+  return useQuery({
+    queryKey: ['user', userId, 'anime-progress', animeId],
+    staleTime: 15 * 1000, // stay reasonably fresh — 15s
+    gcTime: 2 * 60 * 1000,
+    queryFn: async (): Promise<Map<string, { is_completed: boolean; progress_seconds: number }>> => {
+      if (!userId || !animeId) return new Map();
+      const { data, error } = await supabase
+        .from('user_progress')
+        .select('episode_id, is_completed, progress_seconds, episodes!inner(anime_id)')
+        .eq('user_id', userId)
+        .eq('episodes.anime_id', animeId);
+      if (error) throw error;
+      const map = new Map<string, { is_completed: boolean; progress_seconds: number }>();
+      (data ?? []).forEach((row: any) => {
+        map.set(row.episode_id, {
+          is_completed: row.is_completed ?? false,
+          progress_seconds: row.progress_seconds ?? 0,
+        });
+      });
+      return map;
+    },
+    enabled: !!userId && !!animeId,
+  });
+}
+
 export function useSimilarAnime(genres: string[] = [], currentAnimeId?: string, limit: number = 6) {
   return useQuery({
     queryKey: ['anime', 'similar', currentAnimeId, genres],
@@ -264,7 +297,9 @@ export function useAnimeCharacters(animeId?: string) {
   });
 }
 
-const jikanRelationsCache = new Map<number, any[]>();
+// NOTE: No module-level Jikan cache here — React Query's staleTime (1h) +
+// gcTime (2h) on useAnimeRelations already provides in-memory caching with
+// proper lifecycle management and type safety.
 
 function normalizeRelationType(type: string): RelatedAnime['relation_type'] {
   const norm = (type || '').toLowerCase().replace(/[^a-z0-9_]/g, '_');
@@ -300,34 +335,31 @@ export function useAnimeRelations(animeId?: string) {
       const currentMalId = currentAnimeRes.data?.mal_id;
       const localRelations = localRelationsRes.data || [];
 
-      // 2. Dynamically fetch relations from Jikan API as fallback/enrichment (utilizing in-memory cache)
+      // 2. Dynamically fetch relations from Jikan API as fallback/enrichment.
+      // React Query's staleTime (1h) / gcTime (2h) on this hook acts as the cache —
+      // no module-level Map needed.
       let jikanRelations: any[] = [];
       if (currentMalId) {
-        if (jikanRelationsCache.has(currentMalId)) {
-          jikanRelations = jikanRelationsCache.get(currentMalId)!;
-        } else {
-          try {
-            const res = await fetch(`https://api.jikan.moe/v4/anime/${currentMalId}/relations`);
-            if (res.ok) {
-              const json = await res.json();
-              const jdata = json.data || [];
-              for (const relGroup of jdata) {
-                const relType = relGroup.relation; // e.g. "Sequel", "Prequel", "Other", etc.
-                for (const entry of relGroup.entry) {
-                  if (entry.type === 'anime') { // Only keep anime format relations
-                    jikanRelations.push({
-                      mal_id: entry.mal_id,
-                      relation_type: relType,
-                      title: entry.name,
-                    });
-                  }
+        try {
+          const res = await fetch(`https://api.jikan.moe/v4/anime/${currentMalId}/relations`);
+          if (res.ok) {
+            const json = await res.json();
+            const jdata = json.data || [];
+            for (const relGroup of jdata) {
+              const relType = relGroup.relation; // e.g. "Sequel", "Prequel", "Other", etc.
+              for (const entry of relGroup.entry) {
+                if (entry.type === 'anime') { // Only keep anime format relations
+                  jikanRelations.push({
+                    mal_id: entry.mal_id,
+                    relation_type: relType,
+                    title: entry.name,
+                  });
                 }
               }
-              jikanRelationsCache.set(currentMalId, jikanRelations);
             }
-          } catch (e) {
-            console.warn(`[useAnimeRelations] Jikan relations fetch failed for malId ${currentMalId}:`, e);
           }
+        } catch (e) {
+          console.warn(`[useAnimeRelations] Jikan relations fetch failed for malId ${currentMalId}:`, e);
         }
       }
 
