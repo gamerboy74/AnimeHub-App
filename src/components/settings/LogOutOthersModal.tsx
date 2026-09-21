@@ -12,6 +12,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
+import { stopOtherStreams } from '../../lib/streamManager';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../screens/settings.styles';
 
@@ -35,6 +36,12 @@ export default function LogOutOthersModal({ visible, onClose, t }: LogOutOthersM
       // Call supabase to sign out other sessions
       const { error } = await supabase.auth.signOut({ scope: 'others' });
       if (error) throw error;
+
+      // Also clean up any active streams registered by other devices
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user?.id) {
+        await stopOtherStreams(user.id);
+      }
 
       setSuccess(true);
       setTimeout(() => {

@@ -1,12 +1,13 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useCallback } from 'react';
 import {
   View, Text, FlatList, StyleSheet, TouchableOpacity,
-  RefreshControl, ActivityIndicator,
+  RefreshControl, ActivityIndicator, Alert,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
 import { userAPI } from '../src/lib/supabase';
 import { useAuth } from '../src/context/AuthContext';
@@ -15,32 +16,43 @@ export default function FavoritesScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const [favorites, setFavorites] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const userId = user?.id;
+  const queryClient = useQueryClient();
 
-  const fetchData = useCallback(async () => {
-    if (!user) { setLoading(false); return; }
-    try {
-      const { data } = await userAPI.getFavorites(user.id);
-      setFavorites(data || []);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [user]);
+  const { data: favorites = [], isLoading: loading, isRefetching } = useQuery({
+    queryKey: ['user', userId, 'favorites'],
+    staleTime: 60 * 1000,
+    gcTime: 5 * 60 * 1000,
+    enabled: !!userId,
+    queryFn: async () => {
+      const { data, error } = await userAPI.getFavorites(userId!);
+      if (error) {
+        Alert.alert('Error', 'Could not load favorites. Please try again.');
+        throw error;
+      }
+      return data || [];
+    },
+  });
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  const onRefresh = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['user', userId, 'favorites'] });
+  }, [queryClient, userId]);
 
-  const onRefresh = () => { setRefreshing(true); fetchData(); };
-
+  // Optimistic remove — instant UI update, reverts on failure
   const removeItem = useCallback(async (animeId: string) => {
-    if (!user) return;
-    await userAPI.removeFavorite(user.id, animeId);
-    setFavorites(prev => prev.filter(f => f.anime_id !== animeId));
-  }, [user]);
+    if (!userId) return;
+    const prev = queryClient.getQueryData<any[]>(['user', userId, 'favorites']);
+    queryClient.setQueryData<any[]>(
+      ['user', userId, 'favorites'],
+      (old = []) => old.filter(f => f.anime_id !== animeId && f.anime?.id !== animeId),
+    );
+    try {
+      await userAPI.removeFavorite(userId, animeId);
+    } catch {
+      queryClient.setQueryData(['user', userId, 'favorites'], prev);
+      Alert.alert('Error', 'Could not remove item. Please try again.');
+    }
+  }, [userId, queryClient]);
 
   const handleCardPress = useCallback((id: string) => {
     router.push(`/anime/${id}`);
@@ -98,7 +110,13 @@ export default function FavoritesScreen() {
           data={favorites}
           keyExtractor={keyExtractor}
           contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.neon} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefetching}
+              onRefresh={onRefresh}
+              tintColor={COLORS.neon}
+            />
+          }
           renderItem={renderItem}
           ItemSeparatorComponent={ItemSeparator}
         />
@@ -142,6 +160,9 @@ const FavoriteItemRow = React.memo(
         <TouchableOpacity
           style={styles.removeBtn}
           onPress={() => onRemove(anime.id)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel={`Remove ${anime.title} from favorites`}
+          accessibilityRole="button"
         >
           <Ionicons name="heart" size={18} color={COLORS.neonPink} />
         </TouchableOpacity>
@@ -180,7 +201,7 @@ const styles = StyleSheet.create({
   ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   ratingText: { fontSize: 11, color: COLORS.neonGold, fontWeight: '700' },
   removeBtn: {
-    width: 32, height: 32, borderRadius: 16,
+    width: 36, height: 36, borderRadius: 18,
     backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center',
   },
   separator: { height: 1, backgroundColor: COLORS.border },

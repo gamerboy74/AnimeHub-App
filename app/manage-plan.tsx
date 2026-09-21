@@ -14,7 +14,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Alert, ActivityIndicator, Dimensions,
+  Alert, ActivityIndicator, Modal, Pressable,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,23 +24,37 @@ import { BlurView } from 'expo-blur';
 import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
 import { useAuth } from '../src/context/AuthContext';
 import { supabase, userAPI } from '../src/lib/supabase';
-
-const { width } = Dimensions.get('window');
+import { usePlans, formatPrice, formatPeriod } from '../src/hooks/usePlans';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type BillingCycle = 'monthly' | 'yearly' | 'admin_grant';
 
-interface SubscriptionMeta {
+interface SubscriptionMeta extends Record<string, unknown> {
   billing_cycle: BillingCycle;
   subscribed_at: string;
   next_renewal: string;
   plan_name?: string;
+  cancel_at_period_end?: boolean;
+  cancelled_at?: string;
 }
 
 interface PremiumStats {
   total_episodes_watched: number;
   premium_episodes_watched: number;
   total_watch_time_hours: number;
+}
+
+interface UserPayment {
+  id: string;
+  plan_name: string;
+  billing_cycle: string;
+  amount_paise: number;
+  currency: string;
+  status: string;
+  period_start: string;
+  period_end: string;
+  razorpay_payment_id: string;
+  created_at: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -66,11 +80,6 @@ function daysUntil(iso: string): number {
   return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000));
 }
 
-const PLAN_PRICES: Record<BillingCycle, string> = {
-  monthly:     '₹149/mo',
-  yearly:      '₹999/yr',
-  admin_grant: 'Complimentary',
-};
 const PLAN_LABELS: Record<BillingCycle, string> = {
   monthly:     'Monthly',
   yearly:      'Yearly',
@@ -82,11 +91,44 @@ export default function ManagePlanScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user, refreshUser } = useAuth();
+  const { data: plansData } = usePlans();
 
   const [meta, setMeta] = useState<SubscriptionMeta | null>(null);
   const [stats, setStats] = useState<PremiumStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [billingHistoryVisible, setBillingHistoryVisible] = useState(false);
+  const [payments, setPayments] = useState<UserPayment[]>([]);
+  const [loadingPayments, setLoadingPayments] = useState(false);
+  const [cancelDialogVisible, setCancelDialogVisible] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+
+  const monthlyPlan = plansData?.plans.find(p => p.billing_cycle === 'monthly');
+  const yearlyPlan = plansData?.plans.find(p => p.billing_cycle === 'yearly');
+
+  const getPlanPrice = useCallback((cycle?: BillingCycle) => {
+    if (!cycle) return '';
+    if (cycle === 'admin_grant') return 'Complimentary';
+    if (cycle === 'yearly') {
+      return yearlyPlan ? `${formatPrice(yearlyPlan)}${formatPeriod(yearlyPlan)}` : '₹799/yr';
+    }
+    return monthlyPlan ? `${formatPrice(monthlyPlan)}${formatPeriod(monthlyPlan)}` : '₹99/mo';
+  }, [monthlyPlan, yearlyPlan]);
+
+  const switchSubtext = React.useMemo(() => {
+    if (meta?.billing_cycle === 'monthly') {
+      if (yearlyPlan) {
+        const yearlyFormatted = formatPrice(yearlyPlan);
+        const monthlyPaise = monthlyPlan?.price_paise ?? 9900;
+        const annualizedMonthly = (monthlyPaise * 12) / 100;
+        const savings = yearlyPlan.savings_text ? `${yearlyPlan.savings_text} · ` : '';
+        return `${savings}${yearlyFormatted}/year instead of ₹${annualizedMonthly}`;
+      }
+      return 'Save 33% · ₹799/year instead of ₹1188';
+    }
+    const monthlyFormatted = monthlyPlan ? `${formatPrice(monthlyPlan)}/month` : '₹99/month';
+    return `Billed monthly at ${monthlyFormatted}`;
+  }, [meta?.billing_cycle, monthlyPlan, yearlyPlan]);
 
   // ── Load subscription metadata + usage stats ──────────────────────────────
   useEffect(() => {
@@ -95,26 +137,32 @@ export default function ManagePlanScreen() {
 
     const load = async () => {
       try {
-        // 1. Load subscription metadata from user_preferences
+        // 1. Load subscription metadata: users table is the single source of truth,
+        // with user_preferences as a fallback for legacy records.
         const { data: prefs } = await userAPI.getPreferences(user.id);
-        // subscription_meta is a nested object inside prefs — read it correctly
-        const existingMeta = prefs?.subscription_meta as SubscriptionMeta | null | undefined;
+        const legacyMeta = prefs?.subscription_meta as SubscriptionMeta | null | undefined;
 
-        if (!cancelled && existingMeta?.billing_cycle) {
-          // Normal path: meta was written by plans.tsx or premium.tsx on upgrade
-          setMeta(existingMeta);
+        const cycle = (user.billing_cycle ?? legacyMeta?.billing_cycle) as BillingCycle | undefined;
+        const renewal = user.subscription_expires_at ?? legacyMeta?.next_renewal;
+        const subscribed = user.subscription_started_at ?? legacyMeta?.subscribed_at ?? user.created_at ?? new Date().toISOString();
+        const cancelAtEnd = user.cancel_at_period_end ?? legacyMeta?.cancel_at_period_end ?? false;
+
+        if (!cancelled && cycle) {
+          setMeta({
+            billing_cycle: cycle,
+            subscribed_at: subscribed,
+            next_renewal: renewal ?? new Date(Date.now() + 30 * 86_400_000).toISOString(),
+            cancel_at_period_end: cancelAtEnd,
+            cancelled_at: legacyMeta?.cancelled_at,
+          });
         } else if (!cancelled) {
-          // Admin-granted VIP: subscription_type = 'premium' but no subscription_meta.
-          // Show a helpful 'Admin Grant' state instead of crashing or showing wrong data.
-          const subscribedAt = user.created_at ?? new Date().toISOString();
+          // Admin-granted VIP: subscription_type = 'premium' but no specific cycle
           const defaultMeta: SubscriptionMeta = {
             billing_cycle: 'admin_grant',
-            subscribed_at: subscribedAt,
-            // No meaningful renewal for admin grants
-            next_renewal:  new Date('2099-12-31').toISOString(),
+            subscribed_at: subscribed,
+            next_renewal: new Date('2099-12-31').toISOString(),
           };
           setMeta(defaultMeta);
-          // Don't persist admin_grant to preferences — let admin decide cycle later
         }
 
         // 2. Load usage stats from user_stats view
@@ -122,9 +170,7 @@ export default function ManagePlanScreen() {
         if (!cancelled && userStats) {
           setStats({
             total_episodes_watched: userStats.total_episodes_watched ?? 0,
-            // user_stats view doesn't track premium-specific count — use 0 as fallback
             premium_episodes_watched: userStats.premium_episodes_watched ?? 0,
-            // total_watch_time is in seconds — convert to hours
             total_watch_time_hours: Math.round((userStats.total_watch_time ?? 0) / 3600),
           });
         }
@@ -135,13 +181,13 @@ export default function ManagePlanScreen() {
 
     load();
     return () => { cancelled = true; };
-  }, [user?.id]);
+  }, [user?.id, user?.billing_cycle, user?.subscription_expires_at, user?.cancel_at_period_end]);
 
   // ── Switch billing cycle (monthly ↔ yearly) ───────────────────────────────
   const handleSwitchCycle = useCallback(() => {
     if (!meta) return;
     const targetCycle = meta.billing_cycle === 'monthly' ? 'yearly' : 'monthly';
-    const targetPrice = PLAN_PRICES[targetCycle];
+    const targetPrice = getPlanPrice(targetCycle);
 
     Alert.alert(
       `Switch to ${PLAN_LABELS[targetCycle]}?`,
@@ -172,73 +218,84 @@ export default function ManagePlanScreen() {
     );
   }, [meta, user]);
 
-  // ── Cancel subscription ───────────────────────────────────────────────────
+  // ── Cancel auto-renewal — opens styled dialog ────────────────────────────
   const handleCancel = useCallback(() => {
-    Alert.alert(
-      'Cancel Premium?',
-      'You\'ll lose access to:\n\n• Premium episodes\n• Ad-free streaming\n• HD quality\n\nYour account will be downgraded to Free immediately.',
-      [
-        { text: 'Keep Premium', style: 'cancel' },
-        {
-          text: 'Yes, Cancel',
-          style: 'destructive',
-          onPress: () => {
-            // Double confirm — destructive actions always need two taps
-            Alert.alert(
-              'Are you sure?',
-              'This cannot be undone. Your premium access ends right now.',
-              [
-                { text: 'Go Back', style: 'cancel' },
-                {
-                  text: 'Cancel Subscription',
-                  style: 'destructive',
-                  onPress: async () => {
-                    setActionLoading(true);
-                    try {
-                      // 1. Downgrade in users table
-                      const { error } = await supabase
-                        .from('users')
-                        .update({ subscription_type: 'free' })
-                        .eq('id', user!.id);
-                      if (error) throw error;
+    if (!meta || !user) return;
+    setCancelDialogVisible(true);
+  }, [meta, user]);
 
-                      // Clear subscription meta safely — null clears only this column
-                      await userAPI.updateSubscriptionMeta(user!.id, null);
+  const confirmCancel = useCallback(async () => {
+    if (!meta || !user) return;
+    const expiryStr = meta.next_renewal ? formatDate(meta.next_renewal) : 'end of current cycle';
+    setCancelling(true);
+    try {
+      // 1. Update single source of truth on users table
+      await userAPI.updateSubscriptionAutoRenew(user.id, true);
 
-                      // 3. Refresh context so all screens reflect change instantly
-                      await refreshUser();
+      // 2. Also mirror to preferences for legacy compatibility
+      const updatedMeta: SubscriptionMeta = {
+        ...meta,
+        cancel_at_period_end: true,
+        cancelled_at: new Date().toISOString(),
+      };
+      await userAPI.updateSubscriptionMeta(user.id, updatedMeta);
+      await refreshUser();
+      setMeta(updatedMeta);
+      setCancelDialogVisible(false);
+      Alert.alert('Auto-Renewal Cancelled', `Premium access stays active until ${expiryStr}. No future charges.`);
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Failed to cancel. Try again.');
+    } finally {
+      setCancelling(false);
+    }
+  }, [meta, user, refreshUser]);
 
-                      Alert.alert(
-                        'Subscription Cancelled',
-                        'You\'ve been downgraded to the Free plan. You can upgrade again anytime.',
-                        [{ text: 'OK', onPress: () => router.back() }],
-                      );
-                    } catch (e: any) {
-                      Alert.alert('Error', e?.message ?? 'Failed to cancel. Try again.');
-                    } finally {
-                      setActionLoading(false);
-                    }
-                  },
-                },
-              ],
-            );
-          },
-        },
-      ],
-    );
-  }, [user, refreshUser, router]);
+  // ── Reactivate auto-renewal ───────────────────────────────────────────────
+  const handleReactivate = useCallback(async () => {
+    if (!meta || !user) return;
+    setActionLoading(true);
+    try {
+      // 1. Restore auto-renewal on users table
+      await userAPI.updateSubscriptionAutoRenew(user.id, false);
+
+      // 2. Also mirror to preferences for legacy compatibility
+      const updatedMeta: SubscriptionMeta = {
+        ...meta,
+        cancel_at_period_end: false,
+        cancelled_at: undefined,
+      };
+      await userAPI.updateSubscriptionMeta(user.id, updatedMeta);
+      await refreshUser();
+      setMeta(updatedMeta);
+
+      Alert.alert(
+        'Subscription Reactivated',
+        `Auto-renewal is restored. Your next billing date is ${formatDate(meta.next_renewal)}.`,
+      );
+    } catch (e: any) {
+      Alert.alert('Error', e?.message ?? 'Failed to reactivate. Try again.');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [meta, user, refreshUser]);
 
   // ── Render ────────────────────────────────────────────────────────────────
-  if (!user || user.subscription_type !== 'premium') {
+  const isExpired = Boolean(
+    user?.subscription_expires_at &&
+    user.billing_cycle !== 'admin_grant' &&
+    new Date(user.subscription_expires_at).getTime() <= Date.now()
+  );
+
+  if (!user || user.subscription_type !== 'premium' || isExpired) {
     return (
       <View style={[styles.root, styles.center, { paddingTop: insets.top }]}>
         <Ionicons name="star-outline" size={48} color={COLORS.textMuted} />
         <Text style={styles.emptyText}>No active premium subscription.</Text>
         <TouchableOpacity
           style={styles.upgradeBtn}
-          onPress={() => router.replace('/premium' as any)}
+          onPress={() => router.replace('/plans' as any)}
         >
-          <Text style={styles.upgradeBtnText}>Upgrade to Premium</Text>
+          <Text style={styles.upgradeBtnText}>Explore Premium Plans</Text>
         </TouchableOpacity>
       </View>
     );
@@ -277,7 +334,7 @@ export default function ManagePlanScreen() {
                 Premium{meta && meta.billing_cycle !== 'admin_grant' ? ` ${PLAN_LABELS[meta.billing_cycle]}` : ''}
               </Text>
               <Text style={styles.planPrice}>
-                {meta ? PLAN_PRICES[meta.billing_cycle] : ''}
+                {meta ? getPlanPrice(meta.billing_cycle) : ''}
               </Text>
               {meta?.billing_cycle === 'admin_grant' && (
                 <Text style={styles.adminGrantNote}>
@@ -300,6 +357,14 @@ export default function ManagePlanScreen() {
                 <View style={styles.renewalRow}>
                   <Ionicons name="shield-checkmark" size={16} color={COLORS.neonGold} />
                   <Text style={styles.renewalText}>Lifetime access granted by admin</Text>
+                </View>
+              ) : meta.cancel_at_period_end ? (
+                // Cancelled: retains access until end of paid period
+                <View style={[styles.renewalRow, { backgroundColor: 'rgba(255, 82, 82, 0.12)', borderColor: 'rgba(255, 82, 82, 0.35)' }]}>
+                  <Ionicons name="time-outline" size={16} color="#FF5252" />
+                  <Text style={[styles.renewalText, { color: '#FF5252', fontWeight: '700' }]}>
+                    Cancels on {formatDate(meta.next_renewal)} · Access remains active
+                  </Text>
                 </View>
               ) : (
                 <View style={[styles.renewalRow, renewalUrgent && styles.renewalUrgent]}>
@@ -381,10 +446,7 @@ export default function ManagePlanScreen() {
                     Switch to {meta?.billing_cycle === 'monthly' ? 'Yearly' : 'Monthly'}
                   </Text>
                   <Text style={styles.actionSub}>
-                    {meta?.billing_cycle === 'monthly'
-                      ? 'Save 44% · ₹999/year instead of ₹1788'
-                      : 'Billed monthly at ₹149/month'
-                    }
+                    {switchSubtext}
                   </Text>
                 </View>
               </View>
@@ -393,10 +455,22 @@ export default function ManagePlanScreen() {
           )}
           {meta?.billing_cycle !== 'admin_grant' && <View style={styles.divider} />}
 
-          {/* Billing history (placeholder) */}
+          {/* Billing history */}
           <TouchableOpacity
             style={styles.actionRow}
-            onPress={() => Alert.alert('Billing History', 'Detailed invoice history will be available once payment integration is live.')}
+            onPress={async () => {
+              if (!user) return;
+              setBillingHistoryVisible(true);
+              if (payments.length === 0) {
+                setLoadingPayments(true);
+                try {
+                  const { data } = await userAPI.getUserPayments(user.id);
+                  setPayments((data as UserPayment[]) ?? []);
+                } finally {
+                  setLoadingPayments(false);
+                }
+              }
+            }}
           >
             <View style={styles.actionLeft}>
               <Ionicons name="receipt-outline" size={20} color={COLORS.neonCyan} />
@@ -408,43 +482,51 @@ export default function ManagePlanScreen() {
             <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
           </TouchableOpacity>
 
-          <View style={styles.divider} />
-
-          {/* Payment method */}
-          <TouchableOpacity
-            style={styles.actionRow}
-            onPress={() => Alert.alert('Payment Method', 'Update your payment method in Settings → Payment Methods.')}
-          >
-            <View style={styles.actionLeft}>
-              <Ionicons name="card-outline" size={20} color={COLORS.neonGold} />
-              <View>
-                <Text style={styles.actionTitle}>Payment Method</Text>
-                <Text style={styles.actionSub}>Razorpay · Manage saved cards</Text>
-              </View>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
-          </TouchableOpacity>
         </View>
 
         {/* Danger Zone */}
-        <Text style={[styles.sectionLabel, { color: COLORS.danger }]}>// DANGER ZONE</Text>
-        <View style={[styles.actionsCard, styles.dangerCard]}>
-          <TouchableOpacity
-            style={styles.actionRow}
-            onPress={handleCancel}
-            disabled={actionLoading}
-          >
-            <View style={styles.actionLeft}>
-              {actionLoading
-                ? <ActivityIndicator size="small" color={COLORS.danger} />
-                : <Ionicons name="close-circle-outline" size={20} color={COLORS.danger} />
-              }
-              <View>
-                <Text style={[styles.actionTitle, { color: COLORS.danger }]}>Cancel Subscription</Text>
-                <Text style={styles.actionSub}>Downgrade to Free plan immediately</Text>
+        <Text style={[styles.sectionLabel, { color: meta?.cancel_at_period_end ? COLORS.neonGold : COLORS.danger }]}>
+          // {meta?.cancel_at_period_end ? 'SUBSCRIPTION STATUS' : 'DANGER ZONE'}
+        </Text>
+        <View style={[styles.actionsCard, meta?.cancel_at_period_end ? { borderColor: 'rgba(255,214,0,0.3)' } : styles.dangerCard]}>
+          {meta?.cancel_at_period_end ? (
+            <TouchableOpacity
+              style={styles.actionRow}
+              onPress={handleReactivate}
+              disabled={actionLoading}
+            >
+              <View style={styles.actionLeft}>
+                {actionLoading
+                  ? <ActivityIndicator size="small" color={COLORS.neonGold} />
+                  : <Ionicons name="refresh-circle-outline" size={20} color={COLORS.neonGold} />
+                }
+                <View>
+                  <Text style={[styles.actionTitle, { color: COLORS.neonGold }]}>Reactivate Auto-Renewal</Text>
+                  <Text style={styles.actionSub}>Resume continuous access without interruption</Text>
+                </View>
               </View>
-            </View>
-          </TouchableOpacity>
+              <Ionicons name="chevron-forward" size={18} color={COLORS.textMuted} />
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.actionRow}
+              onPress={handleCancel}
+              disabled={actionLoading}
+            >
+              <View style={styles.actionLeft}>
+                {actionLoading
+                  ? <ActivityIndicator size="small" color={COLORS.danger} />
+                  : <Ionicons name="close-circle-outline" size={20} color={COLORS.danger} />
+                }
+                <View>
+                  <Text style={[styles.actionTitle, { color: COLORS.danger }]}>Cancel Auto-Renewal</Text>
+                  <Text style={styles.actionSub}>
+                    Keep access until {meta?.next_renewal ? formatDate(meta.next_renewal) : 'cycle ends'}, zero future charges
+                  </Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+          )}
         </View>
 
         <Text style={styles.footerNote}>
@@ -453,6 +535,134 @@ export default function ManagePlanScreen() {
         </Text>
 
       </ScrollView>
+
+      {/* ── Billing History Modal ── */}
+      <Modal
+        visible={billingHistoryVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setBillingHistoryVisible(false)}
+      >
+        <View style={styles.modalRoot}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Billing History</Text>
+            <TouchableOpacity
+              style={styles.modalCloseBtn}
+              onPress={() => setBillingHistoryVisible(false)}
+            >
+              <Ionicons name="close" size={18} color={COLORS.text} />
+            </TouchableOpacity>
+          </View>
+
+          {loadingPayments ? (
+            <View style={styles.modalCenter}>
+              <ActivityIndicator color={COLORS.neonGold} />
+              <Text style={styles.modalLoadingTxt}>Fetching invoices…</Text>
+            </View>
+          ) : payments.length === 0 ? (
+            <View style={styles.modalCenter}>
+              <Ionicons name="receipt-outline" size={48} color={COLORS.textMuted} />
+              <Text style={styles.modalEmptyTitle}>No payments yet</Text>
+              <Text style={styles.modalEmptyTxt}>
+                Future payments will appear here after your first Razorpay transaction.
+              </Text>
+            </View>
+          ) : (
+            <ScrollView contentContainerStyle={styles.modalScroll} showsVerticalScrollIndicator={false}>
+              {payments.map((p) => {
+                const amount = `₹${(p.amount_paise / 100).toFixed(0)}`;
+                const date = new Date(p.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+                const periodEnd = new Date(p.period_end).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+                const isPaid = p.status === 'captured';
+                return (
+                  <View key={p.id} style={styles.invoiceRow}>
+                    <View style={[styles.invoiceStatus, { backgroundColor: isPaid ? 'rgba(0,245,180,0.1)' : 'rgba(255,60,100,0.1)', borderColor: isPaid ? 'rgba(0,245,180,0.3)' : 'rgba(255,60,100,0.3)' }]}>
+                      <Ionicons name={isPaid ? 'checkmark' : 'close'} size={12} color={isPaid ? COLORS.success : COLORS.danger} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.invoicePlan}>VIP {p.plan_name}</Text>
+                      <Text style={styles.invoiceDate}>{date} · until {periodEnd}</Text>
+                      <Text style={styles.invoiceId} numberOfLines={1}>
+                        ID: {p.razorpay_payment_id}
+                      </Text>
+                    </View>
+                    <Text style={styles.invoiceAmount}>{amount}</Text>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          )}
+        </View>
+      </Modal>
+
+      {/* ── Cancel Auto-Renewal Confirmation Sheet ── */}
+      <Modal
+        visible={cancelDialogVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !cancelling && setCancelDialogVisible(false)}
+      >
+        <Pressable
+          style={styles.cancelOverlay}
+          onPress={() => !cancelling && setCancelDialogVisible(false)}
+        />
+        <BlurView intensity={95} tint="dark" style={styles.cancelSheet}>
+          <View style={styles.cancelGlow} />
+          <View style={styles.cancelHandle} />
+
+          <View style={styles.cancelIconWrap}>
+            <Ionicons name="warning-outline" size={28} color={COLORS.danger} />
+          </View>
+
+          <Text style={styles.cancelTitle}>Cancel Auto-Renewal?</Text>
+          <Text style={styles.cancelDescription}>
+            Your VIP benefits will remain active until{' '}
+            <Text style={{ color: COLORS.neonGold, fontWeight: '700' }}>
+              {meta?.next_renewal ? formatDate(meta.next_renewal) : 'end of current cycle'}
+            </Text>
+            . No additional charges will be made.
+          </Text>
+
+          <View style={styles.cancelBenefitsCard}>
+            <View style={styles.cancelBenefitRow}>
+              <Ionicons name="checkmark-circle" size={16} color={COLORS.success} />
+              <Text style={styles.cancelBenefitTxt}>Uninterrupted 1080p/4K streaming until period ends</Text>
+            </View>
+            <View style={styles.cancelBenefitRow}>
+              <Ionicons name="checkmark-circle" size={16} color={COLORS.success} />
+              <Text style={styles.cancelBenefitTxt}>Keep offline downloads & ad-free access</Text>
+            </View>
+            <View style={styles.cancelBenefitRow}>
+              <Ionicons name="checkmark-circle" size={16} color={COLORS.success} />
+              <Text style={styles.cancelBenefitTxt}>Zero surprise auto-renewal charges</Text>
+            </View>
+          </View>
+
+          <View style={styles.cancelActions}>
+            <TouchableOpacity
+              style={styles.keepBtn}
+              onPress={() => setCancelDialogVisible(false)}
+              disabled={cancelling}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.keepBtnText}>Keep Subscription</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.confirmCancelBtn}
+              onPress={confirmCancel}
+              disabled={cancelling}
+              activeOpacity={0.8}
+            >
+              {cancelling ? (
+                <ActivityIndicator size="small" color={COLORS.danger} />
+              ) : (
+                <Text style={styles.confirmCancelText}>Yes, Cancel Auto-Renewal</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </BlurView>
+      </Modal>
     </View>
   );
 }
@@ -580,4 +790,159 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.xl, paddingVertical: SPACING.sm,
   },
   upgradeBtnText: { color: '#000', fontWeight: '900' },
+
+  // Billing History Modal
+  modalRoot:       { flex: 1, backgroundColor: COLORS.bg },
+  modalHeader:     {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: SPACING.md, paddingVertical: SPACING.md,
+    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.07)',
+  },
+  modalTitle:      { fontSize: 17, fontWeight: '800', color: COLORS.text },
+  modalCloseBtn:   {
+    width: 30, height: 30, borderRadius: 15,
+    backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+  },
+  modalCenter:     {
+    flex: 1, alignItems: 'center', justifyContent: 'center', gap: SPACING.sm,
+    padding: SPACING.xl,
+  },
+  modalLoadingTxt: { fontSize: 13, color: COLORS.textSub },
+  modalEmptyTitle: { fontSize: 16, fontWeight: '800', color: COLORS.text },
+  modalEmptyTxt:   { fontSize: 13, color: COLORS.textMuted, textAlign: 'center', lineHeight: 20 },
+  modalScroll:     { padding: SPACING.md, gap: SPACING.sm },
+
+  invoiceRow: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACING.sm,
+    backgroundColor: COLORS.bgCard, borderRadius: RADIUS.md,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)',
+    padding: SPACING.md,
+  },
+  invoiceStatus: {
+    width: 28, height: 28, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center', borderWidth: 1,
+  },
+  invoicePlan:   { fontSize: 13, fontWeight: '700', color: COLORS.text },
+  invoiceDate:   { fontSize: 11, color: COLORS.textSub, marginTop: 1 },
+  invoiceId:     { fontSize: 9, color: COLORS.textMuted, marginTop: 2, fontFamily: 'monospace' },
+  invoiceAmount: { fontSize: 15, fontWeight: '900', color: COLORS.neonGold },
+
+  // Cancel Auto-Renewal Dialog / Bottom Sheet
+  cancelOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(4, 4, 8, 0.78)',
+  },
+  cancelSheet: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    borderTopLeftRadius: RADIUS.xl,
+    borderTopRightRadius: RADIUS.xl,
+    padding: SPACING.xl,
+    paddingBottom: 40,
+    backgroundColor: 'rgba(14, 14, 24, 0.96)',
+    borderTopWidth: 1.5,
+    borderColor: 'rgba(255, 60, 100, 0.3)',
+    overflow: 'hidden',
+    alignItems: 'center',
+  },
+  cancelGlow: {
+    position: 'absolute',
+    top: -50,
+    alignSelf: 'center',
+    width: 180,
+    height: 180,
+    backgroundColor: COLORS.danger,
+    borderRadius: 90,
+    opacity: 0.12,
+  },
+  cancelHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    marginBottom: SPACING.lg,
+  },
+  cancelIconWrap: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: 'rgba(255, 60, 100, 0.12)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 60, 100, 0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: SPACING.md,
+  },
+  cancelTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: COLORS.text,
+    marginBottom: SPACING.xs,
+    textAlign: 'center',
+  },
+  cancelDescription: {
+    fontSize: 13,
+    color: COLORS.textSub,
+    textAlign: 'center',
+    lineHeight: 19,
+    marginBottom: SPACING.lg,
+    paddingHorizontal: SPACING.sm,
+  },
+  cancelBenefitsCard: {
+    width: '100%',
+    backgroundColor: 'rgba(255, 255, 255, 0.025)',
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    padding: SPACING.md,
+    gap: SPACING.sm,
+    marginBottom: SPACING.xl,
+  },
+  cancelBenefitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+  },
+  cancelBenefitTxt: {
+    fontSize: 13,
+    color: COLORS.textSub,
+    fontWeight: '500',
+    flex: 1,
+  },
+  cancelActions: {
+    width: '100%',
+    gap: SPACING.sm,
+  },
+  keepBtn: {
+    width: '100%',
+    paddingVertical: SPACING.md,
+    backgroundColor: COLORS.neonGold,
+    borderRadius: RADIUS.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  keepBtnText: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#080810',
+    letterSpacing: 0.5,
+  },
+  confirmCancelBtn: {
+    width: '100%',
+    paddingVertical: SPACING.md,
+    backgroundColor: 'rgba(255, 60, 100, 0.08)',
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 60, 100, 0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmCancelText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.danger,
+  },
 });

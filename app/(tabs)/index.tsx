@@ -1,24 +1,25 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, FlatList,
-  TouchableOpacity, Dimensions, RefreshControl, ActivityIndicator,
-  Animated,
+  TouchableOpacity, RefreshControl, ActivityIndicator,
+  Animated, useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useQueryClient } from '@tanstack/react-query';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
-import { AnimeWithStats } from '../../src/lib/supabase';
+import { AnimeWithStats, userAPI } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
 import { useTrendingAnime, useTopRatedAnime, useRecentAnime } from '../../src/hooks/useQueries';
 import { usePrefetch } from '../../src/hooks/usePrefetch';
 import AnimeCard from '../../src/components/ui/AnimeCard';
+import SubscriptionExpiryBanner from '../../src/components/subscription/SubscriptionExpiryBanner';
+import { GENRE_NAMES } from '../../src/constants/genres';
 
-const { width } = Dimensions.get('window');
-
-const GENRES = ['Action', 'Romance', 'Comedy', 'Drama', 'Fantasy', 'Horror', 'Sci-Fi', 'Slice of Life', 'Sports', 'Mystery'];
+const GENRES = GENRE_NAMES;
 
 // ── HERO CAROUSEL INTERVAL (ms) ───────────────────────────────────────────────
 const HERO_INTERVAL_MS = 5000;
@@ -27,6 +28,7 @@ const HERO_SLIDE_COUNT = 5;
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const { prefetchAnimeList } = usePrefetch();
@@ -36,6 +38,37 @@ export default function HomeScreen() {
   const { data: trending = [], isLoading: loadingTrend } = useTrendingAnime();
   const { data: topRated = [], isLoading: loadingRated } = useTopRatedAnime();
   const { data: recent = [], isLoading: loadingRecent } = useRecentAnime();
+
+  // ── User Watch History (Continue Watching) ─────────────────────────────────────────
+  const { data: progressData = [] } = useQuery<any[]>({
+    queryKey: ['user', user?.id, 'history'],
+    enabled: !!user?.id,
+    staleTime: 30 * 1000,
+    gcTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      if (!user?.id) return [];
+      const { data, error } = await userAPI.getProgress(user.id);
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+
+  const continueWatching = useMemo(() => {
+    if (!user?.id || !progressData.length) return [];
+    const unique = progressData.filter((p: any, index: number, self: any[]) =>
+      index === self.findIndex((t: any) => t.anime_id === p.anime_id)
+    );
+    return unique
+      .filter((p: any) => {
+        const isCompleted = p.is_completed && p.total_episodes && p.episode_number === p.total_episodes;
+        if (isCompleted) return false;
+        if (!p.last_watched) return false;
+        const lastWatchedDate = new Date(p.last_watched).getTime();
+        const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+        return lastWatchedDate >= fourteenDaysAgo;
+      })
+      .slice(0, 10);
+  }, [user?.id, progressData]);
 
   // ── Hero carousel — top N trending anime that have a banner or poster ──────────────
   const heroSlides = useMemo(
@@ -107,9 +140,10 @@ export default function HomeScreen() {
       queryClient.invalidateQueries({ queryKey: ['anime', 'trending'] }),
       queryClient.invalidateQueries({ queryKey: ['anime', 'top-rated'] }),
       queryClient.invalidateQueries({ queryKey: ['anime', 'new-arrivals'] }),
+      user?.id ? queryClient.invalidateQueries({ queryKey: ['user', user.id, 'history'] }) : Promise.resolve(),
     ]);
     setRefreshing(false);
-  }, [queryClient]);
+  }, [queryClient, user?.id]);
 
   // Only block full render on trending (needed for hero section).
   // Top-rated and recent render progressively via AnimeRow (returns null if empty).
@@ -130,6 +164,9 @@ export default function HomeScreen() {
     >
       {/* Space for Universal Header overlap if needed, otherwise start content */}
       <View style={{ height: SPACING.md }} />
+
+      {/* Subscription Expiry Reminder Banner (renders only if user's subscription expires in <= 2 days) */}
+      <SubscriptionExpiryBanner />
 
       {/* ── Auto-Rotating Hero Paging Carousel ── */}
       {heroSlides.length > 0 && (
@@ -178,12 +215,11 @@ export default function HomeScreen() {
                   transition={200}
                 />
                 <View style={styles.heroOverlay} />
-                <View style={styles.scanLines} />
 
                 <View style={styles.heroContent}>
                   <View style={styles.heroTrendingBadge}>
                     <View style={styles.trendingDot} />
-                    <Text style={styles.trendingText}>// TRENDING NOW</Text>
+                    <Text style={styles.trendingText}>TRENDING NOW</Text>
                   </View>
                   <Text style={styles.heroTitle} numberOfLines={2}>{item.title}</Text>
                   {item.title_japanese && (
@@ -204,6 +240,9 @@ export default function HomeScreen() {
                     <TouchableOpacity
                       style={styles.playBtn}
                       onPress={() => router.push(`/anime/episodes/${item.id}`)}
+                      accessible={true}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Play ${item.title}`}
                     >
                       <Ionicons name="play" size={16} color={COLORS.bg} />
                       <Text style={styles.playBtnText}>PLAY NOW</Text>
@@ -211,6 +250,9 @@ export default function HomeScreen() {
                     <TouchableOpacity
                       style={styles.infoBtn}
                       onPress={() => router.push(`/anime/${item.id}`)}
+                      accessible={true}
+                      accessibilityRole="button"
+                      accessibilityLabel={`More info about ${item.title}`}
                     >
                       <Ionicons name="information-circle-outline" size={16} color={COLORS.neon} />
                       <Text style={styles.infoBtnText}>MORE INFO</Text>
@@ -240,16 +282,79 @@ export default function HomeScreen() {
               ))}
             </View>
           )}
+        </View>
+      )}
 
-          {/* Neon corner accent */}
-          <View style={styles.heroCornerTL} pointerEvents="none" />
-          <View style={styles.heroCornerBR} pointerEvents="none" />
+      {/* ── Continue Watching (Quick Jump Back In) ── */}
+      {continueWatching.length > 0 && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <View>
+              <Text style={styles.continueSectionSub}>RESUME PLAYBACK</Text>
+              <Text style={styles.sectionLabel}>Continue Watching</Text>
+            </View>
+            <TouchableOpacity onPress={() => router.push('/library')} activeOpacity={0.7}>
+              <Text style={styles.seeAll}>VIEW ALL →</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.continueScroll}
+          >
+            {continueWatching.map((item: any) => {
+              const progress = item.episode_duration > 0
+                ? (item.progress_seconds / item.episode_duration) * 100
+                : item.progress_percentage || 0;
+              return (
+                <TouchableOpacity
+                  key={item.id || item.episode_id}
+                  style={styles.continueCard}
+                  activeOpacity={0.88}
+                  onPress={() => item.episode_id && router.push(`/watch/${item.episode_id}`)}
+                >
+                  <View style={styles.continueThumbBox}>
+                    <Image
+                      source={{ uri: item.thumbnail_url || item.poster_url }}
+                      style={styles.continueThumb}
+                      contentFit="cover"
+                      transition={200}
+                    />
+                    <View style={styles.continueOverlay} />
+                    <LinearGradient
+                      colors={['transparent', 'rgba(8,8,16,0.6)', 'rgba(8,8,16,0.95)']}
+                      locations={[0.2, 0.65, 1]}
+                      style={styles.continueBottomGrad}
+                    />
+                    <View style={styles.continuePlayBox}>
+                      <Ionicons name="play" size={14} color="#000" />
+                    </View>
+                    <View style={styles.continueProgressBox}>
+                      <View style={styles.continueProgressBg}>
+                        <View style={[styles.continueProgressFill, { width: `${Math.min(progress, 100)}%` }]} />
+                      </View>
+                      <View style={styles.continueProgressLabels}>
+                        <Text style={styles.continueProgressEp}>EP {item.episode_number}</Text>
+                        <Text style={styles.continueProgressPercent}>{Math.round(progress)}%</Text>
+                      </View>
+                    </View>
+                  </View>
+                  <Text style={styles.continueCardTitle} numberOfLines={1}>
+                    {item.anime_title || item.title}
+                  </Text>
+                  <Text style={styles.continueCardSub} numberOfLines={1}>
+                    {item.episode_title ? `EP ${item.episode_number} • ${item.episode_title}` : `Episode ${item.episode_number}`}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
         </View>
       )}
 
       {/* Genre Pills */}
       <View style={styles.section}>
-        <Text style={styles.sectionLabel}>// GENRES</Text>
+        <Text style={styles.sectionLabel}>GENRES</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.genrePills}>
           {GENRES.map((g) => (
             <TouchableOpacity
@@ -265,8 +370,8 @@ export default function HomeScreen() {
 
       {/* Trending */}
       <AnimeRow
-        title="// TRENDING"
-        subtitle="TRENDING"
+        title="TRENDING"
+        subtitle="TOP PICKS THIS WEEK"
         data={trending}
         router={router}
         seeAllRoute="/trending"
@@ -274,8 +379,8 @@ export default function HomeScreen() {
 
       {/* Top Rated */}
       <AnimeRow
-        title="// TOP RATED"
-        subtitle="TOP RATED"
+        title="TOP RATED"
+        subtitle="HIGHEST COMMUNITY SCORES"
         data={topRated}
         router={router}
         showStats
@@ -284,8 +389,8 @@ export default function HomeScreen() {
 
       {/* Recently Added */}
       <AnimeRow
-        title="// NEW ARRIVALS"
-        subtitle="RECENT"
+        title="NEW ARRIVALS"
+        subtitle="RECENT RELEASES"
         data={recent}
         router={router}
         seeAllRoute="/new-arrivals"
@@ -536,8 +641,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.md, marginBottom: SPACING.sm,
   },
   sectionLabel: {
-    fontSize: 13, color: COLORS.neon,
-    fontWeight: '800', letterSpacing: 2,
+    fontSize: 14, color: COLORS.text,
+    fontWeight: '800', letterSpacing: 1.5,
   },
   sectionSub: { fontSize: 11, color: COLORS.textMuted, letterSpacing: 1 },
   seeAll: { fontSize: 10, color: COLORS.textSub, letterSpacing: 1 },
@@ -552,5 +657,106 @@ const styles = StyleSheet.create({
   genrePillText: {
     fontSize: 12, color: COLORS.textSub,
     fontWeight: '600', letterSpacing: 0.5,
+  },
+
+  continueSectionSub: {
+    fontSize: 9,
+    color: COLORS.neonPulse || COLORS.neonCyan,
+    fontWeight: '800',
+    letterSpacing: 2,
+    marginBottom: 2,
+  },
+  continueScroll: {
+    paddingHorizontal: SPACING.md,
+    gap: SPACING.md,
+    paddingBottom: SPACING.xs,
+  },
+  continueCard: {
+    width: 240,
+  },
+  continueThumbBox: {
+    aspectRatio: 16 / 9,
+    borderRadius: RADIUS.md,
+    overflow: 'hidden',
+    backgroundColor: COLORS.bgCard,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    position: 'relative',
+  },
+  continueThumb: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  continueOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(8,8,16,0.18)',
+  },
+  continueBottomGrad: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: '60%',
+  },
+  continuePlayBox: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: [{ translateX: -16 }, { translateY: -16 }],
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.neon,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: COLORS.neon,
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  continueProgressBox: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    right: 8,
+  },
+  continueProgressBg: {
+    height: 3,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  continueProgressFill: {
+    height: '100%',
+    backgroundColor: COLORS.neonCyan,
+    shadowColor: COLORS.neonCyan,
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
+  },
+  continueProgressLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+  continueProgressEp: {
+    fontSize: 9,
+    color: COLORS.text,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  continueProgressPercent: {
+    fontSize: 9,
+    color: COLORS.neonCyan,
+    fontWeight: '700',
+  },
+  continueCardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.text,
+    marginTop: 6,
+  },
+  continueCardSub: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    marginTop: 1,
   },
 });

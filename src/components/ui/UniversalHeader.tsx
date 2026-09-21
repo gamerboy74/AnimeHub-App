@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,6 +9,7 @@ import { COLORS, SPACING, RADIUS } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
 import { userAPI } from '../../lib/supabase';
 import SideDrawer from './SideDrawer';
+import { useQuery } from '@tanstack/react-query';
 
 export default function UniversalHeader() {
   const insets = useSafeAreaInsets();
@@ -16,25 +17,20 @@ export default function UniversalHeader() {
   const { user } = useAuth();
 
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
 
-  // Fetch unread notification count
-  useEffect(() => {
-    if (!user?.id) return;
-    let cancelled = false;
-
-    const fetchUnread = async () => {
-      const { data } = await userAPI.getNotifications(user.id);
-      if (!cancelled) {
-        setUnreadCount((data ?? []).filter((n: any) => !n.read).length);
-      }
-    };
-
-    fetchUnread();
-    // Refresh every 60s while header is mounted
-    const interval = setInterval(fetchUnread, 60_000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [user?.id]);
+  // useQuery with refetchInterval replaces the manual setInterval pattern.
+  // Benefits: deduplication across mounts, auto-refetch on app-focus,
+  // proper cleanup — no need for a cancelled flag.
+  const { data: unreadCount = 0 } = useQuery({
+    queryKey: ['notifications', 'unread-count', user?.id],
+    enabled: !!user?.id,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      const { data } = await userAPI.getNotifications(user!.id);
+      return (data ?? []).filter((n: any) => !n.read).length;
+    },
+  });
 
   const initials = user?.username?.substring(0, 2).toUpperCase() ?? '??';
 
@@ -49,6 +45,7 @@ export default function UniversalHeader() {
             style={styles.menuBtn}
             onPress={() => setDrawerOpen(true)}
             activeOpacity={0.7}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityLabel="Open menu"
             accessibilityRole="button"
           >
@@ -64,6 +61,9 @@ export default function UniversalHeader() {
             style={styles.logoRow}
             onPress={() => router.push('/')}
             activeOpacity={0.7}
+            accessible={true}
+            accessibilityRole="header"
+            accessibilityLabel="AnimeHub Home"
           >
             <Text style={styles.logoText}>ANIMEHUB</Text>
           </TouchableOpacity>
@@ -75,10 +75,11 @@ export default function UniversalHeader() {
               style={styles.iconBtn}
               onPress={() => router.push('/notifications')}
               activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               accessibilityLabel={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
               accessibilityRole="button"
             >
-              <Ionicons name="notifications-outline" size={20} color={COLORS.textSub} />
+              <Ionicons name="notifications-outline" size={22} color={COLORS.textSub} />
               {unreadCount > 0 && (
                 <View style={styles.badge}>
                   <Text style={styles.badgeText}>
@@ -93,10 +94,11 @@ export default function UniversalHeader() {
               style={styles.iconBtn}
               onPress={() => router.push('/settings')}
               activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               accessibilityLabel="Settings"
               accessibilityRole="button"
             >
-              <Ionicons name="settings-outline" size={20} color={COLORS.neon} />
+              <Ionicons name="settings-outline" size={22} color={COLORS.neon} />
             </TouchableOpacity>
 
             {/* Avatar */}
@@ -104,6 +106,7 @@ export default function UniversalHeader() {
               style={styles.avatarBtn}
               onPress={() => router.push('/(tabs)/profile')}
               activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               accessibilityLabel="My profile"
               accessibilityRole="button"
             >
@@ -150,8 +153,8 @@ const styles = StyleSheet.create({
   },
   // Hamburger
   menuBtn: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -188,11 +191,11 @@ const styles = StyleSheet.create({
   actions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 4,
   },
   iconBtn: {
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
@@ -200,8 +203,8 @@ const styles = StyleSheet.create({
   // Notification badge
   badge: {
     position: 'absolute',
-    top: 2,
-    right: 2,
+    top: 6,
+    right: 6,
     minWidth: 16,
     height: 16,
     borderRadius: 8,
@@ -220,18 +223,17 @@ const styles = StyleSheet.create({
   },
   // Avatar
   avatarBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
     position: 'relative',
-    borderWidth: 1.5,
-    borderColor: COLORS.neon,
-    overflow: 'hidden',
   },
-  avatarImage: { width: '100%', height: '100%' },
+  avatarImage: { width: 36, height: 36, borderRadius: 18 },
   avatarPlaceholder: {
-    width: '100%',
-    height: '100%',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: 'rgba(191,95,255,0.2)',
     alignItems: 'center',
     justifyContent: 'center',

@@ -7,7 +7,7 @@
  *
  * URL pattern: animehubmobile://auth/callback?code=<pkce_code>
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Linking from 'expo-linking';
@@ -21,8 +21,15 @@ export default function AuthCallback() {
   const [status, setStatus] = useState<'loading' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState('');
   const incomingUrl = Linking.useURL();
+  // Guard: only handle the callback once even if incomingUrl fires multiple times
+  const hasHandled = useRef(false);
 
   useEffect(() => {
+    if (hasHandled.current) return;
+    // Wait until code or error is actually available in params/URL
+    if (!params.code && !params.error) return;
+    hasHandled.current = true;
+
     async function handleCallback() {
       // If Supabase sent back an error (e.g. user denied access)
       if (params.error) {
@@ -34,7 +41,6 @@ export default function AuthCallback() {
 
       const code = params.code;
       if (!code) {
-        // No code — just redirect to login gracefully
         router.replace('/auth/login');
         return;
       }

@@ -44,12 +44,9 @@ export default function LoginScreen() {
       if (signInError) {
         setError(signInError.message);
       } else {
-        const { data: aalData, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-        if (!aalError && aalData && aalData.nextLevel === 'aal2' && aalData.currentLevel === 'aal1') {
-          router.replace('/auth/mfa');
-        } else {
-          router.replace('/(tabs)');
-        }
+        // AuthGuard in _layout.tsx handles MFA redirect automatically
+        // on every session change, so we just navigate to home.
+        router.replace('/(tabs)');
       }
     } catch (e: any) {
       setError(e.message || 'An unexpected error occurred');

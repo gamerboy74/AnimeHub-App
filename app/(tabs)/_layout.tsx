@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import UniversalHeader from '../../src/components/ui/UniversalHeader';
 import { useTranslation } from '../../src/context/LocalizationContext';
+import { haptic } from '../../src/lib/haptics';
 
 export default function TabLayout() {
   const { t } = useTranslation();
@@ -49,8 +50,15 @@ function CustomTabBar({ state, navigation }: any) {
             <TouchableOpacity
               key={tab.name}
               style={styles.tabButton}
-              onPress={() => navigation.navigate(tab.name)}
+              onPress={() => {
+                haptic.selection();
+                navigation.navigate(tab.name);
+              }}
               activeOpacity={0.7}
+              accessible={true}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: focused }}
+              accessibilityLabel={`${tab.label} tab`}
             >
               <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
                 {focused && <View style={styles.iconGlow} />}
@@ -92,6 +100,8 @@ const styles = StyleSheet.create({
   tabButton: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
     gap: 4,
   },
   iconWrap: {

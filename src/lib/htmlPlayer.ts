@@ -5,7 +5,12 @@
  * @param embedUrl The raw video/manifest URL to stream.
  * @param isHls Whether the source is HLS (.m3u8).
  */
-export function buildRawPlayerHTML(embedUrl: string, isHls: boolean): string {
+export function buildRawPlayerHTML(
+  embedUrl: string,
+  isHls: boolean,
+  qualityPreference: string = 'auto',
+  audioPreference: string = ''
+): string {
   return `
     <!DOCTYPE html>
     <html>
@@ -155,6 +160,44 @@ export function buildRawPlayerHTML(embedUrl: string, isHls: boolean): string {
           var videoSrc = '${embedUrl}';
           var hideTimeout = null;
           var lastTap = 0;
+          var hlsInstance = null;
+
+          function _rnPost(obj) {
+            try {
+              if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify(obj));
+              }
+            } catch(e) {}
+          }
+
+          // Expose React Native bridge commands
+          window.__rn_play = function() {
+            video.play().catch(function(e) {});
+          };
+
+          window.__rn_pause = function() {
+            video.pause();
+          };
+
+          window.__rn_seek = function(seconds) {
+            if (!isNaN(seconds) && !isNaN(video.duration)) {
+              video.currentTime = Math.max(0, Math.min(video.duration, seconds));
+            }
+          };
+
+          window.__rn_setQuality = function(idx) {
+            if (hlsInstance) {
+              hlsInstance.currentLevel = idx;
+              _rnPost({ type: 'qualityChanged', current: idx });
+            }
+          };
+
+          window.__rn_setAudioTrack = function(idx) {
+            if (hlsInstance) {
+              hlsInstance.audioTrack = idx;
+              _rnPost({ type: 'audioTrackChanged', current: idx });
+            }
+          };
 
           // Helper: format seconds to M:SS
           function formatTime(secs) {
@@ -168,15 +211,13 @@ export function buildRawPlayerHTML(embedUrl: string, isHls: boolean): string {
           function showControls() {
             overlay.classList.remove('hidden');
             resetHideTimer();
-            // Send explicit controls_shown message to react-native
-            try { window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'player_controls_shown' })); } catch(e) {}
+            _rnPost({ type: 'player_controls_shown' });
           }
 
           function hideControls() {
             if (!video.paused && menuQuality.style.display !== 'flex') {
               overlay.classList.add('hidden');
-              // Send explicit controls_hidden message to react-native
-              try { window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'player_controls_hidden' })); } catch(e) {}
+              _rnPost({ type: 'player_controls_hidden' });
             }
           }
 
@@ -185,17 +226,14 @@ export function buildRawPlayerHTML(embedUrl: string, isHls: boolean): string {
             hideTimeout = setTimeout(hideControls, 3000);
           }
 
-          // Tap anywhere on the container (except control elements) to toggle overlays
           container.addEventListener('click', function(e) {
             if (e.target.closest('.control-btn') || e.target.closest('#track') || e.target.closest('#btn-quality') || e.target.closest('#quality-menu')) return;
             
-            // Double tap check for Youtube-style seek
             var now = Date.now();
             var tapGap = now - lastTap;
             lastTap = now;
             
             if (tapGap < 300 && tapGap > 0) {
-              // Double tapped! Seek depending on screen half clicked
               var rect = container.getBoundingClientRect();
               var clickX = e.clientX - rect.left;
               var midX = rect.width / 2;
@@ -210,7 +248,6 @@ export function buildRawPlayerHTML(embedUrl: string, isHls: boolean): string {
               return;
             }
 
-            // Single tap: toggle controls
             if (overlay.classList.contains('hidden')) {
               showControls();
             } else {
@@ -218,7 +255,6 @@ export function buildRawPlayerHTML(embedUrl: string, isHls: boolean): string {
             }
           });
 
-          // Create dynamic wave ripple overlay on double-tap
           function showDoubleTapRipple(x, y, text) {
             var ripple = document.createElement('div');
             ripple.className = 'ripple';
@@ -235,7 +271,6 @@ export function buildRawPlayerHTML(embedUrl: string, isHls: boolean): string {
             showControls();
           };
 
-          // Play / Pause logic
           window.togglePlay = function() {
             if (video.paused) {
               video.play().catch(function(e) {});
@@ -245,12 +280,11 @@ export function buildRawPlayerHTML(embedUrl: string, isHls: boolean): string {
             showControls();
           };
 
-          // Bind quality selector toggling
           window.toggleQualityMenu = function(e) {
             if (e) e.stopPropagation();
             if (menuQuality.style.display === 'none' || menuQuality.style.display === '') {
               menuQuality.style.display = 'flex';
-              if (hideTimeout) clearTimeout(hideTimeout); // prevent hiding overlay while menu is open
+              if (hideTimeout) clearTimeout(hideTimeout);
             } else {
               menuQuality.style.display = 'none';
               resetHideTimer();
@@ -261,36 +295,46 @@ export function buildRawPlayerHTML(embedUrl: string, isHls: boolean): string {
             menuQuality.style.display = 'none';
           });
 
-          // Play state listener
           function onPlayStateChange() {
-            if (video.paused) {
+            var isPlaying = !video.paused;
+            if (!isPlaying) {
               playIcon.innerHTML = '<svg viewBox="0 0 24 24" style="width:30px;height:30px;fill:#00F5B4;"><path d="M8 5v14l11-7z"/></svg>';
               showControls();
             } else {
               playIcon.innerHTML = '<svg viewBox="0 0 24 24" style="width:30px;height:30px;fill:#00F5B4;"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
               resetHideTimer();
             }
+            _rnPost({ type: 'playstate', playing: isPlaying });
           }
 
           video.addEventListener('play', onPlayStateChange);
           video.addEventListener('playing', onPlayStateChange);
           video.addEventListener('pause', onPlayStateChange);
 
-          // Progress bar updates
           video.addEventListener('timeupdate', function() {
             if (isNaN(video.duration)) return;
             var pct = (video.currentTime / video.duration) * 100;
             fill.style.width = pct + '%';
             lblCurrent.innerText = formatTime(video.currentTime);
             lblTotal.innerText = formatTime(video.duration);
+            _rnPost({
+              type: 'progress',
+              current: Math.floor(video.currentTime),
+              duration: Math.floor(video.duration),
+              playing: !video.paused,
+            });
+          });
+
+          video.addEventListener('ended', function() {
+            _rnPost({ type: 'episode_complete' });
           });
 
           video.addEventListener('loadedmetadata', function() {
             lblTotal.innerText = formatTime(video.duration);
             onPlayStateChange();
+            _rnPost({ type: 'player_ready' });
           });
 
-          // Interactive Scrubber seeking
           track.addEventListener('click', function(e) {
             if (isNaN(video.duration)) return;
             var rect = track.getBoundingClientRect();
@@ -300,21 +344,94 @@ export function buildRawPlayerHTML(embedUrl: string, isHls: boolean): string {
             showControls();
           });
 
-          // Robust Hls initialization and polling
+          // Match quality preference helper
+          function applyHlsQualityPreference(levels) {
+            var rawPref = '${qualityPreference || 'auto'}';
+            if (!rawPref || rawPref === 'auto' || !levels || levels.length === 0) return;
+            var targetH = parseInt(rawPref);
+            if (isNaN(targetH)) return;
+
+            var bestIdx = -1;
+            var bestDiff = 999999;
+            for (var i = 0; i < levels.length; i++) {
+              var h = levels[i].height || 0;
+              if (h === targetH) {
+                bestIdx = i;
+                break;
+              }
+              if (h > 0) {
+                var diff = Math.abs(h - targetH);
+                if (diff < bestDiff) {
+                  bestDiff = diff;
+                  bestIdx = i;
+                }
+              }
+            }
+
+            if (bestIdx !== -1 && hlsInstance) {
+              hlsInstance.currentLevel = bestIdx;
+              _rnPost({ type: 'qualityChanged', current: bestIdx });
+            }
+          }
+
+          // Match audio preference helper
+          function applyHlsAudioPreference(tracks) {
+            var rawAudio = '${audioPreference || ''}'.toLowerCase();
+            if (!rawAudio || !tracks || tracks.length <= 1 || !hlsInstance) return;
+
+            var targetIdx = -1;
+            for (var a = 0; a < tracks.length; a++) {
+              var tName = (tracks[a].name || '').toLowerCase();
+              var tLang = (tracks[a].lang || '').toLowerCase();
+              if (rawAudio.includes('dub') || rawAudio.includes('english')) {
+                if (tLang.startsWith('en') || tName.includes('dub') || tName.includes('eng')) {
+                  targetIdx = a;
+                  break;
+                }
+              } else if (rawAudio.includes('japanese') || rawAudio.includes('original')) {
+                if (tLang.startsWith('ja') || tName.includes('jap') || tName.includes('orig')) {
+                  targetIdx = a;
+                  break;
+                }
+              }
+            }
+
+            if (targetIdx !== -1 && hlsInstance.audioTrack !== targetIdx) {
+              hlsInstance.audioTrack = targetIdx;
+              _rnPost({ type: 'audioTrackChanged', current: targetIdx });
+            }
+          }
+
           function initPlayer() {
             if (${isHls}) {
               if (typeof Hls !== 'undefined' && Hls.isSupported()) {
                 var hls = new Hls();
+                hlsInstance = hls;
                 hls.loadSource(videoSrc);
                 hls.attachMedia(video);
                 
                 hls.on(Hls.Events.MANIFEST_PARSED, function() {
                   video.play().catch(function(e) {});
+                  _rnPost({ type: 'player_ready' });
                   
-                  // Populating Quality Select levels
                   var levels = hls.levels;
+                  var formattedLevels = levels.map(function(level, idx) {
+                    return {
+                      label: level.height ? level.height + 'p' : 'Level ' + idx,
+                      height: level.height || 0,
+                      bitrate: level.bitrate || 0,
+                    };
+                  });
+
+                  _rnPost({
+                    type: 'qualities',
+                    levels: formattedLevels,
+                    current: hls.currentLevel,
+                  });
+
+                  applyHlsQualityPreference(levels);
+
                   menuQuality.innerHTML = '';
-                  
                   function createQualityOption(label, idx) {
                     var btn = document.createElement('button');
                     btn.innerText = label;
@@ -327,6 +444,7 @@ export function buildRawPlayerHTML(embedUrl: string, isHls: boolean): string {
                       btnQuality.innerText = label;
                       menuQuality.style.display = 'none';
                       resetHideTimer();
+                      _rnPost({ type: 'qualityChanged', current: idx });
                     });
                     menuQuality.appendChild(btn);
                   }
@@ -339,8 +457,36 @@ export function buildRawPlayerHTML(embedUrl: string, isHls: boolean): string {
 
                   btnQuality.style.display = 'inline-block';
                 });
+
+                hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, function() {
+                  var tracks = hls.audioTracks;
+                  if (tracks && tracks.length > 0) {
+                    var formattedTracks = tracks.map(function(t, idx) {
+                      return {
+                        id: idx,
+                        name: t.name || t.lang || ('Audio ' + (idx + 1)),
+                        lang: t.lang || '',
+                      };
+                    });
+                    _rnPost({
+                      type: 'audioTracks',
+                      tracks: formattedTracks,
+                      current: hls.audioTrack,
+                    });
+                    applyHlsAudioPreference(tracks);
+                  }
+                });
+
+                hls.on(Hls.Events.LEVEL_SWITCHED, function(event, data) {
+                  _rnPost({ type: 'qualityChanged', current: data.level });
+                });
+
+                hls.on(Hls.Events.ERROR, function(event, data) {
+                  if (data.fatal) {
+                    _rnPost({ type: 'player_error', code: 104000, message: data.details });
+                  }
+                });
               } else {
-                // Try waiting for Hls script to load (polling up to 30 times = 15 seconds)
                 var checks = 0;
                 var interval = setInterval(function() {
                   checks++;
@@ -362,12 +508,14 @@ export function buildRawPlayerHTML(embedUrl: string, isHls: boolean): string {
             video.src = videoSrc;
             video.addEventListener('loadedmetadata', function() {
               video.play().catch(function(e) {});
+              _rnPost({ type: 'player_ready' });
+            });
+            video.addEventListener('error', function(e) {
+              _rnPost({ type: 'player_error', code: 100001, message: 'Video source error' });
             });
           }
 
           initPlayer();
-
-          // Initial load state check
           showControls();
           onPlayStateChange();
         })();

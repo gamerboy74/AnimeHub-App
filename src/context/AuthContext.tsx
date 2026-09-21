@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { supabase, userAPI, User } from '../lib/supabase';
 import { Session } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -31,7 +31,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Components should gate their auth-dependent renders on this flag, not `loading`,
   // to avoid the brief "logged-out" flash while AsyncStorage is being hydrated.
   const [isAuthReady, setIsAuthReady] = useState(false);
-  const isInitializedRef = React.useRef(false);
+  const isInitializedRef = useRef(false);
 
   useEffect(() => {
     // ── Single authoritative source of truth: onAuthStateChange ──────────────
@@ -41,8 +41,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Using the listener alone avoids the flash: by the time the app renders,
     // the INITIAL_SESSION event has already fired with the cached session.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('[Auth] onAuthStateChange event:', event, 'Has session:', !!session);
-
       if (event === 'SIGNED_OUT' || (event === 'TOKEN_REFRESHED' && !session)) {
         setSession(null);
         setUser(null);
@@ -69,8 +67,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setSession(session);
       if (session?.user) {
-        console.log('[Auth] Fetching profile for user ID:', session.user.id);
-        // fetchUserProfile sets isAuthReady inside its finally block
+        // fetchUserProfile sets isAuthReady inside its finally block.
+        // We pass session.user directly to avoid the stale-closure on session state.
         await fetchUserProfile(session.user.id, session.user, event === 'INITIAL_SESSION');
       } else {
         setUser(null);
@@ -103,7 +101,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           filter: `id=eq.${session.user.id}`,
         },
         (payload) => {
-          console.log('[Auth] Realtime user update received:', payload.new);
           // Merge only the changed fields — don't replace the whole user object
           setUser(prev => prev ? { ...prev, ...(payload.new as Partial<User>) } : prev);
         },
@@ -114,86 +111,60 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [session?.user?.id]);
 
   // ── Sync user subscription cache to AsyncStorage for offline verification ──
-  // Only runs when the subscription tier changes (not on every user field
-  // update) to avoid a redundant DB round-trip + AsyncStorage write on every
-  // realtime event (e.g. watch_count, username).
   useEffect(() => {
     if (user) {
-      console.log('[Auth] Syncing subscription cache to AsyncStorage for:', user.email);
-      (async () => {
-        try {
-          const { data: prefs } = await (userAPI.getPreferences(user.id) as any);
-          const meta = prefs?.subscription_meta as any;
-          const cache = {
-            subscription_type: user.subscription_type,
-            next_renewal: meta?.next_renewal || null,
-            last_verified: Date.now(),
-          };
-          await AsyncStorage.setItem('animehub:sub_cache', JSON.stringify(cache));
-        } catch (err) {
-          const cache = {
-            subscription_type: user.subscription_type,
-            next_renewal: null,
-            last_verified: Date.now(),
-          };
-          await AsyncStorage.setItem('animehub:sub_cache', JSON.stringify(cache));
-        }
-      })();
+      const cache = {
+        subscription_type: user.subscription_type,
+        next_renewal: user.subscription_expires_at || null,
+        last_verified: Date.now(),
+      };
+      AsyncStorage.setItem('animehub:sub_cache', JSON.stringify(cache)).catch(() => {});
     } else {
       AsyncStorage.removeItem('animehub:sub_cache');
     }
-  // Intentionally scoped to id + subscription_type — not the full user object.
-  // Realtime field updates (username, watch_count, etc.) must not trigger this.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, user?.subscription_type]);
+  }, [user?.id, user?.subscription_type, user?.subscription_expires_at]);
 
+  // fetchUserProfile accepts the authUser argument directly to avoid closing over
+  // the session state variable (which is a new object on every auth event).
   const fetchUserProfile = useCallback(async (userId: string, authUser?: any, isInitial = false) => {
     try {
-      console.log('[Auth] fetchUserProfile starting for:', userId);
       const { data, error } = await userAPI.getProfile(userId);
-      console.log('[Auth] fetchUserProfile getProfile result:', !!data, 'Error:', error?.message);
       if (error || !data) {
         // If it is a real network/transient error (not "row not found"), do NOT wipe user profile or log out
         if (error && error.code !== 'PGRST116') {
-          console.warn('[Auth] Temporary DB/network error fetching profile. Keeping cached profile.');
           return;
         }
 
-        console.warn('[Auth] Profile row missing for user:', userId, error?.message || 'No data');
-        
         // Auto-heal / auto-create profile if we have active user session metadata (e.g., for Google OAuth)
-        const currentUser = authUser || session?.user;
-        if (currentUser) {
+        if (authUser) {
           // Wait for JWT to propagate before attempting write, preventing RLS timing issues
           await new Promise(r => setTimeout(r, 500));
-          
-          console.log('[Auth] Auto-creating profile for:', currentUser.email);
-          const metadata = currentUser.user_metadata || {};
+
+          const metadata = authUser.user_metadata || {};
           const rawName = metadata.full_name || metadata.name || '';
           const cleanName = rawName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-          const emailPrefix = currentUser.email ? currentUser.email.split('@')[0] : '';
+          const emailPrefix = authUser.email ? authUser.email.split('@')[0] : '';
           const base = cleanName || emailPrefix || 'user';
           // Add short uid suffix to guarantee uniqueness
           const generatedUsername = `${base}_${userId.substring(0, 6)}`;
-          
+
           const newProfile = {
             id: userId,
-            email: currentUser.email || '',
+            email: authUser.email || '',
             username: generatedUsername,
             avatar_url: metadata.avatar_url || null,
             subscription_type: 'free' as const,
             role: 'user',
             is_admin: false,
           };
- 
+
           const { data: createdData, error: createError } = await supabase
             .from('users')
             .upsert(newProfile, { onConflict: 'id' })  // ← explicit conflict target
             .select()
             .maybeSingle();
- 
+
           if (createError) {
-            console.error('[Auth] Failed to auto-create user profile:', createError.message);
             // Keep existing user if we have one
             setUser(prev => prev);
           } else {
@@ -203,11 +174,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(null);
         }
       } else {
-        setUser(data);
+        // Dynamic expiry check: if subscription expired, normalize immediately
+        const isLapsed = Boolean(
+          data.subscription_type === 'premium' &&
+          data.billing_cycle !== 'admin_grant' &&
+          data.subscription_expires_at &&
+          new Date(data.subscription_expires_at).getTime() <= Date.now()
+        );
+
+        if (isLapsed) {
+          // Immediately treat user as free locally without waiting for server write
+          setUser({ ...data, subscription_type: 'free' });
+
+          // Non-blocking notification to backend to run sweep with service role
+          fetch(
+            `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/subscription-manager`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'expire' }),
+            }
+          ).catch(() => {});
+        } else {
+          setUser(data);
+        }
       }
-    } catch (e) {
-      console.error('[Auth] fetchUserProfile threw:', e);
-      // Keep existing user if we have one
+    } catch {
+      // Keep existing user if we have one — do not clear state on transient errors
     } finally {
       setLoading(false);
       // Mark auth as ready after the very first profile resolution
@@ -216,7 +209,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setIsAuthReady(true);
       }
     }
-  }, [session?.user?.id]);  // stable string primitive -- not session?.user (new object every auth event)
+  }, []); // No deps — authUser is always passed as an argument; no stale closure risk
 
   const signIn = useCallback(async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -224,7 +217,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signUp = useCallback(async (email: string, password: string, username: string) => {
-    // Fix: Pass username in options.data so that Supabase database triggers expecting it don't crash
+    // Pass username in options.data so that Supabase database triggers expecting it don't crash
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -248,12 +241,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         });
         insertError = err;
         if (!err) break;
-        console.warn(`[Auth] Profile insert attempt ${attempt} failed:`, err.message);
         await new Promise(r => setTimeout(r, attempt * 400)); // back-off: 400ms, 800ms
       }
       if (insertError) {
         // Auth user created but profile missing — surface this as an error
-        console.error('[Auth] Could not create user profile after 3 attempts:', insertError);
         // Clean up the orphaned auth user so they can retry signup
         await supabase.auth.signOut();
         return { error: { message: 'Account created but profile setup failed. Please try again.' } };
@@ -290,21 +281,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         },
       });
       if (error || !data?.url) return { error: error ?? new Error('No OAuth URL returned') };
- 
+
       const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-      console.log('[Auth] WebBrowser.openAuthSessionAsync result:', result);
       if (result.type !== 'success') return { error: new Error('Google sign-in was cancelled') };
- 
+
       // Support both PKCE (?code=) and Implicit (#access_token=) flows:
       if (result.url.includes('access_token=') && result.url.includes('refresh_token=')) {
-        console.log('[Auth] Detected implicit flow tokens in redirect URL. Parsing...');
         const hash = result.url.split('#')[1];
         const urlParams = new URLSearchParams(hash);
         const accessToken = urlParams.get('access_token');
         const refreshToken = urlParams.get('refresh_token');
-        
+
         if (accessToken && refreshToken) {
-          console.log('[Auth] Setting session directly via implicit flow...');
           const { error: setSessionError } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken,
@@ -312,12 +300,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return { error: setSessionError };
         }
       }
- 
+
       // On Android, callback.tsx handles the exchange via deep link.
       // Check if it already did — if so, skip to avoid consuming the verifier twice.
       const { data: { session: existingSession } } = await supabase.auth.getSession();
       if (existingSession) return { error: null };
- 
+
       // Supabase v2 uses PKCE — exchangeCodeForSession handles ?code= automatically
       const { error: sessionError } = await supabase.auth.exchangeCodeForSession(result.url);
       if (sessionError?.message.includes('verifier')) {
@@ -328,7 +316,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (e: any) {
       return { error: e };
     }
-  }, [session?.user?.id]);  // stable string primitive -- not session?.user (new object every auth event)
+  }, []); // No session dep needed — does not read session state
 
   return (
     <AuthContext.Provider value={{ session, user, loading, isAuthReady, signIn, signUp, signOut, refreshUser, signInWithGoogle, resetPassword }}>

@@ -14,6 +14,7 @@ interface NextUpCardProps {
   autoPlayCountdown: number | null;
   onPlayNow: () => void;
   onCancelAutoPlay: () => void;
+  onDismiss?: () => void;
 }
 
 export default function NextUpCard({
@@ -23,6 +24,7 @@ export default function NextUpCard({
   autoPlayCountdown,
   onPlayNow,
   onCancelAutoPlay,
+  onDismiss,
 }: NextUpCardProps) {
   if (!visible || !nextEpisode) return null;
 
@@ -58,15 +60,16 @@ export default function NextUpCard({
             </View>
           </TouchableOpacity>
 
-          {/* Cancel (only shown during countdown) */}
-          {autoPlayCountdown !== null && (
-            <TouchableOpacity
-              style={styles.nextUpCancelBtn}
-              onPress={onCancelAutoPlay}
-            >
-              <Ionicons name="close" size={14} color={COLORS.text} />
-            </TouchableOpacity>
-          )}
+          {/* Dismiss button (always accessible) */}
+          <TouchableOpacity
+            style={styles.nextUpCancelBtn}
+            onPress={onDismiss || onCancelAutoPlay}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="Dismiss Up Next card"
+            accessibilityRole="button"
+          >
+            <Ionicons name="close" size={15} color={COLORS.text} />
+          </TouchableOpacity>
         </BlurView>
       </View>
     </View>

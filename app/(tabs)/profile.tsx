@@ -16,68 +16,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../../src/lib/supabase';
 import { useTranslation } from '../../src/context/LocalizationContext';
-
-const BADGE_DEFS = [
-  { id: '1', name: 'FIRST EP', icon: 'play-circle', color: COLORS.neon, check: (p: any[], s: number, w: any[]) => p.length >= 1 },
-  { id: '2', name: 'DEDICATED', icon: 'flash', color: COLORS.neonCyan, check: (p: any[], s: number) => s >= 3 },
-  { id: '3', name: 'VETERAN', icon: 'medal', color: '#ff7346', check: (p: any[], s: number) => p.length >= 10 },
-  { id: '4', name: 'LISTER', icon: 'list', color: COLORS.neonPulse, check: (p: any[], s: number, w: any[]) => w.length >= 5 },
-  { id: '5', name: 'WARRIOR', icon: 'shield', color: COLORS.neonGold, check: (p: any[], s: number) => s >= 7 },
-  { id: '6', name: 'LEGEND', icon: 'star', color: '#BF5FFF', check: (p: any[], s: number) => p.length >= 50 },
-];
-
-const GENRE_COLORS = ['#00F5FF', '#BF5FFF', '#ff7346', '#FFD600', '#FF2D78', '#00F5B4'];
-
-function computeGenres(progress: any[]) {
-  const counts: Record<string, number> = {};
-  for (const p of progress) {
-    const genres: string[] = p.genres || p.anime_genres || [];
-    for (const g of genres) {
-      counts[g] = (counts[g] || 0) + 1;
-    }
-  }
-  const total = Math.max(Object.values(counts).reduce((a, b) => a + b, 0), 1);
-  return Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 4)
-    .map(([name, count], i) => ({
-      name,
-      percent: Math.round((count / total) * 100),
-      color: GENRE_COLORS[i % GENRE_COLORS.length],
-    }));
-}
-
-// ── Helpers ──────────────────────────────────────────────────
-function relativeTime(isoString: string) {
-  const diff = Date.now() - new Date(isoString).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d ago`;
-  return `${Math.floor(days / 7)}w ago`;
-}
-
-function computeStreak(progress: any[]): number {
-  const days = new Set(
-    progress.map(p => new Date(p.last_watched).toDateString())
-  );
-  const sorted = Array.from(days)
-    .map(d => new Date(d).getTime())
-    .sort((a, b) => b - a);
-  let streak = 0;
-  let check = new Date();
-  check.setHours(0, 0, 0, 0);
-  for (const ts of sorted) {
-    const d = new Date(ts);
-    d.setHours(0, 0, 0, 0);
-    const diff = Math.round((check.getTime() - d.getTime()) / 86400000);
-    if (diff <= 1) { streak++; check = d; }
-    else break;
-  }
-  return streak;
-}
+import { BADGE_DEFS } from '../../src/constants/badges';
+import {
+  computeGenres,
+  computeStreak,
+  relativeTime,
+  getLocalizedRelativeTime,
+  GENRE_COLORS,
+} from '../../src/lib/userStats';
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -89,26 +35,6 @@ export default function ProfileScreen() {
   const getLocaleTag = (loc: string) => {
     if (loc === 'ja') return 'ja-JP';
     return 'en-US';
-  };
-
-  const getLocalizedRelativeTime = (isoString: string, loc: string) => {
-    const diff = Date.now() - new Date(isoString).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (loc === 'ja') {
-      if (mins < 60) return `${mins}分前`;
-      const hrs = Math.floor(mins / 60);
-      if (hrs < 24) return `${hrs}時間前`;
-      const days = Math.floor(hrs / 24);
-      if (days < 7) return `${days}日前`;
-      return `${Math.floor(days / 7)}週間前`;
-    } else {
-      if (mins < 60) return `${mins}m ago`;
-      const hrs = Math.floor(mins / 60);
-      if (hrs < 24) return `${hrs}h ago`;
-      const days = Math.floor(hrs / 24);
-      if (days < 7) return `${days}d ago`;
-      return `${Math.floor(days / 7)}w ago`;
-    }
   };
 
   // ── TanStack Query — shared cache with Library / History screens ────────────
@@ -237,34 +163,43 @@ export default function ProfileScreen() {
     
     let text = '';
     let color = COLORS.textMuted;
+    let icon: keyof typeof Ionicons.glyphMap = 'information-circle-outline';
     
     switch (usernameStatus) {
       case 'checking':
-        text = `🔍 ${t('checkingAvailability')}`;
+        text = t('checkingAvailability');
         color = COLORS.neonGold;
+        icon = 'sync-outline';
         break;
       case 'available':
-        text = `🟢 ${t('usernameAvailable')}`;
+        text = t('usernameAvailable');
         color = COLORS.success || '#00F5B4';
+        icon = 'checkmark-circle-outline';
         break;
       case 'taken':
-        text = `🔴 ${t('usernameTaken')}`;
+        text = t('usernameTaken');
         color = COLORS.danger || '#FF2D78';
+        icon = 'close-circle-outline';
         break;
       case 'invalid':
-        text = `⚠️ ${t('usernameInvalid')}`;
+        text = t('usernameInvalid');
         color = COLORS.danger || '#FF2D78';
+        icon = 'alert-circle-outline';
         break;
       case 'current':
-        text = `🟢 ${t('currentUsername')}`;
+        text = t('currentUsername');
         color = COLORS.neonCyan || '#00F5FF';
+        icon = 'checkmark-done-circle-outline';
         break;
     }
 
     return (
-      <Text style={[styles.statusText, { color }]}>
-        {text}
-      </Text>
+      <View style={styles.statusRow}>
+        <Ionicons name={icon} size={14} color={color} />
+        <Text style={[styles.statusText, { color }]}>
+          {text}
+        </Text>
+      </View>
     );
   };
 
@@ -272,7 +207,11 @@ export default function ProfileScreen() {
   const streak    = useMemo(() => computeStreak(allProgress), [allProgress]);
   const genreStats = useMemo(() => computeGenres(allProgress), [allProgress]);
   const badges    = useMemo(
-    () => BADGE_DEFS.map(b => ({ ...b, earned: b.check(allProgress, streak, watchlist) })),
+    () => BADGE_DEFS.map(b => ({
+      ...b,
+      earned: b.check(allProgress, streak, watchlist),
+      progress: b.progress(allProgress, streak, watchlist),
+    })),
     [allProgress, streak, watchlist]
   );
 
@@ -366,7 +305,7 @@ export default function ProfileScreen() {
     <ScrollView 
       style={styles.container} 
       showsVerticalScrollIndicator={false}
-      contentContainerStyle={{ paddingBottom: 120, paddingTop: insets.top + 16 }}
+      contentContainerStyle={{ paddingBottom: 120, paddingTop: 16 }}
     >
 
 
@@ -559,9 +498,16 @@ export default function ProfileScreen() {
                 {user.subscription_type === 'premium' ? t('premium') : t('free')}
               </Text>
             </View>
-            {user.subscription_type !== 'premium' && (
-              <TouchableOpacity style={styles.upgradePill} onPress={() => router.push('/settings')}>
+            {user.subscription_type !== 'premium' ? (
+              <TouchableOpacity style={styles.upgradePill} onPress={() => router.push('/plans')}>
                 <Text style={styles.upgradePillText}>{t('upgrade')}</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[styles.upgradePill, { backgroundColor: 'rgba(255,214,0,0.12)', borderColor: 'rgba(255,214,0,0.35)' }]}
+                onPress={() => router.push('/manage-plan' as any)}
+              >
+                <Text style={[styles.upgradePillText, { color: COLORS.neonGold }]}>Manage</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -887,7 +833,8 @@ const styles = StyleSheet.create({
   modalSaveBtn: { borderRadius: 100, overflow: 'hidden' },
   modalSaveGradient: { paddingVertical: 16, alignItems: 'center' },
   modalSaveText: { color: '#000', fontWeight: '900', fontSize: 15 },
-  statusText: { fontSize: 12, fontWeight: '700', marginTop: -16, marginBottom: 20, marginLeft: 4 },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: -16, marginBottom: 20, marginLeft: 4 },
+  statusText: { fontSize: 12, fontWeight: '700' },
 
   horizontalList: { gap: 16, paddingRight: SPACING.md },
   animePosterCard: {

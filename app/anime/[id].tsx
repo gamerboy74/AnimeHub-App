@@ -455,13 +455,17 @@ const EpisodesTab = React.memo(function EpisodesTab({ episodes, anime, router, u
               </View>
             );
           })}
-          {episodes.length > 5 && (
+          {episodes.length > 5 ? (
             <TouchableOpacity
               style={styles.seeAllEps}
               onPress={() => router.push(`/anime/episodes/${anime.id}?animeTitle=${encodeURIComponent(anime.title)}`)}
             >
               <Text style={styles.seeAllEpsText}>SEE ALL {episodes.length} EPISODES →</Text>
             </TouchableOpacity>
+          ) : (
+            <Text style={{ fontSize: 11, color: COLORS.textMuted, textAlign: 'center', marginTop: 12 }}>
+              Showing all {episodes.length} episode{episodes.length === 1 ? '' : 's'}
+            </Text>
           )}
         </>
       )}
@@ -591,14 +595,10 @@ function TrailerModal({ onClose, url }: { onClose: () => void; url: string }) {
 
   const videoId = useMemo(() => {
     if (!url) return '';
-    let base = url.replace('youtube-nocookie.com', 'youtube.com');
-    if (base.includes('youtube.com/watch')) {
-      return base.split('v=')[1]?.split('&')[0] || '';
-    } else if (base.includes('youtu.be/')) {
-      return base.split('youtu.be/')[1]?.split('?')[0] || '';
-    } else if (base.includes('youtube.com/embed/')) {
-      return base.split('youtube.com/embed/')[1]?.split('?')[0] || '';
-    }
+    const match = url.match(/(?:youtu\.be\/|youtube(?:-nocookie)?\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/);
+    if (match && match[1]) return match[1];
+    // Fallback if raw 11-character video ID is passed directly
+    if (/^[\w-]{11}$/.test(url.trim())) return url.trim();
     return '';
   }, [url]);
 

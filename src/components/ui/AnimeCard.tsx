@@ -1,12 +1,11 @@
 import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, RADIUS, SPACING } from '../../constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { Anime, AnimeWithStats } from '../../lib/supabase';
-
-const { width } = Dimensions.get('window');
+import { haptic } from '../../lib/haptics';
 
 type Props = {
   anime: Anime | AnimeWithStats;
@@ -17,33 +16,64 @@ type Props = {
   onLongPress?: () => void;
   size?: 'sm' | 'md' | 'lg';
   showStats?: boolean;
+  style?: any;
 };
 
-const AnimeCard = React.memo(function AnimeCard({ anime, onPress, onLongPress, size = 'md', showStats = false }: Props) {
-  // Memoized per `size` — avoids recalculating on every render triggered by parent
+const AnimeCard = React.memo(function AnimeCard({ anime, onPress, onLongPress, size = 'md', showStats = false, style }: Props) {
+  const { width } = useWindowDimensions();
+
+  // Memoized per `size` and `width` — responsive to orientation/foldable changes
   const { cardWidth, cardHeight } = useMemo(() => {
     const w = size === 'sm' ? 120 : size === 'lg' ? width - 32 : 160;
     const h = size === 'lg' ? 220 : w * 1.45;
     return { cardWidth: w, cardHeight: h };
-  }, [size]);
+  }, [size, width]);
 
   const stats = anime as AnimeWithStats;
 
+  const handlePress = () => {
+    haptic.light();
+    onPress(anime.id);
+  };
+
+  const handleLongPress = () => {
+    if (onLongPress) {
+      haptic.medium();
+      onLongPress();
+    }
+  };
+
   return (
     <TouchableOpacity
-      onPress={() => onPress(anime.id)}
-      onLongPress={onLongPress}
+      onPress={handlePress}
+      onLongPress={handleLongPress}
       activeOpacity={0.85}
-      style={[styles.container, { width: cardWidth }]}
+      accessible={true}
+      accessibilityRole="button"
+      accessibilityLabel={`${anime.title}, ${anime.type || 'Anime'}${anime.year ? `, ${anime.year}` : ''}${stats.user_rating_avg ? `, rating ${Number(stats.user_rating_avg).toFixed(1)}` : ''}`}
+      accessibilityHint="Double tap to open anime details"
+      style={[styles.container, { width: cardWidth }, style]}
     >
-      <View style={[styles.card, { width: cardWidth, height: cardHeight }]}>
+      <View
+        style={[
+          styles.card,
+          { width: '100%' },
+          size === 'lg' ? { height: 220 } : { aspectRatio: 1 / 1.45 },
+        ]}
+      >
         {/* Poster */}
-        <Image
-          source={{ uri: anime.poster_url || 'https://via.placeholder.com/160x230/0E0E1A/BF5FFF?text=?' }}
-          style={StyleSheet.absoluteFill}
-          contentFit="cover"
-          transition={200}
-        />
+        {anime.poster_url ? (
+          <Image
+            source={{ uri: anime.poster_url }}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            transition={200}
+          />
+        ) : (
+          <View style={styles.posterFallback}>
+            <Ionicons name="film-outline" size={32} color={COLORS.textMuted} />
+          </View>
+        )}
 
         {/* Gradient overlay */}
         <LinearGradient
@@ -55,12 +85,12 @@ const AnimeCard = React.memo(function AnimeCard({ anime, onPress, onLongPress, s
         <View style={styles.topRow}>
           {anime.age_rating && (
             <View style={styles.badge}>
-              <Text style={styles.badgeText}>{anime.age_rating}</Text>
+              <Text style={styles.badgeText} maxFontSizeMultiplier={1.2}>{anime.age_rating}</Text>
             </View>
           )}
           {anime.type && (
             <View style={[styles.badge, styles.typeBadge]}>
-              <Text style={styles.badgeText}>{anime.type}</Text>
+              <Text style={styles.badgeText} maxFontSizeMultiplier={1.2}>{anime.type}</Text>
             </View>
           )}
         </View>
@@ -74,18 +104,15 @@ const AnimeCard = React.memo(function AnimeCard({ anime, onPress, onLongPress, s
 
         {/* Bottom info */}
         <View style={styles.bottomInfo}>
-          <Text style={styles.title} numberOfLines={2}>{anime.title}</Text>
-          {anime.year && <Text style={styles.year}>{anime.year}</Text>}
+          <Text style={styles.title} numberOfLines={2} maxFontSizeMultiplier={1.3}>{anime.title}</Text>
+          {anime.year && <Text style={styles.year} maxFontSizeMultiplier={1.2}>{anime.year}</Text>}
           {showStats && stats.user_rating_avg && (
             <View style={styles.ratingRow}>
               <Ionicons name="star" size={10} color={COLORS.neonGold} />
-              <Text style={styles.rating}>{Number(stats.user_rating_avg).toFixed(1)}</Text>
+              <Text style={styles.rating} maxFontSizeMultiplier={1.2}>{Number(stats.user_rating_avg).toFixed(1)}</Text>
             </View>
           )}
         </View>
-
-        {/* Neon border left accent */}
-        <View style={styles.accentLine} />
       </View>
     </TouchableOpacity>
   );
@@ -103,6 +130,12 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bgCard,
     borderWidth: 1,
     borderColor: COLORS.border,
+  },
+  posterFallback: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: COLORS.bgElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   gradientOverlay: {
     position: 'absolute',
@@ -179,15 +212,5 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: COLORS.neonGold,
     fontWeight: '700',
-  },
-  accentLine: {
-    position: 'absolute',
-    left: 0,
-    top: '20%',
-    bottom: '20%',
-    width: 2,
-    backgroundColor: COLORS.neon,
-    borderRadius: 1,
-    opacity: 0.7,
   },
 });

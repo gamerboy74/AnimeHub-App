@@ -1,8 +1,8 @@
 import React, { useState, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  Dimensions, RefreshControl, ActivityIndicator, FlatList, Alert,
-  Modal, Pressable,
+  RefreshControl, ActivityIndicator, FlatList, Alert,
+  Modal, Pressable, useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,14 +16,18 @@ import { useAuth } from '../../src/context/AuthContext';
 import AnimeCard from '../../src/components/ui/AnimeCard';
 import { BlurView } from 'expo-blur';
 
-
-const { width } = Dimensions.get('window');
-
 type LibraryTab = 'watchlist' | 'completed' | 'dropped';
+
+const TAB_LABELS: Record<LibraryTab, string> = {
+  watchlist: 'Watchlist',
+  completed: 'Completed',
+  dropped: 'On Hold',
+};
 
 export default function LibraryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const { user } = useAuth();
   const userId = user?.id;
   const queryClient = useQueryClient();
@@ -46,7 +50,7 @@ export default function LibraryScreen() {
     setShowSortSheet(true);
   }, []);
 
-  const cardWidth = width * 0.75 + SPACING.md;
+  const cardWidth = Math.floor(width * 0.75) + SPACING.md;
 
   // Cached — shared with Profile and Watchlist screens
   const { data: progressData = [], isLoading: loadingProgress } = useQuery({
@@ -219,12 +223,12 @@ export default function LibraryScreen() {
 
   if (!user) {
     return (
-      <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
+      <View style={[styles.container, styles.center]}>
         <Ionicons name="library-outline" size={64} color={COLORS.textMuted} />
-        <Text style={styles.guestTitle}>YOUR DIGITAL ARCHIVE</Text>
-        <Text style={styles.guestSub}>Sign in to access your curated library of neon dreams.</Text>
+        <Text style={styles.guestTitle}>YOUR ANIME LIBRARY</Text>
+        <Text style={styles.guestSub}>Sign in to access your watchlist, favorites, and watch history.</Text>
         <TouchableOpacity style={styles.loginBtn} onPress={() => router.push('/auth/login')}>
-          <Text style={styles.loginBtnText}>ACCESS ARCHIVE</Text>
+          <Text style={styles.loginBtnText}>SIGN IN</Text>
         </TouchableOpacity>
       </View>
     );
@@ -291,6 +295,7 @@ export default function LibraryScreen() {
                 <ContinueWatchingItem
                   key={item.id || item.episode_id || `cw-${idx}`}
                   item={item}
+                  itemWidth={Math.floor(width * 0.75)}
                   onPress={handleContinueWatchingPress}
                 />
               ))}
@@ -309,12 +314,21 @@ export default function LibraryScreen() {
                   onPress={() => setActiveTab(t)}
                 >
                   <Text style={[styles.tabText, activeTab === t && styles.tabTextActive]}>
-                    {t.charAt(0).toUpperCase() + t.slice(1)}
+                    {TAB_LABELS[t]}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
           </View>
+
+          {activeTab === 'dropped' && (
+            <View style={styles.onHoldNotice}>
+              <Ionicons name="information-circle-outline" size={16} color={COLORS.neonCyan} />
+              <Text style={styles.onHoldNoticeText}>
+                Anime paused for 14+ days appear here. Resuming any episode moves them back to Continue Watching.
+              </Text>
+            </View>
+          )}
           
           <View style={styles.filterBar}>
             <TouchableOpacity style={styles.filterBtn} onPress={handleSortPress}>
@@ -330,8 +344,19 @@ export default function LibraryScreen() {
             <ActivityIndicator color={COLORS.neon} style={{ marginTop: SPACING.xl }} />
           ) : tabData.length === 0 ? (
             <View style={styles.emptyGrid}>
-              <Ionicons name="cube-outline" size={48} color={COLORS.textMuted} />
-              <Text style={styles.emptyGridText}>NO DATA IN {activeTab.toUpperCase()}</Text>
+              <Ionicons
+                name={activeTab === 'dropped' ? 'pause-circle-outline' : 'cube-outline'}
+                size={48}
+                color={COLORS.textMuted}
+              />
+              <Text style={styles.emptyGridText}>
+                {activeTab === 'dropped' ? 'NO SHOWS ON HOLD' : `NO DATA IN ${activeTab.toUpperCase()}`}
+              </Text>
+              {activeTab === 'dropped' && (
+                <Text style={styles.emptyGridSub}>
+                  Series you haven't watched in over 14 days will automatically rest here.
+                </Text>
+              )}
             </View>
           ) : (
             <View style={isGridView ? styles.grid : styles.listColumn}>
@@ -425,7 +450,31 @@ const styles = StyleSheet.create({
   scrollBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
 
   continueScroll: { paddingHorizontal: SPACING.md, gap: SPACING.md, paddingBottom: SPACING.md },
-  continueCard: { width: width * 0.75 },
+  continueCard: { width: 280 },
+  onHoldNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: SPACING.md,
+    marginBottom: SPACING.md,
+    padding: 12,
+    borderRadius: RADIUS.md,
+    backgroundColor: 'rgba(0,245,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(0,245,255,0.18)',
+  },
+  onHoldNoticeText: {
+    flex: 1,
+    fontSize: 12,
+    color: COLORS.textSub,
+    lineHeight: 16,
+  },
+  emptyGridSub: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    textAlign: 'center',
+    maxWidth: 260,
+  },
   continueThumbBox: { aspectRatio: 16/9, borderRadius: RADIUS.lg, overflow: 'hidden', backgroundColor: COLORS.bgCard, elevation: 10, shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 10 },
   continueThumb: { ...StyleSheet.absoluteFillObject },
   continueOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(8,8,16,0.15)' },
@@ -628,20 +677,22 @@ const styles = StyleSheet.create({
 });
 
 // ─── MEMOIZED CONTINUE WATCHING ITEM ───────────────────────────────────────────
+
 interface ContinueWatchingItemProps {
   item: any;
-  onPress: (episodeId: string) => void;
+  onPress: (id: string) => void;
+  itemWidth?: number;
 }
 
 const ContinueWatchingItem = React.memo(
-  ({ item, onPress }: ContinueWatchingItemProps) => {
+  ({ item, onPress, itemWidth }: ContinueWatchingItemProps) => {
     const progress = item.episode_duration > 0
       ? (item.progress_seconds / item.episode_duration) * 100
       : item.progress_percentage || 0;
 
     return (
       <TouchableOpacity 
-        style={styles.continueCard}
+        style={[styles.continueCard, itemWidth ? { width: itemWidth } : null]}
         onPress={() => onPress(item.episode_id)}
       >
         <View style={styles.continueThumbBox}>

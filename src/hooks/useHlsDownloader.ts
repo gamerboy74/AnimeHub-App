@@ -78,7 +78,6 @@ function safeName(s: string): string {
  * Returns null on failure.
  */
 async function fetchText(url: string, referer: string, cookies?: string): Promise<string | null> {
-  console.log(`[HLS fetchText] Fetching: ${url}`);
   try {
     const headers: Record<string, string> = {
       'User-Agent': UA,
@@ -94,12 +93,10 @@ async function fetchText(url: string, referer: string, cookies?: string): Promis
     }
     const res = await fetch(url, { headers });
     if (!res.ok) {
-      console.warn(`[HLS fetchText] Failed with status ${res.status}: ${res.statusText}`);
       return null;
     }
     return await res.text();
-  } catch (err) {
-    console.error(`[HLS fetchText] Network/fetch error for ${url}:`, err);
+  } catch {
     return null;
   }
 }
@@ -339,8 +336,7 @@ export function useHlsDownloader(): HlsDownloaderResult {
       pendingTextFetchesRef.current[callbackId] = {
         resolve,
         reject: (err) => {
-          console.warn(`[HLS fetchText WebView] Error for ${url}:`, err);
-          resolve(null); // fallback
+          resolve(null); // fallback to null on error, download will retry via native fetch
         }
       };
 
@@ -441,7 +437,16 @@ export function useHlsDownloader(): HlsDownloaderResult {
       pendingSegmentsRef.current = {};
 
       try {
-        // ── 1. Resolve & parse manifest ──────────────────────────────────────
+        // ── 0. Storage quota check — fail fast before touching the filesystem ──
+        // Episodes typically range from 200MB–800MB. Require at least 500MB free.
+        const MIN_FREE_BYTES = 500 * 1024 * 1024; // 500 MB
+        const freeDisk = await FileSystem.getFreeDiskStorageAsync();
+        if (freeDisk < MIN_FREE_BYTES) {
+          const freeMb = Math.round(freeDisk / (1024 * 1024));
+          throw new Error(
+            `Not enough storage space. You have ${freeMb} MB free but at least 500 MB is required to download an episode.`
+          );
+        }
         // If manifestContent is provided for the root URL, pre-populate manifestCache
         const cache = { ...manifestCache };
         if (manifestContent) {

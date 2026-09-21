@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, StatusBar } from 'react-native';
+import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, StatusBar, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -42,9 +42,14 @@ export default function StudioBrowseScreen() {
   const studioName = name as string;
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
 
-  const themeColor = STUDIO_COLORS[studioName] || COLORS.neon;
-  const coverUrl = STUDIO_COVERS[studioName] || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=600&auto=format&fit=crop';
+  const numColumns = windowWidth >= 1024 ? 6 : windowWidth >= 768 ? 5 : windowWidth >= 600 ? 4 : 3;
+  const availableWidth = windowWidth - SPACING.md * 2;
+  const cardWidth = Math.floor((availableWidth - SPACING.sm * (numColumns - 1)) / numColumns);
+
+  const themeColor = STUDIO_COLORS[studioName] ?? COLORS.neon;
+  const fallbackCover = STUDIO_COVERS[studioName] ?? 'https://images.unsplash.com/photo-1578632767115-351597cf2477?q=80&w=600&auto=format&fit=crop';
 
   const { data: anime = [], isLoading: loading } = useQuery({
     queryKey: ['anime', 'studio', studioName],
@@ -61,6 +66,8 @@ export default function StudioBrowseScreen() {
     },
   });
 
+  const coverUrl = anime[0]?.banner_url || anime[0]?.poster_url || fallbackCover;
+
   const handleCardPress = useCallback((id: string) => {
     router.push(`/anime/${id}`);
   }, [router]);
@@ -69,9 +76,10 @@ export default function StudioBrowseScreen() {
     <AnimeCard
       anime={item}
       size="sm"
+      style={{ width: cardWidth, marginRight: 0 }}
       onPress={handleCardPress}
     />
-  ), [handleCardPress]);
+  ), [handleCardPress, cardWidth]);
 
   const keyExtractor = useCallback((item: Anime) => item.id, []);
 
@@ -125,9 +133,10 @@ export default function StudioBrowseScreen() {
         </View>
       ) : (
         <FlatList
+          key={`studio-grid-${numColumns}`}
           data={anime}
           keyExtractor={keyExtractor}
-          numColumns={3}
+          numColumns={numColumns}
           contentContainerStyle={[styles.grid, { paddingBottom: insets.bottom + 32 }]}
           columnWrapperStyle={styles.row}
           renderItem={renderItem}

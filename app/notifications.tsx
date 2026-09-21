@@ -45,6 +45,28 @@ const notifColor = (type: string) => {
   }
 };
 
+/**
+ * Extracts the target anime/episode ID from notification data or action_url.
+ */
+function extractNotificationEntityId(notification: any): string | null {
+  if (!notification) return null;
+  let dataObj = notification.data;
+  if (typeof dataObj === 'string') {
+    try {
+      dataObj = JSON.parse(dataObj);
+    } catch {
+      dataObj = null;
+    }
+  }
+  if (dataObj?.anime_id) return String(dataObj.anime_id);
+  if (dataObj?.episode_id) return String(dataObj.episode_id);
+  if (notification.action_url) {
+    const match = notification.action_url.match(/\/(?:anime|watch)\/([a-zA-Z0-9-]+)/);
+    if (match) return match[1];
+  }
+  return null;
+}
+
 const FILTERS = [
   { id: 'all', label: 'All' },
   { id: 'unread', label: 'Unread' },
@@ -91,31 +113,8 @@ export default function NotificationsScreen() {
         const candidateIds = new Set<string>();
 
         notifs.forEach(n => {
-          // Parse data defensively in case it is stored as a string or raw json object
-          let dataObj = n.data;
-          if (typeof dataObj === 'string') {
-            try {
-              dataObj = JSON.parse(dataObj);
-            } catch (e) {
-              dataObj = null;
-            }
-          }
-
-          if (dataObj?.anime_id) candidateIds.add(dataObj.anime_id);
-          if (dataObj?.episode_id) candidateIds.add(dataObj.episode_id);
-
-          if (n.action_url) {
-            // Extract UUID/ID from action URLs like /anime/:id or /watch/:id
-            const animeMatch = n.action_url.match(/\/anime\/([a-zA-Z0-9-]+)/);
-            if (animeMatch) {
-              candidateIds.add(animeMatch[1]);
-            } else {
-              const watchMatch = n.action_url.match(/\/watch\/([a-zA-Z0-9-]+)/);
-              if (watchMatch) {
-                candidateIds.add(watchMatch[1]);
-              }
-            }
-          }
+          const id = extractNotificationEntityId(n);
+          if (id) candidateIds.add(id);
         });
 
         if (candidateIds.size === 0) return;
@@ -336,37 +335,7 @@ export default function NotificationsScreen() {
       return renderSectionHeader(item.title);
     }
 
-    // Determine the key (anime_id or episode_id or parsed from action_url) to resolve the poster
-    let posterKey: string | null = null;
-    const notification = item.data;
-
-    if (notification) {
-      let dataObj = notification.data;
-      if (typeof dataObj === 'string') {
-        try {
-          dataObj = JSON.parse(dataObj);
-        } catch (e) {}
-      }
-
-      if (dataObj?.anime_id) {
-        posterKey = dataObj.anime_id;
-      } else if (dataObj?.episode_id) {
-        posterKey = dataObj.episode_id;
-      }
-
-      if (!posterKey && notification.action_url) {
-        const animeMatch = notification.action_url.match(/\/anime\/([a-zA-Z0-9-]+)/);
-        if (animeMatch) {
-          posterKey = animeMatch[1];
-        } else {
-          const watchMatch = notification.action_url.match(/\/watch\/([a-zA-Z0-9-]+)/);
-          if (watchMatch) {
-            posterKey = watchMatch[1];
-          }
-        }
-      }
-    }
-
+    const posterKey = extractNotificationEntityId(item.data);
     const animePoster = posterKey ? animePosters[posterKey] : null;
 
     return (

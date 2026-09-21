@@ -1,56 +1,57 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Dimensions } from 'react-native';
+import React, { useMemo } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
-import { animeAPI } from '../../src/lib/supabase';
-
-const { width } = Dimensions.get('window');
-const CARD_W = (width - SPACING.md * 2 - SPACING.sm) / 2;
-
-const ALL_GENRES = [
-  { name: 'Action',        color: '#FF7346', grad: ['transparent', 'rgba(255,115,70,0.55)', 'rgba(8,8,16,0.97)']  as const, icon: '⚔️' },
-  { name: 'Sci-Fi',        color: '#00F5FF', grad: ['transparent', 'rgba(0,245,255,0.55)',  'rgba(8,8,16,0.97)']  as const, icon: '🚀' },
-  { name: 'Fantasy',       color: '#BF5FFF', grad: ['transparent', 'rgba(191,95,255,0.55)', 'rgba(8,8,16,0.97)']  as const, icon: '🔮' },
-  { name: 'Adventure',     color: '#FFB830', grad: ['transparent', 'rgba(255,184,48,0.55)', 'rgba(8,8,16,0.97)']  as const, icon: '🗺️' },
-  { name: 'Romance',       color: '#FF2D78', grad: ['transparent', 'rgba(255,45,120,0.55)', 'rgba(8,8,16,0.97)']  as const, icon: '💕' },
-  { name: 'Comedy',        color: '#FFE54C', grad: ['transparent', 'rgba(255,229,76,0.55)', 'rgba(8,8,16,0.97)']  as const, icon: '😂' },
-  { name: 'Drama',         color: '#E8C4FF', grad: ['transparent', 'rgba(232,196,255,0.5)','rgba(8,8,16,0.97)']   as const, icon: '🎭' },
-  { name: 'Thriller',      color: '#FF6B6B', grad: ['transparent', 'rgba(255,107,107,0.55)','rgba(8,8,16,0.97)']  as const, icon: '😱' },
-  { name: 'Horror',        color: '#FF3333', grad: ['transparent', 'rgba(139,0,0,0.7)',     'rgba(8,8,16,0.97)']  as const, icon: '🩸' },
-  { name: 'Mystery',       color: '#9B8FFF', grad: ['transparent', 'rgba(155,143,255,0.55)','rgba(8,8,16,0.97)']  as const, icon: '🔍' },
-  { name: 'Sports',        color: '#00D4AA', grad: ['transparent', 'rgba(0,212,170,0.55)', 'rgba(8,8,16,0.97)']   as const, icon: '🏆' },
-  { name: 'Slice of Life', color: '#A8E6CF', grad: ['transparent', 'rgba(168,230,207,0.5)','rgba(8,8,16,0.97)']   as const, icon: '🌸' },
-  { name: 'Mecha',         color: '#7EC8E3', grad: ['transparent', 'rgba(126,200,227,0.55)','rgba(8,8,16,0.97)']  as const, icon: '🤖' },
-  { name: 'Supernatural',  color: '#C77DFF', grad: ['transparent', 'rgba(199,125,255,0.55)','rgba(8,8,16,0.97)']  as const, icon: '👁️' },
-  { name: 'Isekai',        color: '#FFC300', grad: ['transparent', 'rgba(255,195,0,0.55)', 'rgba(8,8,16,0.97)']   as const, icon: '🌀' },
-  { name: 'Historical',    color: '#D4A574', grad: ['transparent', 'rgba(212,165,116,0.55)','rgba(8,8,16,0.97)']  as const, icon: '📜' },
-];
+import { supabase } from '../../src/lib/supabase';
+import { useQuery } from '@tanstack/react-query';
+import { ALL_GENRES } from '../../src/constants/genres';
 
 export default function AllGenresScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [genreImages, setGenreImages] = useState<Record<string, string>>({});
+  const { width } = useWindowDimensions();
+  const CARD_W = (width - SPACING.md * 2 - SPACING.sm) / 2;
 
-  useEffect(() => {
-    // Fetch a random anime poster for each genre in parallel
-    Promise.all(
-      ALL_GENRES.map(g => animeAPI.getByGenre(g.name, 20))
-    ).then(results => {
+  // Single query: fetch all anime that belong to any genre, partition client-side.
+  // Replaces 16 parallel animeAPI.getByGenre() calls (16 DB round-trips → 1).
+  const { data: genreImages = {} } = useQuery({
+    queryKey: ['genre-index-posters'],
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    queryFn: async (): Promise<Record<string, string>> => {
+      const genreNames = ALL_GENRES.map(g => g.name);
+      // @ts-ignore — overlaps() may not be in types but works in PostgREST
+      const { data } = await supabase
+        .from('anime')
+        .select('poster_url, genres')
+        .overlaps('genres', genreNames)
+        .limit(200);
+
       const imgs: Record<string, string> = {};
-      results.forEach((res, i) => {
-        const list = (res.data || []).filter((a: any) => a.poster_url);
-        if (list.length > 0) {
-          const pick = list[Math.floor(Math.random() * list.length)];
-          imgs[ALL_GENRES[i].name] = pick.poster_url;
+      const byGenre: Record<string, string[]> = {};
+
+      for (const row of (data ?? []) as { poster_url: string; genres: string[] }[]) {
+        if (!row.poster_url) continue;
+        for (const g of (row.genres ?? [])) {
+          if (!byGenre[g]) byGenre[g] = [];
+          byGenre[g].push(row.poster_url);
         }
-      });
-      setGenreImages(imgs);
-    }).catch(console.error);
-  }, []);
+      }
+
+      for (const g of genreNames) {
+        const pool = byGenre[g];
+        if (pool?.length) {
+          imgs[g] = pool[Math.floor(Math.random() * pool.length)];
+        }
+      }
+      return imgs;
+    },
+  });
+
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -70,7 +71,7 @@ export default function AllGenresScreen() {
         {ALL_GENRES.map((genre) => (
           <TouchableOpacity
             key={genre.name}
-            style={styles.card}
+            style={[styles.card, { width: CARD_W }]}
             onPress={() => router.push(`/genre/${genre.name}`)}
             activeOpacity={0.82}
           >
@@ -136,7 +137,7 @@ const styles = StyleSheet.create({
     padding: SPACING.md, paddingTop: SPACING.sm, paddingBottom: 100,
   },
   card: {
-    width: CARD_W, height: 120,
+    height: 120,
     borderRadius: RADIUS.lg, overflow: 'hidden',
     borderWidth: 1, borderColor: 'rgba(189,157,255,0.06)',
     justifyContent: 'flex-end',

@@ -177,6 +177,8 @@ export function useUserProfile() {
   const userId = user?.id;
   return useQuery({
     queryKey: ['user', userId, 'profile'],
+    staleTime: 30 * 1000, // profile includes subscription_type — keep fresh
+    gcTime: 5 * 60 * 1000,
     queryFn: async (): Promise<UserActivitySummary | null> => {
       if (!userId) return null;
       const { data, error } = await supabase
@@ -415,7 +417,7 @@ export function useAnimeRelations(animeId?: string) {
           return {
             id: localMatch.id as string,
             title: localMatch.title_english || localMatch.title || r.title || 'Unknown Title',
-            poster_url: localMatch.poster_url || r.poster_url || 'https://via.placeholder.com/110x160/1a1a2e/ffffff?text=No+Poster',
+            poster_url: localMatch.poster_url || r.poster_url || null,
             relation_type: normalizeRelationType(r.relation_type),
           };
         })

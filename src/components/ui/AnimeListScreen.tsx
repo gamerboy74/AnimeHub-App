@@ -1,127 +1,89 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useCallback } from 'react';
 import {
   View, Text, FlatList, StyleSheet,
   TouchableOpacity, ActivityIndicator, RefreshControl, Dimensions,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS } from '../../constants/theme';
-import { animeAPI } from '../../lib/supabase';
+import { AnimeWithStats } from '../../lib/supabase';
+import { fetchJikanWithFallback } from '../../lib/jikan';
+import AnimeCard from './AnimeCard';
 
 export type ListType = 'trending' | 'top-rated' | 'new-arrivals';
 
-// ─── Jikan entry shape ────────────────────────────────────────────────────────
-interface JikanEntry {
-  mal_id: number;
-  title: string;
-  title_english?: string;
-  images: { jpg: { large_image_url?: string; image_url: string } };
-  score?: number;
-  type?: string;
-  year?: number;
-  members?: number;
-  synopsis?: string;
-  genres?: { name: string }[];
-  status?: string;
-}
-
-// ─── Per-type Jikan endpoint config ──────────────────────────────────────────
-const CONFIG: Record<ListType, { title: string; label: string; url: string }> = {
+const CONFIG: Record<ListType, { title: string; label: string; queryKey: string }> = {
   'trending': {
-    title: 'Trending',
-    label: '🔥 TRENDING NOW',
-    url: 'https://api.jikan.moe/v4/top/anime?filter=airing&limit=20',
+    title: 'Trending Anime',
+    label: '// TRENDING NOW',
+    queryKey: 'trending',
   },
   'top-rated': {
-    title: 'Top Rated',
-    label: '⭐ TOP RATED',
-    url: 'https://api.jikan.moe/v4/top/anime?limit=25',
+    title: 'Top Rated Anime',
+    label: '// TOP RATED',
+    queryKey: 'top-rated',
   },
   'new-arrivals': {
     title: 'New Arrivals',
-    label: '🆕 THIS SEASON',
-    url: 'https://api.jikan.moe/v4/seasons/now?limit=10',
+    label: '// NEW ARRIVALS',
+    queryKey: 'new-arrivals',
   },
 };
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-// padding=8 each side, gap=8 between cols → (screenWidth - 8 - 8 - 8) / 2
-const CARD_WIDTH = (SCREEN_WIDTH - SPACING.sm * 2 - 8) / 2;
+const NUM_COLUMNS = 3;
+// Calculate item width for 3 columns:
+// Padding: SPACING.md (16) on each side, gap between cols: SPACING.xs (8)
+const HORIZONTAL_PADDING = SPACING.md * 2;
+const TOTAL_GAPS = (NUM_COLUMNS - 1) * SPACING.xs;
+const ITEM_WIDTH = Math.floor((SCREEN_WIDTH - HORIZONTAL_PADDING - TOTAL_GAPS) / NUM_COLUMNS);
 
 interface Props { type: ListType }
 
 export default function AnimeListScreen({ type }: Props) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const cfg = CONFIG[type];
 
-  const [data, setData] = useState<JikanEntry[]>([]);
-  const [idMap, setIdMap] = useState<Map<number, string>>(new Map());
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchData = useCallback(async () => {
-    setError(null);
-    try {
-      // Fetch Jikan + local mal_id→uuid map in parallel
-      const [res, localMap] = await Promise.all([
-        fetch(cfg.url, { headers: { Accept: 'application/json' } }),
-        animeAPI.getMalIdMap(),
-      ]);
-
-      if (!res.ok) throw new Error(`API error ${res.status}`);
-      const json = await res.json();
-
-      // Deduplicate by mal_id
-      const seen = new Set<number>();
-      const unique: JikanEntry[] = (json.data ?? []).filter((e: JikanEntry) => {
-        if (seen.has(e.mal_id)) return false;
-        seen.add(e.mal_id);
-        return true;
-      });
-
-      setIdMap(localMap);
-
-      // Only keep anime that exist in our app
-      const inApp = localMap.size > 0
-        ? unique.filter((e: JikanEntry) => localMap.has(e.mal_id))
-        : unique;
-
-      setData(inApp);
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to load');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  // Depend on the URL specifically — stable primitive avoids re-running when cfg object ref changes
-  }, [cfg.url]);
-
-  useEffect(() => { setLoading(true); fetchData(); }, [fetchData]);
-
-  const onRefresh = () => { setRefreshing(true); fetchData(); };
+  // TanStack query — caches results and warms instantly from home cache
+  const {
+    data: animeList = [],
+    isLoading,
+    isRefetching,
+    refetch,
+    error,
+  } = useQuery({
+    queryKey: ['anime', 'see-all', type],
+    queryFn: () => fetchJikanWithFallback(type, 60),
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    // Provide instant placeholder from home query if available
+    placeholderData: () => {
+      const homeCache = queryClient.getQueryData<AnimeWithStats[]>(['anime', cfg.queryKey]);
+      return homeCache;
+    },
+  });
 
   const handleCardPress = useCallback((id: string) => {
-    router.push(`/anime/${id}` as any);
+    router.push(`/anime/${id}`);
   }, [router]);
 
-  const renderItem = useCallback(({ item, index }: { item: JikanEntry; index: number }) => {
-    const supabaseId = idMap.get(item.mal_id);
-    return (
+  const renderItem = useCallback(({ item }: { item: AnimeWithStats }) => (
+    <View style={{ width: ITEM_WIDTH }}>
       <AnimeCard
-        item={item}
-        index={index}
-        supabaseId={supabaseId}
+        anime={item}
+        size="sm"
+        showStats={type === 'top-rated'}
+        style={{ width: ITEM_WIDTH, marginRight: 0 }}
         onPress={handleCardPress}
       />
-    );
-  }, [idMap, handleCardPress]);
+    </View>
+  ), [handleCardPress, type]);
 
-  const keyExtractor = useCallback((item: JikanEntry, i: number) => `${item.mal_id}_${i}`, []);
+  const keyExtractor = useCallback((item: AnimeWithStats) => item.id, []);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -134,38 +96,44 @@ export default function AnimeListScreen({ type }: Props) {
           <Text style={styles.headerLabel}>{cfg.label}</Text>
           <Text style={styles.headerTitle}>{cfg.title}</Text>
         </View>
-        {data.length > 0 && (
-          <Text style={styles.count}>{data.length} anime</Text>
+        {animeList.length > 0 && (
+          <View style={styles.countBadge}>
+            <Text style={styles.count}>{animeList.length} titles</Text>
+          </View>
         )}
       </View>
 
-      {loading ? (
+      {isLoading && animeList.length === 0 ? (
         <View style={styles.centered}>
           <ActivityIndicator color={COLORS.neon} size="large" />
-          <Text style={styles.loadingText}>Fetching from MyAnimeList…</Text>
+          <Text style={styles.loadingText}>Loading {cfg.title}…</Text>
         </View>
-      ) : error ? (
+      ) : error && animeList.length === 0 ? (
         <View style={styles.centered}>
-          <Ionicons name="wifi-outline" size={48} color={COLORS.textMuted} />
-          <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={fetchData}>
-            <Text style={styles.retryText}>Try Again</Text>
+          <Ionicons name="alert-circle-outline" size={48} color={COLORS.danger} />
+          <Text style={styles.errorText}>Could not load anime list.</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => refetch()}>
+            <Text style={styles.retryText}>Retry</Text>
           </TouchableOpacity>
         </View>
       ) : (
         <FlatList
-          data={data}
+          data={animeList}
           keyExtractor={keyExtractor}
-          numColumns={2}
+          numColumns={NUM_COLUMNS}
           contentContainerStyle={styles.list}
           columnWrapperStyle={styles.row}
           showsVerticalScrollIndicator={false}
           removeClippedSubviews
-          windowSize={5}
-          maxToRenderPerBatch={8}
-          initialNumToRender={8}
+          windowSize={7}
+          maxToRenderPerBatch={9}
+          initialNumToRender={12}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.neon} />
+            <RefreshControl
+              refreshing={isRefetching}
+              onRefresh={refetch}
+              tintColor={COLORS.neon}
+            />
           }
           renderItem={renderItem}
         />
@@ -173,84 +141,6 @@ export default function AnimeListScreen({ type }: Props) {
     </View>
   );
 }
-
-// ─── Memoized AnimeCard Component ─────────────────────────────────────────────
-interface AnimeCardProps {
-  item: JikanEntry;
-  index: number;
-  supabaseId?: string;
-  onPress: (supabaseId: string) => void;
-}
-
-const AnimeCard = React.memo(
-  ({ item, index, supabaseId, onPress }: AnimeCardProps) => {
-    return (
-      <TouchableOpacity
-        style={styles.card}
-        onPress={() => supabaseId && onPress(supabaseId)}
-        activeOpacity={0.75}
-        disabled={!supabaseId}
-      >
-        {/* Rank badge */}
-        <View style={styles.rankBadge}>
-          <Text style={styles.rankText}>#{index + 1}</Text>
-        </View>
-
-        <Image
-          source={{ uri: item.images.jpg.large_image_url ?? item.images.jpg.image_url }}
-          style={styles.poster}
-          contentFit="cover"
-          transition={200}
-        />
-
-        {/* Gradient overlay at bottom */}
-        <LinearGradient
-          colors={['transparent', 'rgba(8,8,16,0.85)']}
-          style={styles.posterGradient}
-          start={{ x: 0.5, y: 0 }}
-          end={{ x: 0.5, y: 1 }}
-        >
-          <View />
-        </LinearGradient>
-
-        <View style={styles.cardInfo}>
-          <Text style={styles.cardTitle} numberOfLines={2}>
-            {item.title_english || item.title}
-          </Text>
-          <View style={styles.cardMeta}>
-            {item.score ? (
-              <View style={styles.ratingRow}>
-                <Ionicons name="star" size={10} color={COLORS.neonGold} />
-                <Text style={styles.ratingText}>{item.score.toFixed(1)}</Text>
-              </View>
-            ) : null}
-            {item.type ? <Text style={styles.metaText}>{item.type}</Text> : null}
-            {item.year ? <Text style={styles.metaText}>{item.year}</Text> : null}
-          </View>
-
-          {/* Genre pills */}
-          {item.genres && item.genres.length > 0 && (
-            <View style={styles.genreRow}>
-              {item.genres.slice(0, 2).map((g) => (
-                <View key={g.name} style={styles.genrePill}>
-                  <Text style={styles.genreText}>{g.name}</Text>
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
-      </TouchableOpacity>
-    );
-  },
-  (prevProps, nextProps) => {
-    // Prevent un-necessary re-renders by doing fine-grained comparison
-    return (
-      prevProps.item.mal_id === nextProps.item.mal_id &&
-      prevProps.index === nextProps.index &&
-      prevProps.supabaseId === nextProps.supabaseId
-    );
-  }
-);
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: COLORS.bg },
@@ -265,75 +155,40 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.border,
   },
   backBtn: {
-    width: 38, height: 38, borderRadius: 19,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: COLORS.bgCard,
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: COLORS.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
-  headerLabel: { fontSize: 10, color: COLORS.neon, letterSpacing: 2, fontWeight: '700' },
+  headerLabel: { fontSize: 10, color: COLORS.neon, letterSpacing: 2, fontWeight: '800' },
   headerTitle: { fontSize: 20, color: COLORS.text, fontWeight: '900' },
-  count: { fontSize: 11, color: COLORS.textMuted },
-  countSub: { fontSize: 10, color: COLORS.neon, fontWeight: '700' },
+  countBadge: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  count: { fontSize: 11, color: COLORS.textSub, fontWeight: '700' },
 
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: SPACING.md },
   loadingText: { fontSize: 12, color: COLORS.textMuted },
   errorText: { fontSize: 13, color: COLORS.textMuted, textAlign: 'center', paddingHorizontal: SPACING.xl },
   retryBtn: {
-    paddingHorizontal: SPACING.lg, paddingVertical: SPACING.sm,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
     backgroundColor: 'rgba(191,95,255,0.12)',
-    borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.neon,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.neon,
   },
   retryText: { color: COLORS.neon, fontWeight: '700' },
 
-  list: { padding: SPACING.sm, paddingBottom: 100 },
-  row: { gap: 8, marginBottom: 8 },
-
-  card: {
-    width: CARD_WIDTH,
-    backgroundColor: COLORS.bgCard,
-    borderRadius: RADIUS.md,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  cardDimmed: { opacity: 0.65 },
-
-  rankBadge: {
-    position: 'absolute', top: 8, left: 8, zIndex: 3,
-    backgroundColor: 'rgba(8,8,16,0.85)',
-    borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2,
-    borderWidth: 1, borderColor: COLORS.neon,
-  },
-  rankText: { fontSize: 9, color: COLORS.neon, fontWeight: '900' },
-
-  availBadge: {
-    position: 'absolute', top: 8, right: 8, zIndex: 3,
-    backgroundColor: 'rgba(8,8,16,0.85)',
-    borderRadius: 12, width: 24, height: 24,
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: 'rgba(191,95,255,0.4)',
-  },
-  unavailBadge: { borderColor: 'rgba(255,255,255,0.1)' },
-
-  poster: { width: '100%', aspectRatio: 2 / 3 },
-  posterGradient: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    height: 40,
-  },
-
-  cardInfo: { padding: 8, gap: 3 },
-  cardTitle: { fontSize: 11, color: COLORS.text, fontWeight: '700', lineHeight: 15 },
-  cardMeta: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4 },
-  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
-  ratingText: { fontSize: 10, color: COLORS.neonGold, fontWeight: '700' },
-  metaText: { fontSize: 9, color: COLORS.textMuted },
-
-  genreRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 3, marginTop: 2 },
-  genrePill: {
-    backgroundColor: 'rgba(255,255,255,0.07)',
-    borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1,
-  },
-  genreText: { fontSize: 8, color: COLORS.textSub, fontWeight: '600' },
-
-  notAvail: { fontSize: 9, color: COLORS.textMuted, fontStyle: 'italic', marginTop: 2 },
+  list: { padding: SPACING.md, paddingBottom: 100 },
+  row: { justifyContent: 'space-between', marginBottom: SPACING.md },
 });

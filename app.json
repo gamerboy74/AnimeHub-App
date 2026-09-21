@@ -8,6 +8,8 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
+    "primaryColor": "#080810",
+    "platforms": ["ios", "android"],
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
@@ -16,7 +18,13 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.dexstorm1.animehubmobile",
-      "buildNumber": "3"
+      "buildNumber": "3",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "AnimeHub needs access to your photo library to set a profile picture.",
+        "NSPhotoLibraryAddUsageDescription": "AnimeHub saves downloaded content to your photo library.",
+        "NSCameraUsageDescription": "AnimeHub uses the camera to let you take a profile photo.",
+        "NSUserNotificationUsageDescription": "Get notified about new episode releases and AnimeHub updates."
+      }
     },
     "android": {
       "package": "com.dexstorm1.animehubmobile",
@@ -25,7 +33,16 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#080810"
-      }
+      },
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.READ_MEDIA_IMAGES"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -33,7 +50,14 @@
     "plugins": [
       "expo-font",
       "expo-router",
-      "expo-video"
+      "expo-video",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#080810"
+        }
+      ]
     ],
     "extra": {
       "router": {

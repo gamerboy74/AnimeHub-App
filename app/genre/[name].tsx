@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -13,6 +13,11 @@ export default function GenreBrowseScreen() {
   const genre = name as string;
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
+
+  const numColumns = windowWidth >= 1024 ? 6 : windowWidth >= 768 ? 5 : windowWidth >= 600 ? 4 : 3;
+  const availableWidth = windowWidth - SPACING.sm * 2;
+  const cardWidth = Math.floor((availableWidth - SPACING.sm * (numColumns - 1)) / numColumns);
 
   const { data: anime = [], isLoading: loading } = useQuery({
     queryKey: ['anime', 'genre', genre],
@@ -37,9 +42,10 @@ export default function GenreBrowseScreen() {
     <AnimeCard
       anime={item}
       size="sm"
+      style={{ width: cardWidth, marginRight: 0 }}
       onPress={handleCardPress}
     />
-  ), [handleCardPress]);
+  ), [handleCardPress, cardWidth]);
 
   const keyExtractor = useCallback((item: Anime) => item.id, []);
 
@@ -64,9 +70,10 @@ export default function GenreBrowseScreen() {
         </View>
       ) : (
         <FlatList
+          key={`genre-grid-${numColumns}`}
           data={anime}
           keyExtractor={keyExtractor}
-          numColumns={3}
+          numColumns={numColumns}
           contentContainerStyle={styles.grid}
           columnWrapperStyle={styles.row}
           renderItem={renderItem}

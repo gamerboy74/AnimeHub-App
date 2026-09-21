@@ -84,6 +84,10 @@ export type User = {
   bio?: string;
   avatar_url?: string | null;
   subscription_type: 'free' | 'premium';
+  billing_cycle?: 'monthly' | 'yearly' | 'admin_grant' | null;
+  cancel_at_period_end?: boolean;
+  subscription_expires_at?: string | null;
+  subscription_started_at?: string | null;
   role: string;
   is_admin: boolean;
   total_watch_time: number;
@@ -97,10 +101,16 @@ export type Notification = {
   type: string;
   title: string;
   message: string;
-  data?: any;
+  data?: Record<string, unknown>;
   read: boolean;
   action_url?: string;
   created_at: string;
+};
+
+export type UserPreferences = {
+  user_id: string;
+  subscription_meta?: Record<string, unknown> | null;
+  [key: string]: unknown; // allow arbitrary pref columns
 };
 
 export type SubscriptionPlan = {
@@ -108,7 +118,7 @@ export type SubscriptionPlan = {
   name: string;            // 'free' | 'premium_monthly' | 'premium_yearly'
   display_name: string;    // 'Monthly' | 'Yearly'
   tier: 'free' | 'premium';
-  price_paise: number;     // 0 for free, 14900 for ₹149
+  price_paise: number;     // 0 for free, 9900 for ₹99, 79900 for ₹799
   currency: string;
   billing_cycle: 'monthly' | 'yearly' | null;
   badge: string | null;    // 'BEST VALUE' | null
@@ -158,6 +168,47 @@ export const animeAPI = {
   getAll: (limit = 20, offset = 0) =>
     supabase.from('anime_with_stats').select('*').range(offset, offset + limit - 1),
 
+  getBrowse: async ({
+    page = 0,
+    limit = 24,
+    sortBy = 'popular',
+    type = 'all',
+    status = 'all',
+  }: {
+    page?: number;
+    limit?: number;
+    sortBy?: 'popular' | 'top_rated' | 'newest' | 'a_z';
+    type?: string;
+    status?: string;
+  }) => {
+    let q = supabase
+      .from('anime_with_stats')
+      .select('id, title, title_japanese, poster_url, banner_url, rating, year, status, type, genres, total_episodes, user_rating_avg, review_count, total_watches')
+      .not('poster_url', 'is', null);
+
+    if (type && type !== 'all') {
+      q = q.ilike('type', `%${type}%`);
+    }
+
+    if (status && status !== 'all') {
+      q = q.ilike('status', `%${status}%`);
+    }
+
+    if (sortBy === 'top_rated') {
+      q = q.order('user_rating_avg', { ascending: false });
+    } else if (sortBy === 'newest') {
+      q = q.order('year', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false });
+    } else if (sortBy === 'a_z') {
+      q = q.order('title', { ascending: true });
+    } else {
+      q = q.order('total_watches', { ascending: false });
+    }
+
+    const from = page * limit;
+    const to = from + limit - 1;
+    return q.range(from, to);
+  },
+
   getById: (id: string) =>
     supabase.from('anime_with_stats').select('*').eq('id', id).single(),
 
@@ -192,8 +243,15 @@ export const animeAPI = {
       .in('id', matchedIds);
   },
 
-  getTrending: (limit = 10) =>
-    supabase.from('anime_with_stats').select('*').order('total_watches', { ascending: false }).limit(limit),
+  getTrending: (limit = 10) => {
+    const minYear = new Date().getFullYear() - 2;
+    return supabase
+      .from('anime_with_stats')
+      .select('*')
+      .gte('year', minYear)
+      .order('total_watches', { ascending: false })
+      .limit(limit);
+  },
 
   getTopRated: (limit = 10) =>
     supabase.from('anime_with_stats').select('*').order('user_rating_avg', { ascending: false }).limit(limit),
@@ -293,49 +351,37 @@ export const userAPI = {
     const fileExt = localUri.split('.').pop() || 'jpg';
     const fileName = `user-avatars/${userId}/avatar-${Date.now()}.${fileExt}`;
 
-    try {
-      // 4. Try uploading to 'user-avatars' bucket first
-      let uploadResult = await supabase.storage
-        .from('user-avatars')
-        .upload(fileName, arrayBuffer, {
-          cacheControl: '3600',
-          contentType: `image/${fileExt}`,
-          upsert: true,
-        });
+    // 4. Upload to the dedicated user-avatars bucket.
+    //    If this fails, surface the error clearly — do NOT fall back to a
+    //    shared public bucket (anime-posters) which would expose user data.
+    const uploadResult = await supabase.storage
+      .from('user-avatars')
+      .upload(fileName, arrayBuffer, {
+        cacheControl: '3600',
+        contentType: `image/${fileExt}`,
+        upsert: true,
+      });
 
-      // 5. Fallback to 'anime-posters' bucket if 'user-avatars' bucket has RLS restrictions
-      if (uploadResult.error && uploadResult.error.message.toLowerCase().includes('row-level security')) {
-        console.warn('user-avatars bucket has RLS restrictions, using anime-posters bucket as fallback');
-        
-        uploadResult = await supabase.storage
-          .from('anime-posters')
-          .upload(fileName, arrayBuffer, {
-            cacheControl: '3600',
-            contentType: `image/${fileExt}`,
-            upsert: true,
-          });
-      }
-
-      if (uploadResult.error) {
-        throw new Error(`Failed to upload avatar: ${uploadResult.error.message}`);
-      }
-
-      // 6. Resolve public URL from the bucket that succeeded
-      const bucket = uploadResult.data.path.includes('user-avatars') ? 'user-avatars' : 'anime-posters';
-      const { data } = supabase.storage
-        .from(bucket)
-        .getPublicUrl(uploadResult.data.path);
-
-      return data.publicUrl;
-    } catch (error) {
-      console.error('Avatar upload error:', error);
-      throw error;
+    if (uploadResult.error) {
+      throw new Error(`Failed to upload avatar: ${uploadResult.error.message}`);
     }
+
+    // 5. Resolve and return the public URL
+    const { data } = supabase.storage
+      .from('user-avatars')
+      .getPublicUrl(uploadResult.data.path);
+
+    return data.publicUrl;
   },
 
   deleteAvatar: async (avatarUrl: string): Promise<void> => {
     try {
       if (!avatarUrl) return;
+
+      // Skip if the old avatar URL is an external placeholder image
+      if (avatarUrl.includes('images.unsplash.com') || avatarUrl.includes('readdy.ai')) {
+        return;
+      }
 
       // Extract bucket and file path from the public URL
       const pathParts = avatarUrl.split('/public/');
@@ -348,20 +394,11 @@ export const userAPI = {
       const bucket = fullPath.substring(0, firstSlash);
       const filePath = fullPath.substring(firstSlash + 1);
 
-      // Skip if the old avatar URL is an external placeholder image (e.g., Unsplash)
-      if (avatarUrl.includes('images.unsplash.com') || avatarUrl.includes('readdy.ai')) {
-        return;
-      }
-
-      const { error } = await supabase.storage
+      await supabase.storage
         .from(bucket)
         .remove([filePath]);
-
-      if (error) {
-        console.warn('[Storage] Failed to delete old avatar:', error.message);
-      }
-    } catch (error) {
-      console.warn('[Storage] Error deleting old avatar:', error);
+    } catch {
+      // Best-effort deletion — never throw from here
     }
   },
 
@@ -443,19 +480,36 @@ export const userAPI = {
     // maybeSingle() returns null (not error) when no preferences row exists yet
     supabase.from('user_preferences').select('*').eq('user_id', userId).maybeSingle(),
 
-  updatePreferences: (userId: string, data: any) =>
+  updatePreferences: (userId: string, data: Partial<UserPreferences>) =>
     supabase.from('user_preferences').upsert({ user_id: userId, ...data }, { onConflict: 'user_id' }),
 
   /** Safely update ONLY subscription_meta — never touches other pref columns.
    *  Use this instead of updatePreferences when writing billing data,
-   *  so a settings toggle can never accidentally wipe the subscription_meta field. */
-  updateSubscriptionMeta: (userId: string, meta: any) =>
+   *  so a settings toggle can never accidentally wipe the subscription_meta field.
+   *  Pass null to clear the field (e.g. on subscription cancellation). */
+  updateSubscriptionMeta: (userId: string, meta: Record<string, unknown> | null) =>
     supabase
       .from('user_preferences')
       .upsert(
         { user_id: userId, subscription_meta: meta },
         { onConflict: 'user_id', ignoreDuplicates: false },
       ),
+
+  /** Toggle auto-renewal flag directly on the users table (single source of truth) */
+  updateSubscriptionAutoRenew: (userId: string, cancelAtPeriodEnd: boolean) =>
+    supabase
+      .from('users')
+      .update({ cancel_at_period_end: cancelAtPeriodEnd })
+      .eq('id', userId),
+
+  /** Fetch real payment history for the billing history screen. */
+  getUserPayments: (userId: string) =>
+    supabase
+      .from('user_payments')
+      .select('id,plan_name,billing_cycle,amount_paise,currency,status,period_start,period_end,razorpay_payment_id,created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(20),
 };
 
 export type AnimeRequest = {

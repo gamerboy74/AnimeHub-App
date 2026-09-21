@@ -11,143 +11,17 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
 import { useAuth } from '../src/context/AuthContext';
 import { userAPI } from '../src/lib/supabase';
-
-// ─── Badge definitions ─── each has check() + progress() + description ───────
-const BADGE_DEFS = [
-  {
-    id: '1', code: 'FIRST_EP', name: 'FIRST EP', desc: 'Watch any episode',
-    icon: 'play-circle',  color: COLORS.neon,
-    check:    (p: any[], s: number, w: any[]) => p.length >= 1,
-    progress: (p: any[], s: number, w: any[]) => ({ cur: Math.min(p.length, 1), max: 1 }),
-  },
-  {
-    id: '2', code: 'HUNTER', name: 'HUNTER', desc: 'Add 1 to watchlist',
-    icon: 'bookmark',     color: '#00FFCC',
-    check:    (p: any[], s: number, w: any[]) => w.length >= 1,
-    progress: (p: any[], s: number, w: any[]) => ({ cur: Math.min(w.length, 1), max: 1 }),
-  },
-  {
-    id: '3', code: 'DEDICATED', name: 'DEDICATED', desc: '3-day watch streak',
-    icon: 'flash',         color: COLORS.neonCyan,
-    check:    (p: any[], s: number) => s >= 3,
-    progress: (p: any[], s: number) => ({ cur: Math.min(s, 3), max: 3 }),
-  },
-  {
-    id: '4', code: 'LISTER', name: 'LISTER', desc: 'Add 5 to watchlist',
-    icon: 'list',          color: COLORS.neonPulse,
-    check:    (p: any[], s: number, w: any[]) => w.length >= 5,
-    progress: (p: any[], s: number, w: any[]) => ({ cur: Math.min(w.length, 5), max: 5 }),
-  },
-  {
-    id: '5', code: 'SHONEN', name: 'SHONEN', desc: 'Watch 5 Action episodes',
-    icon: 'flame',         color: '#FF3E3E',
-    check:    (p: any[]) => p.filter(x => (x.genres || x.anime_genres || []).includes('Action')).length >= 5,
-    progress: (p: any[]) => {
-      const c = p.filter(x => (x.genres || x.anime_genres || []).includes('Action')).length;
-      return { cur: Math.min(c, 5), max: 5 };
-    },
-  },
-  {
-    id: '6', code: 'VETERAN', name: 'VETERAN', desc: 'Watch 10 episodes',
-    icon: 'medal',         color: '#ff7346',
-    check:    (p: any[], s: number) => p.length >= 10,
-    progress: (p: any[], s: number) => ({ cur: Math.min(p.length, 10), max: 10 }),
-  },
-  {
-    id: '7', code: 'WARRIOR', name: 'WARRIOR', desc: '7-day streak',
-    icon: 'shield',        color: COLORS.neonGold,
-    check:    (p: any[], s: number) => s >= 7,
-    progress: (p: any[], s: number) => ({ cur: Math.min(s, 7), max: 7 }),
-  },
-  {
-    id: '8', code: 'BINGE', name: 'BINGE SENSEI', desc: 'Watch 5 hours of anime',
-    icon: 'time',          color: '#FFB300',
-    check:    (p: any[]) => p.reduce((sum, x) => sum + (x.progress_seconds || 0), 0) >= 18000,
-    progress: (p: any[]) => {
-      const sec = p.reduce((sum, x) => sum + (x.progress_seconds || 0), 0);
-      return { cur: Math.min(sec, 18000), max: 18000 };
-    },
-  },
-  {
-    id: '9', code: 'LEGEND', name: 'LEGEND', desc: 'Watch 50 episodes',
-    icon: 'star',          color: '#BF5FFF',
-    check:    (p: any[], s: number) => p.length >= 50,
-    progress: (p: any[], s: number) => ({ cur: Math.min(p.length, 50), max: 50 }),
-  },
-  {
-    id: '10', code: 'OTAKU', name: 'OTAKU KING', desc: 'Watch 100 episodes',
-    icon: 'trophy',        color: '#E040FB',
-    check:    (p: any[], s: number) => p.length >= 100,
-    progress: (p: any[], s: number) => ({ cur: Math.min(p.length, 100), max: 100 }),
-  },
-];
-
-const GENRE_COLORS = ['#00F5FF', '#BF5FFF', '#ff7346', '#FFD600', '#FF2D78', '#00F5B4'];
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-function computeGenres(progress: any[]) {
-  const counts: Record<string, number> = {};
-  for (const p of progress) {
-    for (const g of (p.genres || p.anime_genres || []) as string[])
-      counts[g] = (counts[g] || 0) + 1;
-  }
-  const total = Math.max(Object.values(counts).reduce((a, b) => a + b, 0), 1);
-  return Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([name, count], i) => ({
-      name, percent: Math.round((count / total) * 100),
-      color: GENRE_COLORS[i % GENRE_COLORS.length],
-    }));
-}
-
-function computeStreak(progress: any[]): number {
-  const days = new Set(progress.map(p => new Date(p.last_watched).toDateString()));
-  const sorted = Array.from(days).map(d => new Date(d).getTime()).sort((a, b) => b - a);
-  let streak = 0;
-  let check = new Date(); check.setHours(0, 0, 0, 0);
-  for (const ts of sorted) {
-    const d = new Date(ts); d.setHours(0, 0, 0, 0);
-    if (Math.round((check.getTime() - d.getTime()) / 86400000) <= 1) { streak++; check = d; }
-    else break;
-  }
-  return streak;
-}
-
-/** Longest streak ever — scans full history regardless of today */
-function computeLongestStreak(progress: any[]): number {
-  const days = Array.from(
-    new Set(progress.map(p => new Date(p.last_watched).toDateString()))
-  ).map(d => new Date(d).getTime()).sort((a, b) => a - b); // ascending
-
-  if (days.length === 0) return 0;
-  let best = 1, cur = 1;
-  for (let i = 1; i < days.length; i++) {
-    const diffDays = Math.round((days[i] - days[i - 1]) / 86400000);
-    if (diffDays === 1) { cur++; if (cur > best) best = cur; }
-    else if (diffDays > 1) cur = 1;
-  }
-  return best;
-}
-
-/** Compute watch time from real progress_seconds — more accurate than stale DB column */
-function computeWatchTime(progress: any[]): number {
-  return progress.reduce((sum: number, p: any) => sum + (p.progress_seconds || 0), 0);
-}
-
-/** Compute completed anime from distinct anime_ids where is_completed=true */
-function computeCompletedAnime(progress: any[]): number {
-  const ids = new Set(progress.filter(p => p.is_completed).map(p => p.anime_id).filter(Boolean));
-  return ids.size;
-}
-
-function formatWatchTime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
+import { BADGE_DEFS } from '../src/constants/badges';
+import {
+  computeGenres,
+  computeStreak,
+  computeLongestStreak,
+  computeWatchTime,
+  computeCompletedAnime,
+  formatWatchTime,
+  computeWeeklyActivity,
+  GENRE_COLORS,
+} from '../src/lib/userStats';
 
 // ─── Animated badge glow component ───────────────────────────────────────────
 function BadgeCard({ badge }: { badge: any }) {
@@ -279,6 +153,16 @@ export default function StatsScreen() {
     return dbStats ? dbStats.completed_anime_count : computeCompletedAnime(allProgress);
   }, [allProgress, dbStats]);
 
+  const weeklyActivity = useMemo(() => computeWeeklyActivity(allProgress), [allProgress]);
+  const maxWeeklyMins = useMemo(
+    () => Math.max(...weeklyActivity.map(d => d.minutes), 30),
+    [weeklyActivity]
+  );
+  const weeklyTotalMins = useMemo(
+    () => weeklyActivity.reduce((acc, d) => acc + d.minutes, 0),
+    [weeklyActivity]
+  );
+
   const badges = useMemo(
     () => BADGE_DEFS.map(b => {
       const earnedFromDb = dbBadges.some((dbB: any) => dbB.badge_code === b.code);
@@ -403,6 +287,63 @@ export default function StatsScreen() {
               Lv.{Math.floor(streak / 7) + 1} {['Genin','Chunin','Jonin','Anbu','Kage'][Math.min(Math.floor(streak / 7), 4)]}
             </Text>
             <Text style={styles.levelLabel}>Next: {Math.min((Math.floor(streak / 7) + 1) * 7, 30)} days</Text>
+          </View>
+        </BlurView>
+      </View>
+
+      {/* ── Weekly Activity Chart ── */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Weekly Activity</Text>
+          <Text style={styles.weeklyTotalLabel}>{formatWatchTime(weeklyTotalMins * 60)} this week</Text>
+        </View>
+        <BlurView intensity={20} style={styles.weeklyCard}>
+          <LinearGradient
+            colors={['rgba(191,95,255,0.06)', 'transparent']}
+            style={StyleSheet.absoluteFill}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          >
+            <View />
+          </LinearGradient>
+
+          <View style={styles.chartContainer}>
+            {weeklyActivity.map((day) => {
+              const heightPct = Math.max((day.minutes / maxWeeklyMins) * 100, 8);
+              return (
+                <View key={day.dateStr} style={styles.barColumn}>
+                  <Text style={[styles.barMinsText, day.isToday && { color: COLORS.neon }]}>
+                    {day.minutes > 0 ? `${day.minutes}m` : '-'}
+                  </Text>
+                  <View style={styles.barTrack}>
+                    <LinearGradient
+                      colors={
+                        day.isToday
+                          ? [COLORS.neon, '#BF5FFF']
+                          : day.minutes > 0
+                          ? [COLORS.neonCyan, '#00F5B4']
+                          : ['rgba(255,255,255,0.08)', 'rgba(255,255,255,0.04)']
+                      }
+                      style={[
+                        styles.barFill,
+                        { height: `${heightPct}%` },
+                        day.isToday && styles.barFillToday,
+                      ]}
+                      start={{ x: 0, y: 1 }}
+                      end={{ x: 0, y: 0 }}
+                    >
+                      <View />
+                    </LinearGradient>
+                  </View>
+                  <Text style={[styles.barDayLabel, day.isToday && styles.barDayLabelToday]}>
+                    {day.dayLabel}
+                  </Text>
+                  <Text style={styles.barDateLabel}>
+                    {day.dateStr.split(' ')[1] || ''}
+                  </Text>
+                </View>
+              );
+            })}
           </View>
         </BlurView>
       </View>
@@ -535,6 +476,70 @@ const styles = StyleSheet.create({
   progressBarFill: { height: '100%', borderRadius: 4 },
   streakLevels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 },
   levelLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: '600' },
+
+  weeklyCard: {
+    padding: 16,
+    borderRadius: RADIUS.lg,
+    backgroundColor: 'rgba(25,25,29,0.5)',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    overflow: 'hidden',
+  },
+  weeklyTotalLabel: { fontSize: 11, color: COLORS.neon, fontWeight: '700' },
+  chartContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    height: 130,
+    paddingTop: 10,
+  },
+  barColumn: {
+    flex: 1,
+    alignItems: 'center',
+    height: '100%',
+    justifyContent: 'flex-end',
+    gap: 4,
+  },
+  barMinsText: {
+    fontSize: 9,
+    color: COLORS.textMuted,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  barTrack: {
+    width: 14,
+    height: 70,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 7,
+    overflow: 'hidden',
+    justifyContent: 'flex-end',
+  },
+  barFill: {
+    width: '100%',
+    borderRadius: 7,
+  },
+  barFillToday: {
+    shadowColor: COLORS.neon,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  barDayLabel: {
+    fontSize: 10,
+    color: COLORS.textSub,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  barDayLabelToday: {
+    color: COLORS.neon,
+    fontWeight: '900',
+  },
+  barDateLabel: {
+    fontSize: 8,
+    color: COLORS.textMuted,
+    fontWeight: '600',
+  },
 
   card: { backgroundColor: COLORS.bgElevated, borderRadius: RADIUS.lg, padding: 16, gap: 14, borderWidth: 1, borderColor: COLORS.border },
   genreItem: { gap: 6 },

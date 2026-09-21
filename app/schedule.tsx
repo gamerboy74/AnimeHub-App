@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,128 +6,90 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  ScrollView,
   RefreshControl,
-  Dimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useQuery } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
 import { animeAPI } from '../src/lib/supabase';
+import {
+  fetchAiringSchedule,
+  getScheduleDates,
+  ScheduleEntry,
+} from '../src/lib/schedule';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CARD_WIDTH = SCREEN_WIDTH * 0.42;
 
-// ─── Types ─────────────────────────────────────────────────────────────────────
-interface ScheduleEntry {
-  mal_id: number;
-  title: string;
-  title_english?: string;
-  images: { jpg: { image_url: string } };
-  broadcast?: { day?: string; time?: string; timezone?: string };
-  episodes?: number;
-  score?: number;
-  genres?: { name: string }[];
-  synopsis?: string;
-}
-
-// ─── Day helpers ───────────────────────────────────────────────────────────────
-const DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'] as const;
-const DAY_SHORT = ['MON','TUE','WED','THU','FRI','SAT','SUN'] as const;
-
-function getTodayIndex() {
-  const d = new Date().getDay(); // 0=Sun
-  return d === 0 ? 6 : d - 1;   // 0=Mon
-}
-
-/** Returns the date for each day of the current week (Mon=0 … Sun=6) */
-function getWeekDates() {
-  const today = new Date();
-  const todayIdx = getTodayIndex();
-  return DAYS.map((_, i) => {
-    const d = new Date(today);
-    d.setDate(today.getDate() + (i - todayIdx));
-    return d.getDate();
-  });
-}
 
 // ─── Screen ────────────────────────────────────────────────────────────────────
 export default function ScheduleScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
-  const [selectedDay, setSelectedDay] = useState(getTodayIndex());
-  const [entries, setEntries] = useState<ScheduleEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [totalFromJikan, setTotalFromJikan] = useState(0);
-  const [idMap, setIdMap] = useState<Map<number, string>>(new Map());
+  const scheduleDates = useMemo(() => getScheduleDates(), []);
+  const todayIndex = useMemo(() => {
+    const idx = scheduleDates.findIndex(d => d.isToday);
+    return idx >= 0 ? idx : 2;
+  }, [scheduleDates]);
 
-  const weekDates = getWeekDates();
+  const [selectedIndex, setSelectedIndex] = useState(todayIndex);
+  const [filterTab, setFilterTab] = useState<'in_app' | 'all'>('in_app');
 
-  const fetchSchedule = useCallback(async () => {
-    setError(null);
-    try {
-      const day = DAYS[selectedDay].toLowerCase();
+  const selectedDate = scheduleDates[selectedIndex] || scheduleDates[todayIndex];
 
-      // Fetch Jikan schedule + local mal_id map in parallel
-      const [jikanRes, malIdMap] = await Promise.all([
-        fetch(
-          `https://api.jikan.moe/v4/schedules?filter=${day}&limit=25`,
-          { headers: { Accept: 'application/json' } }
-        ),
+  const {
+    data: scheduleData,
+    isLoading: loading,
+    isRefetching: refreshing,
+    refetch,
+    error: queryError,
+  } = useQuery({
+    queryKey: ['airing-schedule', selectedDate?.date],
+    enabled: !!selectedDate,
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    queryFn: async () => {
+      const [scheduleItems, malIdMap] = await Promise.all([
+        fetchAiringSchedule(selectedDate),
         animeAPI.getMalIdMap(),
       ]);
+      return {
+        entries: scheduleItems,
+        idMap: malIdMap,
+      };
+    },
+  });
 
-      if (!jikanRes.ok) throw new Error(`API error ${jikanRes.status}`);
-      const json = await jikanRes.json();
+  const entries = useMemo(() => scheduleData?.entries ?? [], [scheduleData]);
+  const idMap = useMemo(() => scheduleData?.idMap ?? new Map<number, string>(), [scheduleData]);
+  const error = queryError ? 'Could not load airing schedule. Please try again.' : null;
 
-      setIdMap(malIdMap);
+  const onRefresh = useCallback(() => {
+    refetch();
+  }, [refetch]);
 
-      // Deduplicate by mal_id
-      const seen = new Set<number>();
-      const unique = (json.data ?? []).filter((e: ScheduleEntry) => {
-        if (seen.has(e.mal_id)) return false;
-        seen.add(e.mal_id);
-        return true;
-      });
+  const watchableCount = useMemo(() => {
+    return entries.filter(e => idMap.has(e.mal_id)).length;
+  }, [entries, idMap]);
 
-      setTotalFromJikan(unique.length);
-
-      // Filter: only anime in our app
-      const inApp = malIdMap.size > 0
-        ? unique.filter((e: ScheduleEntry) => malIdMap.has(e.mal_id))
-        : unique;
-
-      const sorted = inApp.sort((a: ScheduleEntry, b: ScheduleEntry) => {
-        const ta = a.broadcast?.time ?? '99:99';
-        const tb = b.broadcast?.time ?? '99:99';
-        return ta.localeCompare(tb);
-      });
-
-      setEntries(sorted);
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to load schedule');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+  const displayedEntries = useMemo(() => {
+    if (filterTab === 'in_app') {
+      return entries.filter(e => idMap.has(e.mal_id));
     }
-  }, [selectedDay]);
-
-  useEffect(() => {
-    setLoading(true);
-    setEntries([]);
-    fetchSchedule();
-  }, [fetchSchedule]);
-
-  const onRefresh = () => {
-    setRefreshing(true);
-    fetchSchedule();
-  };
+    // Show all airing anime, sorting watchable in-app anime to the top
+    return [...entries].sort((a, b) => {
+      const aInApp = idMap.has(a.mal_id);
+      const bInApp = idMap.has(b.mal_id);
+      if (aInApp && !bInApp) return -1;
+      if (!aInApp && bInApp) return 1;
+      const ta = a.broadcast?.time ?? '99:99';
+      const tb = b.broadcast?.time ?? '99:99';
+      return ta.localeCompare(tb);
+    });
+  }, [entries, filterTab, idMap]);
 
   const renderItem = useCallback(({ item, index }: { item: ScheduleEntry; index: number }) => (
     <TimelineRow entry={item} index={index} idMap={idMap} />
@@ -156,38 +118,44 @@ export default function ScheduleScreen() {
       <View style={styles.headerBlock}>
         {/* ── Title ── */}
         <View style={styles.titleSection}>
-          <Text style={styles.titleMain}>Weekly Schedule</Text>
+          <Text style={styles.titleMain}>Airing Schedule</Text>
           <Text style={styles.titleSub}>Keep track of your favorite anime airing times</Text>
         </View>
 
-        {/* ── Day selector ── */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.dayRow}
-          style={styles.dayScroll}
-        >
-          {DAYS.map((day, i) => {
-            const isSelected = i === selectedDay;
-            const isToday = i === getTodayIndex();
+        {/* ── 5 Dates at a glance (no scroll) ── */}
+        <View style={styles.datesRow}>
+          {scheduleDates.map((item, index) => {
+            const isSelected = index === selectedIndex;
             return (
               <TouchableOpacity
-                key={day}
-                style={[styles.dayChip, isSelected && styles.dayChipActive]}
-                onPress={() => setSelectedDay(i)}
+                key={item.dateKey}
+                style={[
+                  styles.dayChip,
+                  isSelected && styles.dayChipActive,
+                  item.isToday && !isSelected && styles.dayChipToday,
+                ]}
+                onPress={() => setSelectedIndex(index)}
                 activeOpacity={0.7}
               >
                 <Text style={[styles.dayShort, isSelected && styles.dayShortActive]}>
-                  {DAY_SHORT[i]}
+                  {item.dayShort}
                 </Text>
                 <Text style={[styles.dayNum, isSelected && styles.dayNumActive]}>
-                  {weekDates[i]}
+                  {item.dayNum}
                 </Text>
-                {isToday && !isSelected && <View style={styles.todayDot} />}
+                {item.isToday ? (
+                  <View style={[styles.todayBadge, isSelected && styles.todayBadgeActive]}>
+                    <Text style={[styles.todayBadgeText, isSelected && styles.todayBadgeTextActive]}>
+                      TODAY
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.todayPlaceholder} />
+                )}
               </TouchableOpacity>
             );
           })}
-        </ScrollView>
+        </View>
       </View>
 
       {/* ── Content ── */}
@@ -200,29 +168,78 @@ export default function ScheduleScreen() {
         <View style={styles.centered}>
           <Ionicons name="wifi-outline" size={48} color={COLORS.textMuted} />
           <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={fetchSchedule}>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => refetch()}>
             <Text style={styles.retryText}>Try Again</Text>
           </TouchableOpacity>
         </View>
       ) : (
-        <FlatList
-          data={entries}
-          keyExtractor={keyExtractor}
-          contentContainerStyle={styles.list}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.neon} />
-          }
-          ListEmptyComponent={
-            <View style={styles.centered}>
-              <Ionicons name="calendar-outline" size={48} color={COLORS.textMuted} />
-              <Text style={styles.errorText}>
-                None of the {totalFromJikan} anime airing on {DAYS[selectedDay]} are available in this app yet.
+        <>
+          {/* Filter Pills: Watchable first & active by default */}
+          <View style={styles.filterRow}>
+            <TouchableOpacity
+              style={[styles.filterPill, filterTab === 'in_app' && styles.filterPillActive]}
+              onPress={() => setFilterTab('in_app')}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name="play-circle"
+                size={14}
+                color={filterTab === 'in_app' ? COLORS.neon : COLORS.textMuted}
+              />
+              <Text style={[styles.filterPillText, filterTab === 'in_app' && styles.filterPillTextActive]}>
+                Watchable in App ({watchableCount})
               </Text>
-            </View>
-          }
-          renderItem={renderItem}
-        />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.filterPill, filterTab === 'all' && styles.filterPillActive]}
+              onPress={() => setFilterTab('all')}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name="globe-outline"
+                size={14}
+                color={filterTab === 'all' ? COLORS.neon : COLORS.textMuted}
+              />
+              <Text style={[styles.filterPillText, filterTab === 'all' && styles.filterPillTextActive]}>
+                All Airing ({entries.length})
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <FlatList
+            data={displayedEntries}
+            keyExtractor={keyExtractor}
+            contentContainerStyle={styles.list}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.neon} />
+            }
+            ListEmptyComponent={
+              <View style={styles.centered}>
+                <Ionicons
+                  name={filterTab === 'in_app' ? 'play-outline' : 'calendar-outline'}
+                  size={48}
+                  color={COLORS.textMuted}
+                />
+                <Text style={styles.emptyTitle}>
+                  {filterTab === 'in_app' ? 'No Watchable Anime Airing' : 'No Airing Anime Found'}
+                </Text>
+                <Text style={styles.emptySubText}>
+                  {filterTab === 'in_app'
+                    ? `None of the ${entries.length} anime airing on ${selectedDate?.dayFull ?? 'this day'} are in your catalog yet.`
+                    : `No broadcast schedules reported for ${selectedDate?.dayFull ?? 'this day'}.`}
+                </Text>
+                {filterTab === 'in_app' && entries.length > 0 && (
+                  <TouchableOpacity style={styles.showAllBtn} onPress={() => setFilterTab('all')}>
+                    <Text style={styles.showAllBtnText}>Show All Airing ({entries.length})</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            }
+            renderItem={renderItem}
+          />
+        </>
       )}
     </View>
   );
@@ -316,6 +333,16 @@ const AnimeCard = React.memo(
           <Text style={styles.cardTitle} numberOfLines={2}>
             {entry.title_english || entry.title}
           </Text>
+          {supabaseId ? (
+            <View style={styles.watchNowBadge}>
+              <Ionicons name="play" size={9} color="#000" />
+              <Text style={styles.watchNowText}>WATCH NOW</Text>
+            </View>
+          ) : (
+            <View style={styles.airingBadge}>
+              <Text style={styles.airingBadgeText}>AIRING</Text>
+            </View>
+          )}
           {entry.synopsis ? (
             <Text style={styles.cardSynopsis} numberOfLines={3}>
               {entry.synopsis}
@@ -423,36 +450,57 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
 
-  // Day selector
-  dayScroll: { flexGrow: 0, flexShrink: 0 },
-  dayRow: {
+  // Day selector — 5 fixed chips in a single row with zero scrolling
+  datesRow: {
+    flexDirection: 'row',
     paddingHorizontal: SPACING.md,
-    paddingBottom: SPACING.lg,
+    paddingBottom: SPACING.md,
+    gap: 6,
   },
   dayChip: {
+    flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingHorizontal: 2,
     borderRadius: RADIUS.md,
     backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
-    minWidth: 56,
-    marginRight: 8,
   },
   dayChipActive: {
     backgroundColor: COLORS.text,
     borderColor: COLORS.text,
   },
-  dayShort: { fontSize: 11, color: COLORS.textMuted, fontWeight: '700', letterSpacing: 1 },
+  dayChipToday: {
+    borderColor: 'rgba(191,95,255,0.45)',
+    backgroundColor: 'rgba(191,95,255,0.08)',
+  },
+  dayShort: { fontSize: 11, color: COLORS.textMuted, fontWeight: '700', letterSpacing: 0.5 },
   dayShortActive: { color: '#0a0a12' },
-  dayNum: { fontSize: 20, color: COLORS.text, fontWeight: '800', marginTop: 2 },
+  dayNum: { fontSize: 19, color: COLORS.text, fontWeight: '800', marginTop: 2 },
   dayNumActive: { color: '#0a0a12' },
-  todayDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: COLORS.neon,
+  todayBadge: {
+    marginTop: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 3,
+    backgroundColor: 'rgba(191,95,255,0.25)',
+  },
+  todayBadgeActive: {
+    backgroundColor: 'rgba(10,10,18,0.15)',
+  },
+  todayBadgeText: {
+    fontSize: 8,
+    fontWeight: '900',
+    color: COLORS.neon,
+    letterSpacing: 0.5,
+  },
+  todayBadgeTextActive: {
+    color: '#0a0a12',
+  },
+  todayPlaceholder: {
+    height: 15,
     marginTop: 4,
   },
 
@@ -578,5 +626,100 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 1,
     marginTop: 2,
+  },
+
+  // In-app & airing badges
+  watchNowBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    backgroundColor: COLORS.neonGold,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginTop: 2,
+  },
+  watchNowText: {
+    fontSize: 8,
+    fontWeight: '900',
+    color: '#000',
+    letterSpacing: 0.5,
+  },
+  airingBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginTop: 2,
+  },
+  airingBadgeText: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+    letterSpacing: 0.5,
+  },
+
+  // Filter bar
+  filterRow: {
+    flexDirection: 'row',
+    paddingHorizontal: SPACING.md,
+    gap: 8,
+    marginVertical: 10,
+  },
+  filterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 13,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  filterPillActive: {
+    backgroundColor: 'rgba(191,95,255,0.18)',
+    borderColor: COLORS.neon,
+  },
+  filterPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+  },
+  filterPillTextActive: {
+    color: '#FFFFFF',
+  },
+
+  // Empty state
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: COLORS.text,
+    marginTop: 8,
+  },
+  emptySubText: {
+    fontSize: 12,
+    color: COLORS.textMuted,
+    textAlign: 'center',
+    paddingHorizontal: 32,
+    lineHeight: 18,
+  },
+  showAllBtn: {
+    marginTop: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: RADIUS.md,
+    backgroundColor: 'rgba(191,95,255,0.15)',
+    borderWidth: 1,
+    borderColor: COLORS.neon,
+  },
+  showAllBtnText: {
+    color: COLORS.neon,
+    fontWeight: '700',
+    fontSize: 12,
   },
 });

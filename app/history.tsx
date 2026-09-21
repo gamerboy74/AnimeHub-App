@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import React, { useCallback } from 'react';
+import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
 import { userAPI } from '../src/lib/supabase';
 import { useAuth } from '../src/context/AuthContext';
@@ -12,16 +13,23 @@ export default function WatchHistoryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const [history, setHistory] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const userId = user?.id;
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    if (!user) { setLoading(false); return; }
-    userAPI.getProgress(user.id).then(({ data }) => {
-      setHistory(data || []);
-      setLoading(false);
-    });
-  }, [user]);
+  const { data: history = [], isLoading: loading, isRefetching } = useQuery({
+    queryKey: ['user', userId, 'history'],
+    staleTime: 30 * 1000,
+    gcTime: 5 * 60 * 1000,
+    enabled: !!userId,
+    queryFn: async () => {
+      const { data } = await userAPI.getProgress(userId!);
+      return data || [];
+    },
+  });
+
+  const onRefresh = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['user', userId, 'history'] });
+  }, [queryClient, userId]);
 
   const handleCardPress = useCallback((id: string) => {
     router.push(`/anime/${id}`);
@@ -46,12 +54,17 @@ export default function WatchHistoryScreen() {
         </TouchableOpacity>
         <View>
           <Text style={styles.headerSub}>// HISTORY</Text>
+          <Text style={styles.headerTitle}>WATCH HISTORY</Text>
         </View>
       </View>
 
       {!user ? (
         <View style={styles.empty}>
+          <Ionicons name="time-outline" size={48} color={COLORS.textMuted} />
           <Text style={styles.emptyText}>Sign in to see your watch history</Text>
+          <TouchableOpacity style={styles.loginBtn} onPress={() => router.push('/auth/login')}>
+            <Text style={styles.loginBtnText}>SIGN IN</Text>
+          </TouchableOpacity>
         </View>
       ) : loading ? (
         <ActivityIndicator color={COLORS.neon} style={{ marginTop: SPACING.xl }} />
@@ -66,6 +79,13 @@ export default function WatchHistoryScreen() {
           data={history}
           keyExtractor={keyExtractor}
           contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefetching}
+              onRefresh={onRefresh}
+              tintColor={COLORS.neon}
+            />
+          }
           renderItem={renderItem}
           ItemSeparatorComponent={ItemSeparator}
         />
@@ -134,7 +154,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, padding: SPACING.md },
   backBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border },
   headerSub: { fontSize: 10, color: COLORS.neon, letterSpacing: 2, fontWeight: '700' },
-  headerTitle: { fontSize: 18, color: COLORS.text, fontWeight: '800' },
+  headerTitle: { fontSize: 22, color: COLORS.text, fontWeight: '900' },
   list: { paddingHorizontal: SPACING.md, paddingBottom: SPACING.xxl },
   histRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, paddingVertical: SPACING.md },
   poster: { width: 60, height: 85, borderRadius: RADIUS.sm, backgroundColor: COLORS.bgCard },
@@ -149,4 +169,9 @@ const styles = StyleSheet.create({
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: SPACING.sm },
   emptyText: { fontSize: 13, color: COLORS.textSub, fontWeight: '600' },
   emptySub: { fontSize: 12, color: COLORS.textMuted },
+  loginBtn: {
+    marginTop: SPACING.sm, paddingVertical: SPACING.sm, paddingHorizontal: SPACING.xl,
+    backgroundColor: COLORS.neon, borderRadius: RADIUS.md,
+  },
+  loginBtnText: { color: COLORS.bg, fontWeight: '800', letterSpacing: 1 },
 });

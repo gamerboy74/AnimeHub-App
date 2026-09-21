@@ -17,6 +17,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { haptic } from '../lib/haptics';
 
 interface UseOptimisticFavParams {
   userId: string;
@@ -31,6 +32,7 @@ export function useToggleFavorite({ userId, animeId }: UseOptimisticFavParams) {
   return useMutation({
     // Called immediately — updates UI before server responds
     onMutate: async (willBeFavorite: boolean) => {
+      haptic.medium();
       await queryClient.cancelQueries({ queryKey: favQueryKey });
       const snapshot = queryClient.getQueryData(favQueryKey);
 
@@ -64,6 +66,7 @@ export function useToggleFavorite({ userId, animeId }: UseOptimisticFavParams) {
 
     // Roll back on failure
     onError: (_err, _vars, context: any) => {
+      haptic.error();
       if (context?.snapshot !== undefined) {
         queryClient.setQueryData(favQueryKey, context.snapshot);
       }
@@ -83,6 +86,7 @@ export function useToggleWatchlist({ userId, animeId }: UseOptimisticFavParams) 
 
   return useMutation({
     onMutate: async (willBeInWatchlist: boolean) => {
+      haptic.medium();
       await queryClient.cancelQueries({ queryKey: wlQueryKey });
       const snapshot = queryClient.getQueryData(wlQueryKey);
 
@@ -114,6 +118,7 @@ export function useToggleWatchlist({ userId, animeId }: UseOptimisticFavParams) 
     },
 
     onError: (_err, _vars, context: any) => {
+      haptic.error();
       if (context?.snapshot !== undefined) {
         queryClient.setQueryData(wlQueryKey, context.snapshot);
       }

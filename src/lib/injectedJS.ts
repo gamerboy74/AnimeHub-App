@@ -173,7 +173,13 @@ export const buildSnifferJS = () => `
 `;
 
 /** Part 2: Main player script — polling, resume, skip-intro, HUD tap */
-export const buildMainInjectedJS = (resumeSeconds: number, autoSkipIntro: boolean, pollIntervalMs: number = 5000) => `
+export const buildMainInjectedJS = (
+  resumeSeconds: number,
+  autoSkipIntro: boolean,
+  pollIntervalMs: number = 5000,
+  qualityPreference: string = 'auto',
+  audioPreference: string = ''
+) => `
   (function() {
     // ─── FORCE FULL-SCREEN LAYOUT ────────────────────────────────────────────
     // Eliminates blank bars on the left/right in landscape by ensuring the page
@@ -317,6 +323,8 @@ export const buildMainInjectedJS = (resumeSeconds: number, autoSkipIntro: boolea
             try { jwplayer().setCurrentQuality(data.index); } catch(err) {}
           } else if (data.command === 'setSubtitle') {
             try { jwplayer().setCurrentCaptions(data.index); } catch(err) {}
+          } else if (data.command === 'setAudioTrack') {
+            try { jwplayer().setCurrentAudioTrack(data.index); } catch(err) {}
           }
         } else if (data && data.type === 'iframe_click') {
           if (window === window.top) {
@@ -356,6 +364,11 @@ export const buildMainInjectedJS = (resumeSeconds: number, autoSkipIntro: boolea
     // Subtitle control: setCurrentCaptions(idx) where 0 = Off, 1+ = tracks
     window.__rn_setSubtitle = function(idx) {
       broadcastCommand({ type: 'rn_command', command: 'setSubtitle', index: idx });
+    };
+
+    // Audio control: setCurrentAudioTrack(idx)
+    window.__rn_setAudioTrack = function(idx) {
+      broadcastCommand({ type: 'rn_command', command: 'setAudioTrack', index: idx });
     };
 
     var attempts          = 0;
@@ -406,9 +419,44 @@ export const buildMainInjectedJS = (resumeSeconds: number, autoSkipIntro: boolea
         } catch(err) {}
       }
 
-      // ── EVENT-DRIVEN quality levels push ────────────────────────────────────
-      // JWPlayer fires 'levels' when the quality list is populated from the
-      // manifest. We push immediately to RN — no setTimeout or polling needed.
+      // ── EVENT-DRIVEN quality levels push & auto-preference ──────────────────
+      var _qualityPrefApplied = false;
+      function applyJWQualityPreference(q) {
+        if (_qualityPrefApplied || !q || q.length === 0) return;
+        var rawPref = '${qualityPreference || 'auto'}';
+        if (!rawPref || rawPref === 'auto') return;
+        var targetH = parseInt(rawPref);
+        if (isNaN(targetH)) return;
+
+        var bestIdx = -1;
+        var bestDiff = 999999;
+        for (var i = 0; i < q.length; i++) {
+          var item = q[i];
+          var h = item.height || parseInt(item.label) || 0;
+          if (h === targetH) {
+            bestIdx = i;
+            break;
+          }
+          if (h > 0) {
+            var diff = Math.abs(h - targetH);
+            if (diff < bestDiff) {
+              bestDiff = diff;
+              bestIdx = i;
+            }
+          }
+        }
+        if (bestIdx !== -1) {
+          _qualityPrefApplied = true;
+          try {
+            p.setCurrentQuality(bestIdx);
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'qualityChanged',
+              current: bestIdx,
+            }));
+          } catch(err) {}
+        }
+      }
+
       function pushQualities() {
         try {
           var q = p.getQualityLevels();
@@ -419,19 +467,76 @@ export const buildMainInjectedJS = (resumeSeconds: number, autoSkipIntro: boolea
               levels: q,
               current: typeof cur === 'number' ? cur : -1,
             }));
+            applyJWQualityPreference(q);
           }
         } catch(e) {}
       }
       try { p.on('levels',        pushQualities); } catch(e) {}
       try { p.on('levelsChanged', function(data) {
-        // data.currentQuality = new active index
         window.ReactNativeWebView.postMessage(JSON.stringify({
           type: 'qualityChanged',
           current: data && typeof data.currentQuality !== 'undefined' ? data.currentQuality : -1,
         }));
       }); } catch(e) {}
-      // Also push immediately in case levels already loaded before we hooked in
       pushQualities();
+
+      // ── EVENT-DRIVEN audio tracks push & auto-preference ────────────────────
+      var _audioPrefApplied = false;
+      function applyJWAudioPreference(tracks) {
+        if (_audioPrefApplied || !tracks || tracks.length <= 1) return;
+        var rawAudio = '${audioPreference || ''}'.toLowerCase();
+        if (!rawAudio) return;
+
+        var targetIdx = -1;
+        for (var a = 0; a < tracks.length; a++) {
+          var tName = (tracks[a].name || '').toLowerCase();
+          var tLang = (tracks[a].language || '').toLowerCase();
+          if (rawAudio.includes('dub') || rawAudio.includes('english')) {
+            if (tLang.startsWith('en') || tName.includes('dub') || tName.includes('eng')) {
+              targetIdx = a;
+              break;
+            }
+          } else if (rawAudio.includes('japanese') || rawAudio.includes('original')) {
+            if (tLang.startsWith('ja') || tName.includes('jap') || tName.includes('orig')) {
+              targetIdx = a;
+              break;
+            }
+          }
+        }
+        if (targetIdx !== -1) {
+          _audioPrefApplied = true;
+          try {
+            p.setCurrentAudioTrack(targetIdx);
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'audioTrackChanged',
+              current: targetIdx,
+            }));
+          } catch(err) {}
+        }
+      }
+
+      function pushAudioTracks() {
+        try {
+          var tracks = p.getAudioTracks();
+          if (tracks && tracks.length > 0) {
+            var curTrack = p.getCurrentAudioTrack();
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'audioTracks',
+              tracks: tracks,
+              current: typeof curTrack === 'number' ? curTrack : 0,
+            }));
+            applyJWAudioPreference(tracks);
+          }
+        } catch(e) {}
+      }
+      try { p.on('audioTracks', pushAudioTracks); } catch(e) {}
+      try { p.on('audioTrackChanged', function(data) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'audioTrackChanged',
+          current: data && typeof data.currentTrack !== 'undefined' ? data.currentTrack : 0,
+        }));
+      }); } catch(e) {}
+      pushAudioTracks();
 
       // ── EVENT-DRIVEN captions/CC push ────────────────────────────────────────
       // JWPlayer fires 'captionsList' once the captions list is known.
@@ -887,7 +992,9 @@ export const buildCombinedJS = (
   resumeSeconds: number,
   autoSkipIntro: boolean,
   useNativePlayerOnly: boolean,
-  pollIntervalMs: number = 5000
+  pollIntervalMs: number = 5000,
+  qualityPreference: string = 'auto',
+  audioPreference: string = ''
 ) => {
   if (useNativePlayerOnly) {
     return buildSnifferJS() + '\n' + buildNativePlayerOnlyJS(resumeSeconds, pollIntervalMs);
@@ -897,6 +1004,6 @@ export const buildCombinedJS = (
     '\n' +
     buildHideControlsJS() +
     '\n' +
-    buildMainInjectedJS(resumeSeconds, autoSkipIntro, pollIntervalMs)
+    buildMainInjectedJS(resumeSeconds, autoSkipIntro, pollIntervalMs, qualityPreference, audioPreference)
   );
 };

@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   StatusBar,
   StyleSheet,
+  AppState,
 } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { WebView } from "react-native-webview";
@@ -42,8 +43,17 @@ import { styles } from "../../src/screens/watch.styles";
 import EpisodeSelectorSheet from "../../src/components/player/EpisodeSelectorSheet";
 import NextUpCard from "../../src/components/player/NextUpCard";
 import StreamErrorOverlay from "../../src/components/player/StreamErrorOverlay";
+import DeviceLimitOverlay from "../../src/components/player/DeviceLimitOverlay";
+import WifiOnlyOverlay from "../../src/components/player/WifiOnlyOverlay";
 import PlayerHUDOverlay from "../../src/components/player/PlayerHUDOverlay";
 import DoubleTapSeek from "../../src/components/player/DoubleTapSeek";
+import * as Network from "expo-network";
+import {
+  acquireStreamSession,
+  sendStreamHeartbeat,
+  releaseStreamSession,
+  stopOtherStreams,
+} from "../../src/lib/streamManager";
 
 // ─── CONSTANTS ─────────────────────────────────────────────────────────────────
 const NEAR_END_THRESHOLD_FALLBACK = 60;
@@ -255,7 +265,7 @@ export default function WatchScreen() {
     hasCapturedInitialResumeRef.current = true;
   }
 
-  // ── Server selection hook ──────────────────────────────────────────────────
+  // ── Server selection hook & User Preferences ───────────────────────────────
   const { data: prefs } = useQuery({
     queryKey: ['user', user?.id, 'preferences'],
     queryFn: async () => {
@@ -265,6 +275,37 @@ export default function WatchScreen() {
     },
     enabled: !!user?.id,
   });
+
+  const prefsRef = useRef(prefs);
+  useEffect(() => {
+    prefsRef.current = prefs;
+  }, [prefs]);
+
+  // ── Wi-Fi Only Streaming Enforcement ────────────────────────────────────────
+  const [isWifiBlocked, setIsWifiBlocked] = useState(false);
+  const [bypassedWifiRestriction, setBypassedWifiRestriction] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    const checkNetwork = async () => {
+      if (!prefs?.wifi_only_streaming || bypassedWifiRestriction) {
+        if (isMounted) setIsWifiBlocked(false);
+        return;
+      }
+      try {
+        const state = await Network.getNetworkStateAsync();
+        const isWifiOrEthernet =
+          state.type === Network.NetworkStateType.WIFI ||
+          state.type === Network.NetworkStateType.ETHERNET;
+        if (isMounted) {
+          setIsWifiBlocked(!isWifiOrEthernet);
+        }
+      } catch (e) {
+        console.warn("[Watch] Network check error:", e);
+      }
+    };
+    checkNetwork();
+  }, [prefs?.wifi_only_streaming, bypassedWifiRestriction]);
 
   const preferredLang: ServerLang = prefs?.audio_preference === 'English Dub' ? 'dub' : 'sub';
 
@@ -310,7 +351,12 @@ export default function WatchScreen() {
     if (isRawVideo) {
       const url = srv.embedUrl.toLowerCase();
       const isHls = url.includes(".m3u8");
-      const htmlContent = buildRawPlayerHTML(srv.embedUrl, isHls);
+      const htmlContent = buildRawPlayerHTML(
+        srv.embedUrl,
+        isHls,
+        prefs?.quality_preference || "auto",
+        prefs?.audio_preference || ""
+      );
       return { html: htmlContent, baseUrl: srv.embedUrl };
     }
 
@@ -323,7 +369,7 @@ export default function WatchScreen() {
         }
         : {},
     };
-  }, [srv.embedUrl, isRawVideo, embedOrigin]);
+  }, [srv.embedUrl, isRawVideo, embedOrigin, prefs?.quality_preference, prefs?.audio_preference]);
 
   useEffect(() => { episodeIdRef.current = episode?.id; }, [episode?.id]);
   useEffect(() => { userIdRef.current = user?.id; }, [user?.id]);
@@ -425,6 +471,70 @@ export default function WatchScreen() {
     setAutoPlayCountdown(null);
   }, []);
 
+  // ── Concurrent Device Stream Limit ──────────────────────────────────────────
+  const [streamBlocked, setStreamBlocked] = useState(false);
+  const [streamBlockInfo, setStreamBlockInfo] = useState<{
+    maxAllowed: number;
+    activeCount: number;
+  } | null>(null);
+  const [isStoppingStreams, setIsStoppingStreams] = useState(false);
+
+  const checkStreamAllowed = useCallback(async () => {
+    if (!user?.id) return;
+    const res = await acquireStreamSession(user.id, user.subscription_type ?? 'free', id as string);
+    if (!res.allowed) {
+      setStreamBlocked(true);
+      setStreamBlockInfo({ maxAllowed: res.maxAllowed, activeCount: res.activeCount });
+      embeddedPause();
+    } else {
+      setStreamBlocked(false);
+      setStreamBlockInfo(null);
+    }
+  }, [user?.id, user?.subscription_type, id, embeddedPause]);
+
+  useEffect(() => {
+    checkStreamAllowed();
+  }, [checkStreamAllowed]);
+
+  // Periodic heartbeat while playing (checks concurrency and refreshes active stream)
+  useEffect(() => {
+    if (!user?.id || !playerState.isPlaying || streamBlocked) return;
+    const interval = setInterval(async () => {
+      const res = await sendStreamHeartbeat(user.id, user.subscription_type ?? 'free', id as string);
+      if (!res.allowed) {
+        setStreamBlocked(true);
+        setStreamBlockInfo({ maxAllowed: res.maxAllowed, activeCount: res.activeCount });
+        embeddedPause();
+      }
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [user?.id, user?.subscription_type, playerState.isPlaying, id, streamBlocked, embeddedPause]);
+
+  // Cleanly release active stream when user minimizes app, answers call, or locks screen
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      const uid = userIdRef.current;
+      if (!uid) return;
+      if (nextState === 'background' || nextState === 'inactive') {
+        releaseStreamSession(uid);
+      } else if (nextState === 'active') {
+        checkStreamAllowed();
+      }
+    });
+    return () => sub.remove();
+  }, [checkStreamAllowed]);
+
+  const handleStopOtherStreams = async () => {
+    if (!user?.id) return;
+    setIsStoppingStreams(true);
+    try {
+      await stopOtherStreams(user.id);
+      await checkStreamAllowed();
+    } finally {
+      setIsStoppingStreams(false);
+    }
+  };
+
   // Cleanup timers on unmount and save final progress instantly
   useEffect(() => {
     return () => {
@@ -432,8 +542,13 @@ export default function WatchScreen() {
       if (skipToastTimeoutRef.current) clearTimeout(skipToastTimeoutRef.current);
       if (playerTickerRef.current) clearInterval(playerTickerRef.current);
 
-      // Save final progress on unmount instantly
+      // Release active stream session on unmount
       const uid = userIdRef.current;
+      if (uid) {
+        releaseStreamSession(uid);
+      }
+
+      // Save final progress on unmount instantly
       const eid = episodeIdRef.current;
       const { current, duration } = playerStateRef.current;
       if (uid && eid && current > MIN_PROGRESS_SECONDS) {
@@ -441,8 +556,6 @@ export default function WatchScreen() {
         (async () => {
           try {
             await userAPI.upsertProgress(uid, eid, current, duration > 0 && current > duration * 0.9);
-            // Broad invalidation on unmount (once) — updates Continue Watching,
-            // history, and anime-progress lists after the user leaves the player.
             queryClient.invalidateQueries({ queryKey: ["user", uid] });
           } catch (err) {
             console.error("[Watch] [Unmount] Final progress save error:", err);
@@ -621,28 +734,91 @@ export default function WatchScreen() {
             setPlayerState((prev) => ({ ...prev, isPlaying: playing, duration }));
           }
 
-          if (!nearEndFired.current && duration > 0) {
+          if (duration > 0) {
             const threshold = Math.min(NEAR_END_THRESHOLD_FALLBACK, duration * 0.1);
-            if (duration - current < threshold && nextEpisode) {
+            if (!nearEndFired.current && duration - current < threshold && nextEpisode) {
               nearEndFired.current = true;
               setShowNextUp(true);
+            } else if (nearEndFired.current && duration - current >= threshold) {
+              // User scrubbed back out of the near-end zone — hide the card and reset
+              nearEndFired.current = false;
+              setShowNextUp(false);
             }
           }
         }
 
         if (msg.type === "qualities") {
           if (Array.isArray(msg.levels) && msg.levels.length > 0) {
-            setQualityLevels(
-              msg.levels.map((l: any, i: number) => ({
-                label: l.label || (l.height ? `${l.height}p` : `Level ${i}`),
-              }))
-            );
-            if (typeof msg.current === "number") setActiveQualityIndex(msg.current);
+            const mappedLevels = msg.levels.map((l: any, i: number) => ({
+              label: l.label || (l.height ? `${l.height}p` : `Level ${i}`),
+              height: l.height || parseInt(l.label) || 0,
+            }));
+            setQualityLevels(mappedLevels);
+
+            // Auto-apply stored quality preference
+            const userQuality = prefsRef.current?.quality_preference;
+            if (userQuality && userQuality !== "auto") {
+              const targetH = parseInt(userQuality);
+              if (!isNaN(targetH)) {
+                let bestIdx = -1;
+                let bestDiff = 999999;
+                for (let i = 0; i < mappedLevels.length; i++) {
+                  const h = mappedLevels[i].height;
+                  if (h === targetH) {
+                    bestIdx = i;
+                    break;
+                  }
+                  if (h > 0) {
+                    const diff = Math.abs(h - targetH);
+                    if (diff < bestDiff) {
+                      bestDiff = diff;
+                      bestIdx = i;
+                    }
+                  }
+                }
+                if (bestIdx !== -1) {
+                  setActiveQualityIndex(bestIdx);
+                  playerCommand(`window.__rn_setQuality(${bestIdx})`);
+                } else if (typeof msg.current === "number") {
+                  setActiveQualityIndex(msg.current);
+                }
+              }
+            } else if (typeof msg.current === "number") {
+              setActiveQualityIndex(msg.current);
+            }
           }
         }
 
         if (msg.type === "qualityChanged") {
           if (typeof msg.current === "number") setActiveQualityIndex(msg.current);
+        }
+
+        if (msg.type === "audioTracks") {
+          if (Array.isArray(msg.tracks) && msg.tracks.length > 1) {
+            const rawAudio = (prefsRef.current?.audio_preference || "").toLowerCase();
+            if (rawAudio) {
+              let targetIdx = -1;
+              for (let a = 0; a < msg.tracks.length; a++) {
+                const t = msg.tracks[a];
+                const tName = (t.name || "").toLowerCase();
+                const tLang = (t.lang || t.language || "").toLowerCase();
+                if (rawAudio.includes("dub") || rawAudio.includes("english")) {
+                  if (tLang.startsWith("en") || tName.includes("dub") || tName.includes("eng")) {
+                    targetIdx = a;
+                    break;
+                  }
+                } else if (rawAudio.includes("japanese") || rawAudio.includes("original")) {
+                  if (tLang.startsWith("ja") || tName.includes("jap") || tName.includes("orig")) {
+                    targetIdx = a;
+                    break;
+                  }
+                }
+              }
+              if (targetIdx !== -1) {
+                playerCommand(`window.__rn_setAudioTrack(${targetIdx})`);
+              }
+            }
+          }
         }
 
         if (msg.type === "subtitles") {
@@ -795,9 +971,17 @@ export default function WatchScreen() {
   // so navigating from "Continue Watching" always injected resumeSeconds=0 because
   // initialResumeSecondsRef.current had updated but the memo never recomputed.
   const injectedJS = useMemo(
-    () => buildCombinedJS(initialResumeSecondsRef.current, autoSkipIntroEnabled, useNativePlayerOnly),
+    () =>
+      buildCombinedJS(
+        initialResumeSecondsRef.current,
+        autoSkipIntroEnabled,
+        useNativePlayerOnly,
+        5000,
+        prefs?.quality_preference || "auto",
+        prefs?.audio_preference || ""
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [id, resumeSeconds, autoSkipIntroEnabled, useNativePlayerOnly]
+    [id, resumeSeconds, autoSkipIntroEnabled, useNativePlayerOnly, prefs?.quality_preference, prefs?.audio_preference]
   );
 
   // ── Guards ────────────────────────────────────────────────────────────────
@@ -865,7 +1049,7 @@ export default function WatchScreen() {
       {/* ── WEBVIEW PLAYER ── */}
       <WebView
         ref={webviewRef}
-        source={webViewSource}
+        source={isWifiBlocked ? { html: '<!DOCTYPE html><html><body style="background:#000;"></body></html>' } : webViewSource}
         style={StyleSheet.absoluteFill}
         mediaPlaybackRequiresUserAction={false}
         allowsFullscreenVideo={true}
@@ -991,6 +1175,28 @@ export default function WatchScreen() {
         onGoBack={() => router.back()}
       />
 
+      {/* ── WIFI ONLY STREAMING OVERLAY ── */}
+      <WifiOnlyOverlay
+        visible={isWifiBlocked}
+        onStreamAnyway={() => {
+          setBypassedWifiRestriction(true);
+          setIsWifiBlocked(false);
+        }}
+        onOpenSettings={() => router.push("/settings")}
+        onGoBack={() => router.back()}
+      />
+
+      {/* ── DEVICE LIMIT OVERLAY ── */}
+      <DeviceLimitOverlay
+        visible={streamBlocked}
+        isPremium={isPremium}
+        maxAllowed={streamBlockInfo?.maxAllowed ?? (isPremium ? 2 : 1)}
+        onStopOtherStreams={handleStopOtherStreams}
+        onUpgrade={() => router.push("/plans")}
+        onGoBack={() => router.back()}
+        isStopping={isStoppingStreams}
+      />
+
       {/* ── HUD OVERLAY LAYER ── */}
       {!playerError && (
         <PlayerHUDOverlay
@@ -1067,6 +1273,10 @@ export default function WatchScreen() {
           router.replace(`/watch/${nextEpisode?.id}`);
         }}
         onCancelAutoPlay={cancelAutoPlay}
+        onDismiss={() => {
+          cancelAutoPlay();
+          setShowNextUp(false);
+        }}
       />
 
       {/* ── EPISODE SELECTOR SHEET ── */}

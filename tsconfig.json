@@ -2,5 +2,12 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true
-  }
+  },
+  "exclude": [
+    // Supabase Edge Functions are Deno-based — they use Deno.env, esm.sh imports,
+    // and Deno-native HTTP types. They are NOT compiled by the RN tsconfig.
+    // Typecheck them separately with: supabase functions check razorpay-payment
+    "supabase/functions"
+  ]
 }
+

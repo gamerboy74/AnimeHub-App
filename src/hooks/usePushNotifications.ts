@@ -28,25 +28,34 @@ export function usePushNotifications() {
     if (!user?.id) return;
 
     registerForPushNotificationsAsync(user.id).then(token => {
-      if (token) {
+      if (token && __DEV__) {
         console.log('[Push] Device registered. Token:', token);
       }
     });
 
     // Listen for notifications that arrive when the app is in the foreground
     notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
-      console.log('[Push] Notification received in foreground:', notification);
+      if (__DEV__) {
+        console.log('[Push] Notification received in foreground:', notification);
+      }
     });
 
     // Listen for taps on push notifications (handles lock screen and tray deep linking)
     responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
-      console.log('[Push] User tapped notification response:', response);
+      if (__DEV__) {
+        console.log('[Push] User tapped notification response:', response);
+      }
       
       const actionUrl = response.notification.request.content.data?.action_url;
-      if (actionUrl) {
-        console.log('[Push] Directing user to action URL:', actionUrl);
-        // Deep link route using expo-router
-        router.push(actionUrl as any);
+      if (typeof actionUrl === 'string' && actionUrl.startsWith('/')) {
+        const SAFE_PREFIXES = ['/anime/', '/watch/', '/notifications', '/(tabs)', '/genre', '/studio', '/plans'];
+        const isSafe = SAFE_PREFIXES.some(prefix => actionUrl.startsWith(prefix));
+        if (isSafe) {
+          if (__DEV__) console.log('[Push] Directing user to action URL:', actionUrl);
+          router.push(actionUrl as any);
+        } else {
+          console.warn('[Push] Blocked unsafe or unmapped action URL:', actionUrl);
+        }
       }
     });
 
@@ -126,7 +135,7 @@ async function registerForPushNotificationsAsync(userId: string): Promise<string
 
       if (error) {
         console.error('[Push] Failed to sync push token with database:', error.message);
-      } else {
+      } else if (__DEV__) {
         console.log('[Push] Token successfully synced to database table public.user_push_tokens');
       }
     }

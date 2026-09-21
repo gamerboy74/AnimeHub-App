@@ -60,8 +60,14 @@ export default function CustomAlertModal() {
       animationType="fade"
       onRequestClose={() => setVisible(false)}
     >
-      <View style={styles.overlay}>
-        <View style={[styles.card, { borderColor: `${accentColor}30` }]}>
+      <View style={styles.overlay} accessibilityViewIsModal={true}>
+        <View
+          style={[styles.card, { borderColor: `${accentColor}30` }]}
+          accessible={true}
+          accessibilityRole="alert"
+          accessibilityLabel={title}
+          accessibilityViewIsModal={true}
+        >
           {/* Subtle accent glow line at the top */}
           <View style={[styles.glowBar, { backgroundColor: accentColor }]} />
 

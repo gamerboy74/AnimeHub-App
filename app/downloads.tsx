@@ -83,14 +83,18 @@ function OfflinePlayer({
   const [contentFit, setContentFit] = useState<'contain' | 'fill' | 'cover'>('contain');
 
   useEffect(() => {
+    const playingSub = (player as any).addListener?.('playingChange', (event: any) => {
+      setIsPlaying(event.isPlaying);
+    });
+
     const watchdog = setInterval(() => {
       const playing = player.playing;
       const time    = player.currentTime;
       const dur     = player.duration;
 
-      setIsPlaying(playing);
-      setCurrentTime(time);
-      setDuration(dur);
+      setIsPlaying((prev) => (prev !== playing ? playing : prev));
+      setDuration((prev) => (prev !== dur ? dur : prev));
+      setCurrentTime((prev) => (Math.abs(prev - time) >= 0.25 ? time : prev));
 
       // Auto-enable subtitles if they should be enabled and a track is available but not selected
       if (subtitlesEnabled && player.availableSubtitleTracks && player.availableSubtitleTracks.length > 0 && !player.subtitleTrack) {
@@ -106,7 +110,10 @@ function OfflinePlayer({
       }
     }, 500);
 
-    return () => clearInterval(watchdog);
+    return () => {
+      playingSub?.remove?.();
+      clearInterval(watchdog);
+    };
   }, [player, subtitlesEnabled]);
 
   const [showHud, setShowHud] = useState(true);
@@ -538,6 +545,7 @@ export default function DownloadsScreen() {
   const [loading, setLoading] = useState(true);
   const [playingEpisode, setPlayingEpisode] = useState<DownloadedEpisode | null>(null);
   const [selectedAnimeName, setSelectedAnimeName] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<'recent' | 'title' | 'size'>('recent');
 
   // ── Offline Verification State ──
   const [subStatus, setSubStatus] = useState<{
@@ -639,6 +647,12 @@ export default function DownloadsScreen() {
     }, {});
 
     return Object.values(grouped).sort((a, b) => {
+      if (sortBy === 'title') {
+        return a.animeName.localeCompare(b.animeName);
+      }
+      if (sortBy === 'size') {
+        return b.totalSizeBytes - a.totalSizeBytes;
+      }
       const latestA = Math.max(...a.episodes.map(e => e.downloadedAt));
       const latestB = Math.max(...b.episodes.map(e => e.downloadedAt));
       return latestB - latestA;
@@ -646,7 +660,7 @@ export default function DownloadsScreen() {
       group.episodes.sort((x, y) => x.downloadedAt - y.downloadedAt);
       return group;
     });
-  }, [downloads]);
+  }, [downloads, sortBy]);
 
   // Keep selected group structure up to date
   const selectedGroup = React.useMemo(() => {
@@ -788,6 +802,25 @@ export default function DownloadsScreen() {
         </View>
       </View>
 
+      {/* Quick Sort Filter Chips */}
+      {groupedList.length > 1 && (
+        <View style={styles.sortBar}>
+          <Text style={styles.sortLabel}>SORT:</Text>
+          {(['recent', 'title', 'size'] as const).map((s) => (
+            <TouchableOpacity
+              key={s}
+              style={[styles.sortChip, sortBy === s && styles.sortChipActive]}
+              onPress={() => setSortBy(s)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.sortChipText, sortBy === s && styles.sortChipTextActive]}>
+                {s === 'recent' ? 'Recent' : s === 'title' ? 'Title (A-Z)' : 'Largest Size'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
       {/* Grid Library List */}
       {loading ? (
         <View style={styles.empty}>
@@ -846,6 +879,44 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(191,95,255,0.08)',
     backgroundColor: COLORS.bg ?? '#080810',
     zIndex: 10,
+  },
+  sortBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: COLORS.bg ?? '#080810',
+  },
+  sortLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: COLORS.textMuted,
+    letterSpacing: 1,
+    marginRight: 4,
+  },
+  sortChip: {
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  sortChipActive: {
+    backgroundColor: 'rgba(191,95,255,0.18)',
+    borderColor: COLORS.neon,
+  },
+  sortChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.textSub,
+  },
+  sortChipTextActive: {
+    color: COLORS.text,
+    fontWeight: '700',
   },
   backBtn: {
     width: 40,
