@@ -8,6 +8,11 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
+    "build:apk": "eas build -p android --profile production-apk",
+    "build:preview": "eas build -p android --profile preview",
+    "build:bundle": "eas build -p android --profile production",
+    "landing:dev": "npm --prefix landing run dev",
+    "landing:build": "npm --prefix landing run build",
     "postinstall": "patch-package"
   },
   "dependencies": {

@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+
+# Expo & Web builds
+.expo/
+dist/
+web-build/
+
+# Native build artifacts & credentials
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro cache
+.metro-health-check*
+
+# Debug & logs
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+*.pem
+
+# Local env files
+.env
+.env*.local
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Scratch & test scripts
+scratch/
+captured_streams.txt
+
+# Documentation & Supabase CLI cache
+docs/
+supabase/.temp/
+.temp/
+
+# Exclude Web Landing Page from EAS mobile builds
+landing/
