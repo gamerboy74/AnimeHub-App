@@ -16,10 +16,11 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
-import { COLORS, RADIUS, SPACING } from '../../constants/theme';
+import { COLORS, RADIUS, SPACING, TOUCH } from '../../constants/theme';
 import { requestAPI } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { haptic } from '../../lib/haptics';
 
 interface RequestAnimeModalProps {
   visible: boolean;
@@ -42,6 +43,7 @@ function RequestRow({
 
   const handlePress = () => {
     if (isUpvoted) return;
+    haptic.selection();
     Animated.sequence([
       Animated.spring(heartScale, { toValue: 1.4, useNativeDriver: true, speed: 45 }),
       Animated.spring(heartScale, { toValue: 1, useNativeDriver: true, speed: 30 }),
@@ -255,6 +257,7 @@ export default function RequestAnimeModal({
     }
 
     setLoading(true);
+    haptic.medium();
     try {
       const { error } = await requestAPI.submit(user.id, title.trim(), parsedMalId, notes.trim());
 
@@ -308,7 +311,17 @@ export default function RequestAnimeModal({
                 <Text style={styles.kicker}>REQUEST AN ANIME</Text>
                 <Text style={styles.title}>Can't find what you want?</Text>
               </View>
-              <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+              <TouchableOpacity
+                onPress={() => {
+                  haptic.selection();
+                  onClose();
+                }}
+                style={styles.closeBtn}
+                hitSlop={TOUCH.hitSlop}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Close"
+              >
                 <Ionicons name="close" size={18} color={COLORS.textMuted} />
               </TouchableOpacity>
             </View>
@@ -534,7 +547,7 @@ const styles = StyleSheet.create({
     paddingBottom: SPACING.xxl,
     backgroundColor: 'rgba(10,10,18,0.97)',
     borderTopWidth: 1,
-    borderColor: 'rgba(191,95,255,0.18)',
+    borderColor: 'rgba(255,43,60,0.2)',
   },
 
   handle: {
@@ -567,7 +580,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.3,
   },
   closeBtn: {
-    width: 34, height: 34,
+    width: 38, height: 38,
     backgroundColor: 'rgba(255,255,255,0.05)',
     borderRadius: RADIUS.sm,
     borderWidth: 1,
@@ -601,7 +614,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#161624',
     borderRadius: RADIUS.md,
     borderWidth: 1,
-    borderColor: 'rgba(191,95,255,0.1)',
+    borderColor: 'rgba(255,43,60,0.12)',
     padding: 12,
     gap: 12,
   },
@@ -636,10 +649,10 @@ const styles = StyleSheet.create({
     gap: 5,
     paddingVertical: 8,
     paddingHorizontal: 12,
-    backgroundColor: 'rgba(191,95,255,0.07)',
+    backgroundColor: 'rgba(255,43,60,0.08)',
     borderRadius: RADIUS.sm,
     borderWidth: 1,
-    borderColor: 'rgba(191,95,255,0.2)',
+    borderColor: 'rgba(255,43,60,0.25)',
     minWidth: 76,
   },
   rowUpvoteBtnActive: {
@@ -680,7 +693,7 @@ const styles = StyleSheet.create({
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: 'rgba(191,95,255,0.1)',
+    backgroundColor: 'rgba(255,43,60,0.12)',
   },
   dividerText: {
     fontSize: 9,
@@ -718,12 +731,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#161626',
     borderRadius: RADIUS.md,
     borderWidth: 1,
-    borderColor: 'rgba(191,95,255,0.1)',
+    borderColor: 'rgba(255,43,60,0.15)',
     paddingHorizontal: SPACING.md,
     paddingVertical: Platform.OS === 'ios' ? 13 : 3,
   },
   inputWrapFocused: {
-    borderColor: 'rgba(191,95,255,0.35)',
+    borderColor: 'rgba(255,43,60,0.45)',
     backgroundColor: '#1a1a2e',
   },
   inputWrapMultiline: {

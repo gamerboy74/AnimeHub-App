@@ -178,7 +178,8 @@ export const buildMainInjectedJS = (
   autoSkipIntro: boolean,
   pollIntervalMs: number = 5000,
   qualityPreference: string = 'auto',
-  audioPreference: string = ''
+  audioPreference: string = '',
+  isPremium: boolean = false
 ) => `
   (function() {
     // ─── FORCE FULL-SCREEN LAYOUT ────────────────────────────────────────────
@@ -320,7 +321,20 @@ export const buildMainInjectedJS = (
             try { jwplayer().setVolume(data.volume * 100); } catch(err) {}
             try { var vid = document.querySelector('video'); if (vid) vid.volume = data.volume; } catch(err) {}
           } else if (data.command === 'setQuality') {
-            try { jwplayer().setCurrentQuality(data.index); } catch(err) {}
+            try {
+              var qLevels = typeof jwplayer === 'function' ? jwplayer().getQualityLevels() : null;
+              var targetLevel = qLevels && qLevels[data.index];
+              var h = targetLevel ? (targetLevel.height || parseInt(targetLevel.label) || 0) : 0;
+              var isPrem = ${isPremium ? 'true' : 'false'};
+              if (!isPrem && h > 720) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'quality_locked',
+                  requestedHeight: h
+                }));
+              } else {
+                jwplayer().setCurrentQuality(data.index);
+              }
+            } catch(err) {}
           } else if (data.command === 'setSubtitle') {
             try { jwplayer().setCurrentCaptions(data.index); } catch(err) {}
           } else if (data.command === 'setAudioTrack') {
@@ -424,24 +438,29 @@ export const buildMainInjectedJS = (
       function applyJWQualityPreference(q) {
         if (_qualityPrefApplied || !q || q.length === 0) return;
         var rawPref = '${qualityPreference || 'auto'}';
-        if (!rawPref || rawPref === 'auto') return;
-        var targetH = parseInt(rawPref);
-        if (isNaN(targetH)) return;
+        var isPrem = ${isPremium ? 'true' : 'false'};
+        var maxAllowedH = isPrem ? 1080 : 720;
+        var targetH = rawPref && rawPref !== 'auto' ? parseInt(rawPref) : maxAllowedH;
+        if (isNaN(targetH) || targetH > maxAllowedH) {
+          targetH = maxAllowedH;
+        }
 
         var bestIdx = -1;
         var bestDiff = 999999;
         for (var i = 0; i < q.length; i++) {
           var item = q[i];
           var h = item.height || parseInt(item.label) || 0;
-          if (h === targetH) {
-            bestIdx = i;
-            break;
-          }
-          if (h > 0) {
-            var diff = Math.abs(h - targetH);
-            if (diff < bestDiff) {
-              bestDiff = diff;
+          if (h <= maxAllowedH) {
+            if (h === targetH) {
               bestIdx = i;
+              break;
+            }
+            if (h > 0) {
+              var diff = Math.abs(h - targetH);
+              if (diff < bestDiff) {
+                bestDiff = diff;
+                bestIdx = i;
+              }
             }
           }
         }
@@ -994,7 +1013,8 @@ export const buildCombinedJS = (
   useNativePlayerOnly: boolean,
   pollIntervalMs: number = 5000,
   qualityPreference: string = 'auto',
-  audioPreference: string = ''
+  audioPreference: string = '',
+  isPremium: boolean = false
 ) => {
   if (useNativePlayerOnly) {
     return buildSnifferJS() + '\n' + buildNativePlayerOnlyJS(resumeSeconds, pollIntervalMs);
@@ -1004,6 +1024,6 @@ export const buildCombinedJS = (
     '\n' +
     buildHideControlsJS() +
     '\n' +
-    buildMainInjectedJS(resumeSeconds, autoSkipIntro, pollIntervalMs, qualityPreference, audioPreference)
+    buildMainInjectedJS(resumeSeconds, autoSkipIntro, pollIntervalMs, qualityPreference, audioPreference, isPremium)
   );
 };

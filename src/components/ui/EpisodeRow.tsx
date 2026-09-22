@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, RADIUS, SPACING } from '../../constants/theme';
+import { haptic } from '../../lib/haptics';
 
 export interface EpisodeItem {
   id: string;
@@ -32,7 +33,16 @@ export const EpisodeRow = React.memo(
     const isPremiumLocked = episode.is_premium && !isPremiumUser;
 
     return (
-      <TouchableOpacity style={styles.epRow} onPress={onPress}>
+      <TouchableOpacity
+        style={styles.epRow}
+        activeOpacity={0.75}
+        accessibilityRole="button"
+        accessibilityLabel={episode.title || `Episode ${episode.episode_number}`}
+        onPress={() => {
+          haptic.light();
+          onPress();
+        }}
+      >
         <View style={styles.epLeft}>
           <View style={[styles.epNumBox, episode.is_premium && styles.epNumBoxPremium]}>
             {episode.is_premium
@@ -89,13 +99,13 @@ const styles = StyleSheet.create({
   epLeft: {},
   epNumBox: {
     width: 40, height: 40, borderRadius: RADIUS.sm,
-    backgroundColor: 'rgba(191,95,255,0.1)',
+    backgroundColor: 'rgba(255,43,60,0.1)',
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: COLORS.border,
   },
   epNumBoxPremium: {
-    backgroundColor: 'rgba(255,214,0,0.1)',
-    borderColor: 'rgba(255,214,0,0.3)',
+    backgroundColor: 'rgba(255,184,0,0.12)',
+    borderColor: 'rgba(255,184,0,0.4)',
   },
   epNumText: { fontSize: 14, color: COLORS.neon, fontWeight: '700' },
   epMid: { flex: 1 },

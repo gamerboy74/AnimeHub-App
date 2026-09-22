@@ -139,6 +139,9 @@ async function resolveMediaPlaylist(
       if (line.startsWith('#EXT-X-STREAM-INF')) {
         const bwMatch = line.match(/BANDWIDTH=(\d+)/);
         const bw = bwMatch ? parseInt(bwMatch[1], 10) : 0;
+        const resMatch = line.match(/RESOLUTION=\d+x(\d+)/i);
+        const resH = resMatch ? parseInt(resMatch[1], 10) : 0;
+        if (resH > 1080) continue; // 1080p is highest we can go
         const variantLine = lines[i + 1];
         if (variantLine && !variantLine.startsWith('#')) {
           if (bw > bestBandwidth) {

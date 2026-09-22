@@ -20,7 +20,7 @@ export const FeaturedHero: React.FC<FeaturedHeroProps> = ({ anime, onPress }) =>
     <TouchableOpacity 
       onPress={onPress}
       activeOpacity={0.9}
-      className="w-full h-[450px] rounded-[32px] overflow-hidden border border-primary/30 shadow-[0_20px_50px_rgba(189,157,255,0.2)] relative"
+      className="w-full h-[450px] rounded-[32px] overflow-hidden border border-primary/30 shadow-[0_20px_50px_rgba(255,43,60,0.2)] relative"
     >
       <Image
         source={{ uri: anime.image_url }}
@@ -47,7 +47,7 @@ export const FeaturedHero: React.FC<FeaturedHeroProps> = ({ anime, onPress }) =>
             className="flex-1"
           />
           <TouchableOpacity className="w-14 h-14 rounded-2xl bg-surface/80 border border-primary/20 items-center justify-center backdrop-blur-md">
-            <Plus size={24} color="#bd9dff" />
+            <Plus size={24} color="#FF2B3C" />
           </TouchableOpacity>
         </View>
       </View>

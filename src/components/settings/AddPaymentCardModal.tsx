@@ -88,12 +88,12 @@ export default function AddPaymentCardModal({
                     paddingVertical: 10,
                     borderRadius: RADIUS.md,
                     borderWidth: 1,
-                    borderColor: 'rgba(189,157,255,0.1)',
+                    borderColor: COLORS.borderNeutral,
                     backgroundColor: 'rgba(255,255,255,0.03)',
                   },
                   cardBrand === brand && {
                     borderColor: COLORS.neon,
-                    backgroundColor: 'rgba(189,157,255,0.05)',
+                    backgroundColor: 'rgba(255,43,60,0.08)',
                   },
                 ]}
               >
@@ -131,7 +131,7 @@ export default function AddPaymentCardModal({
             disabled={adding}
           >
             <LinearGradient
-              colors={[COLORS.neon, '#BD9DFF']}
+              colors={[COLORS.neon, COLORS.primaryDark]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.modalSaveGradient}

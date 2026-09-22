@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Animehub-Mobile",
+    "name": "AnimeHub",
     "slug": "Animehub-Mobile",
     "scheme": "animehubmobile",
     "version": "1.0.2",
@@ -8,12 +8,12 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
-    "primaryColor": "#080810",
+    "primaryColor": "#FF2B3C",
     "platforms": ["ios", "android"],
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#080810"
+      "backgroundColor": "#08090D"
     },
     "ios": {
       "supportsTablet": true,
@@ -32,7 +32,7 @@
       "versionCode": 3,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#080810"
+        "backgroundColor": "#08090D"
       },
       "permissions": [
         "android.permission.INTERNET",
@@ -55,7 +55,7 @@
         "expo-notifications",
         {
           "icon": "./assets/icon.png",
-          "color": "#080810"
+          "color": "#FF2B3C"
         }
       ]
     ],

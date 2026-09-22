@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
+import React, { useMemo, useEffect, useRef } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, RADIUS, SPACING } from '../../constants/theme';
@@ -17,19 +17,26 @@ type Props = {
   size?: 'sm' | 'md' | 'lg';
   showStats?: boolean;
   style?: any;
+  /** Pre-computed card width from parent (avoids per-card useWindowDimensions) */
+  cardWidth?: number;
 };
 
-const AnimeCard = React.memo(function AnimeCard({ anime, onPress, onLongPress, size = 'md', showStats = false, style }: Props) {
-  const { width } = useWindowDimensions();
-
-  // Memoized per `size` and `width` — responsive to orientation/foldable changes
+const AnimeCard = React.memo(function AnimeCard({ anime, onPress, onLongPress, size = 'md', showStats = false, style, cardWidth: cardWidthProp }: Props) {
+  // Memoized per `size` — use prop if provided, otherwise use fixed sizes
   const { cardWidth, cardHeight } = useMemo(() => {
-    const w = size === 'sm' ? 120 : size === 'lg' ? width - 32 : 160;
+    const w = cardWidthProp !== undefined
+      ? cardWidthProp
+      : size === 'sm' ? 120 : size === 'lg' ? 320 : 160;
     const h = size === 'lg' ? 220 : w * 1.45;
     return { cardWidth: w, cardHeight: h };
-  }, [size, width]);
+  }, [size, cardWidthProp]);
 
   const stats = anime as AnimeWithStats;
+  const isNew = useMemo(() => {
+    if (!anime.created_at) return false;
+    const added = new Date(anime.created_at).getTime();
+    return Date.now() - added < 30 * 24 * 60 * 60 * 1000; // within 30 days
+  }, [anime.created_at]);
 
   const handlePress = () => {
     haptic.light();
@@ -75,9 +82,10 @@ const AnimeCard = React.memo(function AnimeCard({ anime, onPress, onLongPress, s
           </View>
         )}
 
-        {/* Gradient overlay */}
+        {/* Seamless Cinematic Gradient overlay */}
         <LinearGradient
-          colors={['transparent', 'rgba(8,8,16,0.95)']}
+          colors={['transparent', 'rgba(8,9,13,0.45)', 'rgba(8,9,13,0.96)']}
+          locations={[0.15, 0.55, 1]}
           style={styles.gradientOverlay}
         />
 
@@ -94,6 +102,13 @@ const AnimeCard = React.memo(function AnimeCard({ anime, onPress, onLongPress, s
             </View>
           )}
         </View>
+
+        {/* NEW badge — shown for anime added within last 30 days */}
+        {isNew && (
+          <View style={styles.newBadge}>
+            <Text style={styles.newBadgeText}>NEW</Text>
+          </View>
+        )}
 
         {/* Premium lock */}
         {(stats.premium_episode_count ?? 0) > 0 && (
@@ -120,6 +135,37 @@ const AnimeCard = React.memo(function AnimeCard({ anime, onPress, onLongPress, s
 
 export default AnimeCard;
 
+
+export function AnimeCardSkeleton({ cardWidth: w = 160, size = 'md' }: { cardWidth?: number; size?: 'sm' | 'md' | 'lg' }) {
+  const opacity = useRef(new Animated.Value(0.4)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.9, duration: 750, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.4, duration: 750, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [opacity]);
+
+  const h = size === 'lg' ? 220 : w * 1.45;
+
+  return (
+    <Animated.View
+      style={{
+        width: w,
+        height: h,
+        borderRadius: RADIUS.md,
+        backgroundColor: COLORS.bgCard,
+        marginRight: SPACING.sm,
+        opacity,
+      }}
+    />
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     marginRight: SPACING.sm,
@@ -142,7 +188,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: '60%',
+    height: '75%',
     borderBottomLeftRadius: RADIUS.md,
     borderBottomRightRadius: RADIUS.md,
   },
@@ -154,7 +200,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   badge: {
-    backgroundColor: 'rgba(8,8,16,0.8)',
+    backgroundColor: 'rgba(8,9,13,0.85)',
     borderRadius: RADIUS.sm,
     paddingHorizontal: 5,
     paddingVertical: 2,
@@ -162,8 +208,8 @@ const styles = StyleSheet.create({
     borderColor: COLORS.border,
   },
   typeBadge: {
-    borderColor: 'rgba(191,95,255,0.4)',
-    backgroundColor: 'rgba(191,95,255,0.15)',
+    borderColor: 'rgba(255,43,60,0.4)',
+    backgroundColor: 'rgba(255,43,60,0.15)',
   },
   badgeText: {
     fontSize: 9,
@@ -172,15 +218,30 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     textTransform: 'uppercase',
   },
+  newBadge: {
+    position: 'absolute',
+    bottom: 36,          // sits just above the title text
+    left: SPACING.xs,
+    backgroundColor: COLORS.neonCyan,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+  },
+  newBadgeText: {
+    fontSize: 8,
+    color: '#000',
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
   premiumBadge: {
     position: 'absolute',
     top: SPACING.xs,
     right: SPACING.xs,
-    backgroundColor: 'rgba(255,214,0,0.2)',
+    backgroundColor: 'rgba(255,184,0,0.2)',
     borderRadius: RADIUS.sm,
     padding: 4,
     borderWidth: 1,
-    borderColor: 'rgba(255,214,0,0.5)',
+    borderColor: 'rgba(255,184,0,0.5)',
   },
   bottomInfo: {
     position: 'absolute',
@@ -188,7 +249,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     padding: SPACING.sm,
-    backgroundColor: 'rgba(8,8,16,0.85)',
+    backgroundColor: 'transparent',
   },
   title: {
     fontSize: 12,
@@ -214,3 +275,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+

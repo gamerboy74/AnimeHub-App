@@ -8,12 +8,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
-import { COLORS } from '../src/constants/theme';
+import { COLORS, TOUCH } from '../src/constants/theme';
 import { userAPI, supabase } from '../src/lib/supabase';
 import { styles } from '../src/screens/settings.styles';
 import { useAuth } from '../src/context/AuthContext';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
+import { haptic } from '../src/lib/haptics';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import ChangePasswordModal from '../src/components/settings/ChangePasswordModal';
 import AvatarModal from '../src/components/settings/AvatarModal';
@@ -28,7 +29,8 @@ import { usePlans, formatPrice } from '../src/hooks/usePlans';
 export default function SettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user, signOut, refreshUser } = useAuth();
+  const { user, signOut, refreshUser, hasPassword } = useAuth();
+  const isVip = Boolean(user?.subscription_type === 'premium');
   const queryClient = useQueryClient();
   const { t, locale } = useTranslation();
 
@@ -176,15 +178,14 @@ export default function SettingsScreen() {
   ];
 
   const qualityOptions: PickerOption[] = [
-    { value: 'auto', label: 'Auto (Recommended, up to 4K)', icon: 'hardware-chip-outline' },
-    { value: '4k', label: '4K Ultra HD (VIP Only)', icon: 'tv-outline' },
-    { value: '1080p', label: '1080p Full HD', icon: 'videocam-outline' },
+    { value: 'auto', label: isVip ? 'Auto (Recommended, up to 1080p)' : 'Auto (Up to 720p)', icon: 'hardware-chip-outline' },
+    { value: '1080p', label: isVip ? '1080p Full HD' : '1080p Full HD (VIP Only)', icon: 'videocam-outline' },
     { value: '720p', label: '720p HD (Data Friendly)', icon: 'film-outline' },
     { value: '480p', label: '480p Data Saver', icon: 'cellular-outline' },
   ];
 
   const downloadQualityOptions: PickerOption[] = [
-    { value: '1080p', label: '1080p High Definition', icon: 'videocam-outline' },
+    { value: '1080p', label: isVip ? '1080p High Definition' : '1080p High Definition (VIP Only)', icon: 'videocam-outline' },
     { value: '720p', label: '720p Standard (Recommended)', icon: 'film-outline' },
     { value: '480p', label: '480p Compact Storage', icon: 'save-outline' },
   ];
@@ -299,9 +300,8 @@ export default function SettingsScreen() {
     );
   }
 
-  const isVip = user.subscription_type === 'premium';
   const rawQuality = prefs?.quality_preference || 'auto';
-  const qualityLabel = qualityOptions.find(q => q.value === rawQuality)?.label || 'Auto (Up to 4K)';
+  const qualityLabel = qualityOptions.find(q => q.value === rawQuality)?.label || (isVip ? 'Auto (Up to 1080p)' : 'Auto (Up to 720p)');
   const rawDownloadQuality = prefs?.download_quality || '1080p';
   const downloadQualityLabel = downloadQualityOptions.find(q => q.value === rawDownloadQuality)?.label || '1080p Full HD';
 
@@ -309,7 +309,17 @@ export default function SettingsScreen() {
     <View style={styles.container}>
       {/* Top Header */}
       <BlurView intensity={20} style={[styles.header, { paddingTop: insets.top }]}>
-        <TouchableOpacity style={styles.headerBackBtn} onPress={() => router.back()}>
+        <TouchableOpacity
+          style={styles.headerBackBtn}
+          hitSlop={TOUCH.hitSlop}
+          activeOpacity={0.7}
+          onPress={() => {
+            haptic.selection();
+            router.back();
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
           <Ionicons name="arrow-back" size={24} color={COLORS.neon} />
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>{t('profileSettings')}</Text>
@@ -378,7 +388,7 @@ export default function SettingsScreen() {
                   </View>
                 </View>
                 <Text style={styles.vipCardSub}>
-                  Enjoying 4K Ultra HD, zero commercial ads, dual-screen streaming & offline downloads.
+                  Enjoying 1080p Full HD, zero commercial ads, dual-screen streaming & offline downloads.
                 </Text>
               </View>
             </View>
@@ -404,7 +414,7 @@ export default function SettingsScreen() {
           </LinearGradient>
         ) : (
           <LinearGradient
-            colors={['rgba(255, 214, 0, 0.12)', 'rgba(191, 95, 255, 0.08)', 'rgba(14, 14, 26, 0.9)']}
+            colors={['rgba(255, 214, 0, 0.12)', 'rgba(255, 43, 60, 0.08)', 'rgba(14, 14, 26, 0.9)']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={styles.vipBannerCard}
@@ -421,15 +431,19 @@ export default function SettingsScreen() {
                   </View>
                 </View>
                 <Text style={styles.vipCardSub}>
-                  Watch in 4K UHD with 0 ads, 2 simultaneous screens, and unlimited offline downloads.
+                  Watch in 1080p Full HD with 0 ads, 2 simultaneous screens, and unlimited offline downloads.
                 </Text>
               </View>
             </View>
 
             <TouchableOpacity
               style={styles.upgradeVipBtn}
-              onPress={() => router.push('/plans')}
+              onPress={() => {
+                haptic.selection();
+                router.push('/plans');
+              }}
               activeOpacity={0.88}
+              accessibilityRole="button"
             >
               <LinearGradient
                 colors={['#FFD600', '#FFA500']}
@@ -620,8 +634,11 @@ export default function SettingsScreen() {
           </View>
           <View style={styles.cardBody}>
             <ActionRow
-              label={t('changePassword')}
-              sub={t('changePasswordSub')}
+              label={hasPassword ? t('changePassword') : (t('setPassword') || 'Set Password')}
+              sub={hasPassword ? t('changePasswordSub') : (t('setPasswordSub') || 'No password set. Tap to create one.')}
+              value={hasPassword ? (t('passwordSet') || 'Set') : (t('passwordNotSet') || 'Not Set')}
+              isValueHighlighted={!hasPassword}
+              valueColor={!hasPassword ? '#FFA500' : undefined}
               onPress={() => setPasswordModalVisible(true)}
             />
             <ActionRow
@@ -685,6 +702,7 @@ export default function SettingsScreen() {
         <ChangePasswordModal
           visible={passwordModalVisible}
           onClose={() => setPasswordModalVisible(false)}
+          hasPassword={hasPassword}
         />
 
         <TwoFactorModal
@@ -714,7 +732,27 @@ export default function SettingsScreen() {
           title="Streaming Quality"
           options={qualityOptions}
           selectedValue={rawQuality}
-          onSelect={(v) => updatePref('quality_preference', v)}
+          onSelect={(v) => {
+            if (!isVip && v === '1080p') {
+              Alert.alert(
+                'Premium Feature',
+                '1080p Full HD streaming is exclusively available for AnimeHub Premium members. Free tier supports up to 720p HD.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'View Plans',
+                    style: 'default',
+                    onPress: () => {
+                      setQualityPickerVisible(false);
+                      router.push('/plans');
+                    },
+                  },
+                ]
+              );
+              return;
+            }
+            updatePref('quality_preference', v);
+          }}
         />
 
         {/* Download Quality Picker */}
@@ -724,7 +762,27 @@ export default function SettingsScreen() {
           title="Download Quality"
           options={downloadQualityOptions}
           selectedValue={rawDownloadQuality}
-          onSelect={(v) => updatePref('download_quality', v)}
+          onSelect={(v) => {
+            if (!isVip && v === '1080p') {
+              Alert.alert(
+                'Premium Feature',
+                '1080p High Definition downloads are exclusively available for AnimeHub Premium members. Free tier supports up to 720p HD.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'View Plans',
+                    style: 'default',
+                    onPress: () => {
+                      setDownloadQualityPickerVisible(false);
+                      router.push('/plans');
+                    },
+                  },
+                ]
+              );
+              return;
+            }
+            updatePref('download_quality', v);
+          }}
         />
 
         {/* Display Language Picker */}
@@ -774,13 +832,22 @@ export default function SettingsScreen() {
   );
 }
 
-function ActionRow({ label, value, sub, isValueHighlighted, onPress }: any) {
+function ActionRow({ label, value, sub, isValueHighlighted, valueColor, onPress }: any) {
   return (
     <TouchableOpacity style={styles.actionRow} onPress={onPress} activeOpacity={0.75}>
       <View style={styles.rowContent}>
         <Text style={styles.actionLabel}>{label}</Text>
         {sub && <Text style={styles.actionSubText}>{sub}</Text>}
-        {value && <Text style={[styles.actionValue, isValueHighlighted && { color: COLORS.neonCyan, fontWeight: '700' }]}>{value}</Text>}
+        {value && (
+          <Text
+            style={[
+              styles.actionValue,
+              isValueHighlighted && { color: valueColor || COLORS.neonCyan, fontWeight: '700' },
+            ]}
+          >
+            {value}
+          </Text>
+        )}
       </View>
       <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
     </TouchableOpacity>

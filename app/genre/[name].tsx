@@ -4,9 +4,10 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
-import { COLORS, SPACING } from '../../src/constants/theme';
+import { COLORS, SPACING, TOUCH } from '../../src/constants/theme';
 import { animeAPI, Anime } from '../../src/lib/supabase';
 import AnimeCard from '../../src/components/ui/AnimeCard';
+import { haptic } from '../../src/lib/haptics';
 
 export default function GenreBrowseScreen() {
   const { name } = useLocalSearchParams();
@@ -35,6 +36,7 @@ export default function GenreBrowseScreen() {
   });
 
   const handleCardPress = useCallback((id: string) => {
+    haptic.selection();
     router.push(`/anime/${id}`);
   }, [router]);
 
@@ -52,7 +54,17 @@ export default function GenreBrowseScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          hitSlop={TOUCH.hitSlop}
+          activeOpacity={0.7}
+          onPress={() => {
+            haptic.selection();
+            router.back();
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
           <Ionicons name="chevron-back" size={22} color={COLORS.text} />
         </TouchableOpacity>
         <View>
@@ -66,7 +78,9 @@ export default function GenreBrowseScreen() {
         <ActivityIndicator color={COLORS.neon} style={{ marginTop: SPACING.xl }} />
       ) : anime.length === 0 ? (
         <View style={styles.empty}>
+          <Ionicons name="film-outline" size={48} color={COLORS.textMuted} />
           <Text style={styles.emptyText}>No anime found for {genre}</Text>
+          <Text style={styles.emptySub}>Check back later or browse other genres</Text>
         </View>
       ) : (
         <FlatList
@@ -74,7 +88,7 @@ export default function GenreBrowseScreen() {
           data={anime}
           keyExtractor={keyExtractor}
           numColumns={numColumns}
-          contentContainerStyle={styles.grid}
+          contentContainerStyle={[styles.grid, { paddingBottom: insets.bottom + 100 }]}
           columnWrapperStyle={styles.row}
           renderItem={renderItem}
           showsVerticalScrollIndicator={false}
@@ -87,12 +101,13 @@ export default function GenreBrowseScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
   header: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, padding: SPACING.md },
-  backBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border },
+  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border },
   headerSub: { fontSize: 10, color: COLORS.neon, letterSpacing: 2, fontWeight: '700' },
   headerTitle: { fontSize: 22, color: COLORS.text, fontWeight: '900' },
   count: { marginLeft: 'auto', fontSize: 12, color: COLORS.textMuted },
   grid: { padding: SPACING.sm },
   row: { gap: SPACING.sm, marginBottom: SPACING.sm },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: SPACING.sm },
-  emptyText: { fontSize: 13, color: COLORS.textMuted },
+  emptyText: { fontSize: 13, color: COLORS.textSub, fontWeight: '600' },
+  emptySub: { fontSize: 12, color: COLORS.textMuted },
 });

@@ -20,17 +20,18 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../src/constants/theme';
 import { useAuth } from '../src/context/AuthContext';
 import { supabase, SubscriptionPlan } from '../src/lib/supabase';
 import { usePlans, formatPrice, formatPeriod } from '../src/hooks/usePlans';
 import RazorpayCheckout, { RazorpayPaymentResult } from '../src/components/ui/RazorpayCheckout';
 import PlanCard from '../src/components/subscription/PlanCard';
+import { haptic } from '../src/lib/haptics';
 
 const PERKS = [
   { icon: 'film-outline',     text: 'All premium anime episodes unlocked' },
   { icon: 'ban-outline',      text: 'Completely ad-free streaming' },
-  { icon: 'tv-outline',       text: '4K Ultra HD + HDR quality' },
+  { icon: 'tv-outline',       text: '1080p Full HD quality' },
   { icon: 'download-outline', text: 'Unlimited offline downloads' },
   { icon: 'people-outline',   text: 'Watch on 2 devices at once' },
   { icon: 'server-outline',   text: 'Multi-server ultra-fast streaming' },
@@ -154,7 +155,7 @@ export default function PremiumUpgradeScreen() {
 
       Alert.alert(
         '🎉 Welcome to Premium!',
-        `Your ${activePlan?.display_name} subscription is now active. Enjoy unrestricted 4K anime!`,
+        `Your ${activePlan?.display_name} subscription is now active. Enjoy unrestricted 1080p Full HD anime!`,
         [{ text: 'Start Watching', onPress: () => router.back() }],
       );
     } catch {
@@ -264,8 +265,14 @@ export default function PremiumUpgradeScreen() {
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.closeBtn}
-            onPress={() => router.back()}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            onPress={() => {
+              haptic.light();
+              router.back();
+            }}
+            hitSlop={TOUCH.hitSlop}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel="Close premium upgrade"
           >
             <Ionicons name="close" size={22} color={COLORS.text} />
           </TouchableOpacity>
@@ -273,7 +280,7 @@ export default function PremiumUpgradeScreen() {
 
         {/* Hero Banner */}
         <LinearGradient
-          colors={['rgba(255, 214, 0, 0.16)', 'rgba(191, 95, 255, 0.08)', 'transparent']}
+          colors={['rgba(255, 184, 0, 0.18)', 'rgba(255, 43, 60, 0.08)', 'transparent']}
           style={styles.hero}
         >
           <View style={styles.crownWrap}>
@@ -310,7 +317,10 @@ export default function PremiumUpgradeScreen() {
                 plan={plan}
                 isSelected={isSelected}
                 isCurrent={user?.subscription_type === 'premium'}
-                onSelect={() => setSelectedPlan(plan)}
+                onSelect={() => {
+                  haptic.selection();
+                  setSelectedPlan(plan);
+                }}
                 monthlyReferencePricePaise={monthlyPlan?.price_paise ?? 9900}
               />
             );
@@ -320,7 +330,10 @@ export default function PremiumUpgradeScreen() {
         {/* Upgrade CTA */}
         <TouchableOpacity
           style={[styles.ctaBtn, (loading || checkingStatus) && { opacity: 0.7 }]}
-          onPress={handleUpgrade}
+          onPress={() => {
+            haptic.medium();
+            handleUpgrade();
+          }}
           disabled={loading || checkingStatus || !activePlan}
           activeOpacity={0.88}
         >
@@ -349,7 +362,10 @@ export default function PremiumUpgradeScreen() {
         {/* Full Comparison Link */}
         <TouchableOpacity
           style={styles.compareLink}
-          onPress={() => router.push('/plans')}
+          onPress={() => {
+            haptic.selection();
+            router.push('/plans');
+          }}
           activeOpacity={0.8}
         >
           <Text style={styles.compareLinkText}>View Full Feature Table & FAQs →</Text>
@@ -386,9 +402,9 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.sm,
   },
   closeBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: COLORS.bgCard,
     alignItems: 'center',
     justifyContent: 'center',
@@ -437,7 +453,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bgCard,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
-    borderColor: 'rgba(191, 95, 255, 0.2)',
+    borderColor: 'rgba(255, 184, 0, 0.25)',
     padding: SPACING.md,
     marginBottom: SPACING.md,
     gap: SPACING.sm,

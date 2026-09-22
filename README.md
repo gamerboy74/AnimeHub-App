@@ -12,7 +12,7 @@
   
   <br/><br/>
 
-  <p><strong>AnimeHub Mobile</strong> — A production-ready, full-featured anime streaming and community app built with React Native & Expo SDK 52.<br/>
+  <p><strong>AnimeHub</strong> — A production-ready, full-featured anime streaming and community app built with React Native & Expo SDK 52.<br/>
   Stream episodes, download HLS video offline, sync watch progress across devices, manage premium subscriptions, and engage with community requests & reviews.</p>
 </div>
 

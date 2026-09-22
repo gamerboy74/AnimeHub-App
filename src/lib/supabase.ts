@@ -140,6 +140,8 @@ export type PlanFeature = {
 
 // In-memory cache to prevent redundant database queries for static mapping
 let malIdMapCache: Map<number, string> | null = null;
+let malIdMapCacheTs = 0;
+const MAL_MAP_TTL_MS = 10 * 60 * 1000; // 10-minute TTL
 
 export const plansAPI = {
   /** Fetch all active plans + feature rows in one round trip.
@@ -220,27 +222,20 @@ export const animeAPI = {
 
 
   search: async (query: string) => {
-    // 1. Query the raw 'anime' table first to match against English/Romaji/Japanese titles
-    const { data: matchedAnime, error: matchError } = await supabase
-      .from('anime')
-      .select('id')
-      .or(`title.ilike.%${query}%,title_english.ilike.%${query}%,title_romaji.ilike.%${query}%`)
-      .limit(30);
-
-    if (matchError) {
-      return { data: [], error: matchError };
-    }
-
-    if (!matchedAnime || matchedAnime.length === 0) {
-      return { data: [], error: null };
-    }
-
-    // 2. Fetch stats for these matched IDs from the 'anime_with_stats' view
-    const matchedIds = matchedAnime.map(a => a.id);
+    // IMPORTANT: anime_with_stats view only exposes these title columns:
+    //   title, title_japanese — NOT title_english or title_romaji.
+    // Using a non-existent column in .or() causes a 400 that returns nothing.
+    // description is also available in the view for keyword/synopsis searches.
     return supabase
       .from('anime_with_stats')
       .select('id, title, poster_url, age_rating, type, year, user_rating_avg, premium_episode_count')
-      .in('id', matchedIds);
+      .or(
+        `title.ilike.%${query}%,` +
+        `title_japanese.ilike.%${query}%,` +
+        `description.ilike.%${query}%`
+      )
+      .order('user_rating_avg', { ascending: false, nullsFirst: false })
+      .limit(40);
   },
 
   getTrending: (limit = 10) => {
@@ -267,7 +262,7 @@ export const animeAPI = {
 
   /** Returns a Map<mal_id, supabase_uuid> for navigation from external APIs */
   getMalIdMap: async (): Promise<Map<number, string>> => {
-    if (malIdMapCache) {
+    if (malIdMapCache && Date.now() - malIdMapCacheTs < MAL_MAP_TTL_MS) {
       return malIdMapCache;
     }
     const { data } = await supabase
@@ -276,6 +271,7 @@ export const animeAPI = {
       .not('mal_id', 'is', null);
     const map = new Map<number, string>();
     (data ?? []).forEach((r: { id: string; mal_id: number }) => map.set(r.mal_id, r.id));
+    malIdMapCacheTs = Date.now();
     malIdMapCache = map;
     return map;
   },
@@ -378,8 +374,14 @@ export const userAPI = {
     try {
       if (!avatarUrl) return;
 
-      // Skip if the old avatar URL is an external placeholder image
-      if (avatarUrl.includes('images.unsplash.com') || avatarUrl.includes('readdy.ai')) {
+      // Skip if the old avatar URL is an external placeholder image or CDN preset
+      if (
+        avatarUrl.includes('images.unsplash.com') ||
+        avatarUrl.includes('readdy.ai') ||
+        avatarUrl.includes('s4.anilist.co') ||
+        avatarUrl.includes('anilistcdn') ||
+        avatarUrl.includes('dicebear.com')
+      ) {
         return;
       }
 
@@ -424,7 +426,16 @@ export const userAPI = {
     supabase.from('user_watchlist').delete().eq('user_id', userId).eq('anime_id', animeId),
 
   getProgress: (userId: string) =>
-    supabase.from('user_watch_progress_detailed').select('*').eq('user_id', userId).order('last_watched', { ascending: false }),
+    supabase
+      .from('user_watch_progress_detailed')
+      .select(
+        'anime_id, episode_id, episode_number, episode_title, anime_title, ' +
+        'thumbnail_url, poster_url, progress_seconds, episode_duration, ' +
+        'progress_percentage, is_completed, total_episodes, last_watched'
+      )
+      .eq('user_id', userId)
+      .order('last_watched', { ascending: false })
+      .limit(50), // Only the 50 most recent — enough for all UI surfaces
 
   getProgressLight: (userId: string) =>
     supabase.from('user_watch_progress_detailed')
@@ -510,6 +521,92 @@ export const userAPI = {
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(20),
+
+  /**
+   * Check whether a username is valid and available (not taken by another user).
+   * Used for real-time validation in signup and profile editing.
+   */
+  checkUsernameAvailable: async (username: string): Promise<{ available: boolean; reason?: string }> => {
+    const clean = username.trim().toLowerCase();
+    if (!clean) {
+      return { available: false, reason: 'Username cannot be empty' };
+    }
+    if (clean.length < 3) {
+      return { available: false, reason: 'Username must be at least 3 characters' };
+    }
+    if (clean.length > 20) {
+      return { available: false, reason: 'Username cannot exceed 20 characters' };
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(clean)) {
+      return { available: false, reason: 'Only letters, numbers, and underscores allowed' };
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('id')
+        .ilike('username', clean)
+        .maybeSingle();
+
+      if (error && error.code !== 'PGRST116') {
+        return { available: false, reason: 'Unable to verify username' };
+      }
+
+      if (data) {
+        return { available: false, reason: 'Username is already taken' };
+      }
+
+      return { available: true };
+    } catch {
+      return { available: false, reason: 'Network error checking username' };
+    }
+  },
+
+  /**
+   * Check whether an email is already registered and if it has a password set.
+   * Enables targeted feedback (e.g. telling Google OAuth users "Password not set").
+   */
+  checkEmailAuthStatus: async (email: string): Promise<{ exists: boolean; hasPassword: boolean; provider?: string }> => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) return { exists: false, hasPassword: true };
+
+    // 1. Try DB RPC check_user_auth_status if installed
+    try {
+      const { data, error } = await supabase.rpc('check_user_auth_status', {
+        lookup_email: cleanEmail,
+      });
+      if (!error && data && data.exists !== undefined) {
+        return {
+          exists: Boolean(data.exists),
+          hasPassword: Boolean(data.has_password),
+          provider: data.providers?.[0] || 'email',
+        };
+      }
+    } catch {}
+
+    // 2. Fallback: inspect public.users
+    try {
+      const { data: userRow, error } = await supabase
+        .from('users')
+        .select('id, username, avatar_url')
+        .ilike('email', cleanEmail)
+        .maybeSingle();
+
+      if (!error && userRow) {
+        const isGoogle = Boolean(
+          userRow.avatar_url?.includes('googleusercontent.com') ||
+          (userRow.username && /_[a-f0-9]{6}$/i.test(userRow.username))
+        );
+        return {
+          exists: true,
+          hasPassword: !isGoogle,
+          provider: isGoogle ? 'google' : 'email',
+        };
+      }
+    } catch {}
+
+    return { exists: false, hasPassword: true };
+  },
 };
 
 export type AnimeRequest = {

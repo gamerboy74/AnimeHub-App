@@ -5,9 +5,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Image } from 'expo-image';
 import Animated, { FadeInDown, FadeOutLeft, Layout } from 'react-native-reanimated';
-import { COLORS, SPACING, RADIUS, FONTS } from '../src/constants/theme';
+import { COLORS, SPACING, RADIUS, FONTS, TOUCH } from '../src/constants/theme';
 import { userAPI, Notification, supabase } from '../src/lib/supabase';
 import { useAuth } from '../src/context/AuthContext';
+import { haptic } from '../src/lib/haptics';
 
 function formatRelativeTime(dateString: string): string {
   const now = new Date();
@@ -361,7 +362,17 @@ export default function NotificationsScreen() {
 
       {/* Clean Clean Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() => {
+            haptic.selection();
+            router.back();
+          }}
+          activeOpacity={0.7}
+          hitSlop={TOUCH.hitSlop}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <Ionicons name="chevron-back" size={20} color={COLORS.text} />
         </TouchableOpacity>
         
@@ -374,12 +385,32 @@ export default function NotificationsScreen() {
 
         <View style={styles.headerActions}>
           {unreadCount > 0 && (
-            <TouchableOpacity style={styles.headerActionBtn} onPress={handleMarkAllRead} activeOpacity={0.7}>
+            <TouchableOpacity
+              style={styles.headerActionBtn}
+              onPress={() => {
+                haptic.selection();
+                handleMarkAllRead();
+              }}
+              activeOpacity={0.7}
+              hitSlop={TOUCH.hitSlop}
+              accessibilityRole="button"
+              accessibilityLabel="Mark all as read"
+            >
               <Ionicons name="checkmark-done" size={18} color={COLORS.neon} />
             </TouchableOpacity>
           )}
           {notifs.length > 0 && (
-            <TouchableOpacity style={styles.headerActionBtn} onPress={handleClearAll} activeOpacity={0.7}>
+            <TouchableOpacity
+              style={styles.headerActionBtn}
+              onPress={() => {
+                haptic.selection();
+                handleClearAll();
+              }}
+              activeOpacity={0.7}
+              hitSlop={TOUCH.hitSlop}
+              accessibilityRole="button"
+              accessibilityLabel="Clear all notifications"
+            >
               <Ionicons name="trash-outline" size={18} color={COLORS.textMuted} />
             </TouchableOpacity>
           )}
@@ -540,14 +571,14 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.03)',
   },
   backBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#0E0E1A',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   titleWrap: {
     flex: 1,
@@ -571,10 +602,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   headerActionBtn: {
-    width: 32,
-    height: 32,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
   },
 
   // Minimal filters capsules
@@ -646,8 +679,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   notifCardUnread: {
-    borderColor: 'rgba(191,95,255,0.12)',
-    backgroundColor: '#0F0E1E',
+    borderColor: 'rgba(255,43,60,0.22)',
+    backgroundColor: '#12111A',
   },
   notifMainContent: {
     flex: 1,

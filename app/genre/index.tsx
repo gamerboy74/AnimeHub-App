@@ -5,10 +5,11 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../../src/constants/theme';
 import { supabase } from '../../src/lib/supabase';
 import { useQuery } from '@tanstack/react-query';
 import { ALL_GENRES } from '../../src/constants/genres';
+import { haptic } from '../../src/lib/haptics';
 
 export default function AllGenresScreen() {
   const router = useRouter();
@@ -57,7 +58,17 @@ export default function AllGenresScreen() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() => {
+            haptic.selection();
+            router.back();
+          }}
+          hitSlop={TOUCH.hitSlop}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <Ionicons name="chevron-back" size={22} color={COLORS.text} />
         </TouchableOpacity>
         <View>
@@ -67,13 +78,17 @@ export default function AllGenresScreen() {
         <Text style={styles.headerCount}>{ALL_GENRES.length} genres</Text>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.grid}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={[styles.grid, { paddingBottom: insets.bottom + 100 }]}>
         {ALL_GENRES.map((genre) => (
           <TouchableOpacity
             key={genre.name}
             style={[styles.card, { width: CARD_W }]}
-            onPress={() => router.push(`/genre/${genre.name}`)}
+            onPress={() => {
+              haptic.selection();
+              router.push(`/genre/${genre.name}`);
+            }}
             activeOpacity={0.82}
+            accessibilityRole="button"
           >
             {/* Anime poster background */}
             {genreImages[genre.name] ? (
@@ -94,12 +109,11 @@ export default function AllGenresScreen() {
             {/* Tinted gradient from image midpoint to dark bottom */}
             <LinearGradient
               colors={genre.grad}
-              style={StyleSheet.absoluteFill}
+              style={[StyleSheet.absoluteFill, { opacity: 0.82 }]}
             />
 
             {/* Content */}
             <View style={styles.cardContent}>
-              <Text style={styles.genreIcon}>{genre.icon}</Text>
               <Text style={[styles.genreName, { color: genre.color }]}>
                 {genre.name.toUpperCase()}
               </Text>
@@ -123,10 +137,10 @@ const styles = StyleSheet.create({
     padding: SPACING.md, paddingBottom: SPACING.sm,
   },
   backBtn: {
-    width: 38, height: 38, borderRadius: 19,
+    width: 40, height: 40, borderRadius: 20,
     backgroundColor: 'rgba(25,25,29,0.8)',
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
+    borderWidth: 1, borderColor: COLORS.borderNeutral,
   },
   headerSub: { fontSize: 10, color: COLORS.neon, letterSpacing: 2, fontWeight: '700' },
   headerTitle: { fontSize: 22, color: COLORS.text, fontWeight: '900', letterSpacing: -0.5 },
@@ -134,28 +148,22 @@ const styles = StyleSheet.create({
 
   grid: {
     flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm,
-    padding: SPACING.md, paddingTop: SPACING.sm, paddingBottom: 100,
+    padding: SPACING.md, paddingTop: SPACING.sm,
   },
   card: {
     height: 120,
     borderRadius: RADIUS.lg, overflow: 'hidden',
-    borderWidth: 1, borderColor: 'rgba(189,157,255,0.06)',
+    borderWidth: 1, borderColor: COLORS.borderNeutral,
     justifyContent: 'flex-end',
   },
   dim: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.44)',
+    backgroundColor: 'rgba(0,0,0,0.20)',
   },
-  cardContent: { padding: 12, gap: 3 },
-  genreIcon: {
-    fontSize: 24,
-    textShadowColor: 'rgba(0,0,0,0.8)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
+  cardContent: { padding: 14 },
   genreName: {
-    fontSize: 12, fontWeight: '900', letterSpacing: 1.5,
-    textShadowColor: 'rgba(0,0,0,0.9)',
+    fontSize: 13, fontWeight: '900', letterSpacing: 1.5,
+    textShadowColor: 'rgba(0,0,0,0.95)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 6,
   },

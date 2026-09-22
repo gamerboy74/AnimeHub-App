@@ -6,11 +6,12 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
-import { COLORS, SPACING, RADIUS } from '../../../src/constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../../../src/constants/theme';
 import { Episode } from '../../../src/lib/supabase';
 import { useAuth } from '../../../src/context/AuthContext';
 import { useEpisodes, useAnimeWatchProgress } from '../../../src/hooks/useQueries';
 import { getAllDownloads } from '../../../src/hooks/useHlsDownloader';
+import { haptic } from '../../../src/lib/haptics';
 
 // How many episodes per range chunk (e.g. 1-50, 51-100)
 const RANGE_SIZE = 50;
@@ -182,7 +183,17 @@ export default function EpisodesListScreen() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+        <TouchableOpacity
+          onPress={() => {
+            haptic.selection();
+            router.back();
+          }}
+          style={styles.backBtn}
+          hitSlop={TOUCH.hitSlop}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
           <Ionicons name="chevron-back" size={22} color={COLORS.text} />
         </TouchableOpacity>
         <View style={styles.headerContent}>
@@ -204,7 +215,14 @@ export default function EpisodesListScreen() {
           <TouchableOpacity
             key={f}
             style={[styles.filterChip, filter === f && styles.filterChipActive]}
-            onPress={() => { setFilter(f); setActiveRangeIndex(0); listRef.current?.scrollToOffset({ offset: 0, animated: false }); }}
+            onPress={() => {
+              haptic.selection();
+              setFilter(f);
+              setActiveRangeIndex(0);
+              listRef.current?.scrollToOffset({ offset: 0, animated: false });
+            }}
+            activeOpacity={0.75}
+            accessibilityRole="button"
           >
             <Text style={[styles.filterText, filter === f && styles.filterTextActive]}>
               {f.toUpperCase()}
@@ -237,7 +255,12 @@ export default function EpisodesListScreen() {
                     isActive && styles.rangeChipActive,
                     allWatched && !isActive && styles.rangeChipWatched,
                   ]}
-                  onPress={() => handleRangeChange(idx)}
+                  onPress={() => {
+                    haptic.selection();
+                    handleRangeChange(idx);
+                  }}
+                  activeOpacity={0.75}
+                  accessibilityRole="button"
                 >
                   {allWatched && !isActive && (
                     <Ionicons name="checkmark" size={10} color={COLORS.success} style={{ marginRight: 3 }} />
@@ -402,7 +425,7 @@ const styles = StyleSheet.create({
   },
   headerContent: { flex: 1 },
   backBtn: {
-    width: 38, height: 38, borderRadius: 19,
+    width: 40, height: 40, borderRadius: 20,
     backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: COLORS.border,
   },
@@ -427,7 +450,7 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.xl, borderWidth: 1, borderColor: COLORS.border,
     backgroundColor: COLORS.bgCard,
   },
-  filterChipActive: { borderColor: COLORS.neon, backgroundColor: 'rgba(191,95,255,0.15)' },
+  filterChipActive: { borderColor: COLORS.neon, backgroundColor: 'rgba(255,43,60,0.15)' },
   filterText: { fontSize: 11, color: COLORS.textMuted, fontWeight: '700', letterSpacing: 1 },
   filterTextActive: { color: COLORS.neon },
   episodeCount: { fontSize: 12, color: COLORS.textMuted, marginLeft: 'auto' },
@@ -456,7 +479,7 @@ const styles = StyleSheet.create({
   },
   rangeChipActive: {
     borderColor: COLORS.neon,
-    backgroundColor: 'rgba(191,95,255,0.18)',
+    backgroundColor: 'rgba(255,43,60,0.18)',
   },
   rangeChipWatched: {
     borderColor: 'rgba(0,245,180,0.35)',
@@ -504,7 +527,7 @@ const styles = StyleSheet.create({
   epLeft: {},
   epNumBox: {
     width: 40, height: 40, borderRadius: RADIUS.sm,
-    backgroundColor: 'rgba(191,95,255,0.1)',
+    backgroundColor: 'rgba(255,43,60,0.1)',
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: COLORS.border,
     overflow: 'hidden',
@@ -522,7 +545,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 0, left: 0, right: 0,
     height: 3,
-    backgroundColor: 'rgba(191,95,255,0.2)',
+    backgroundColor: 'rgba(255,43,60,0.2)',
   },
   epProgressFill: {
     height: 3,

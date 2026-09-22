@@ -11,8 +11,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { supabase } from '../../lib/supabase';
-import { stopOtherStreams } from '../../lib/streamManager';
+import { useAuth } from '../../context/AuthContext';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../screens/settings.styles';
 
@@ -24,6 +23,7 @@ interface LogOutOthersModalProps {
 
 export default function LogOutOthersModal({ visible, onClose, t }: LogOutOthersModalProps) {
   const insets = useSafeAreaInsets();
+  const { logOutOtherSessions } = useAuth();
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,24 +33,19 @@ export default function LogOutOthersModal({ visible, onClose, t }: LogOutOthersM
       setLoading(true);
       setError(null);
 
-      // Call supabase to sign out other sessions
-      const { error } = await supabase.auth.signOut({ scope: 'others' });
-      if (error) throw error;
-
-      // Also clean up any active streams registered by other devices
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user?.id) {
-        await stopOtherStreams(user.id);
-      }
+      // Securely revokes all other sessions server-side and broadcasts instant logout to other devices,
+      // while keeping the current device active and authenticated.
+      const res = await logOutOtherSessions();
+      if (res?.error) throw res.error;
 
       setSuccess(true);
       setTimeout(() => {
         setSuccess(false);
         onClose();
-      }, 2000);
+      }, 1800);
     } catch (err: any) {
       console.error('[LogOutOthers] Error logging out other sessions:', err);
-      setError(err.message || 'Failed to log out other devices. Please try again.');
+      setError(err?.message || 'Failed to log out other devices. Please try again.');
     } finally {
       setLoading(false);
     }

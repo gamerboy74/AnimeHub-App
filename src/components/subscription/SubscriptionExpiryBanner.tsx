@@ -3,8 +3,9 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { COLORS, SPACING, RADIUS } from '../../constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
+import { haptic } from '../../lib/haptics';
 
 export default function SubscriptionExpiryBanner() {
   const router = useRouter();
@@ -34,7 +35,7 @@ export default function SubscriptionExpiryBanner() {
       daysLeft,
       title: isTomorrow ? 'Premium Expires Tomorrow' : 'Premium Expires in 2 Days',
       subtitle: isTomorrow
-        ? 'Renew today to keep 2-device 4K streaming and downloads.'
+        ? 'Renew today to keep 2-device 1080p streaming and downloads.'
         : 'Renew your subscription to prevent any interruption.',
       urgent: isTomorrow,
     };
@@ -48,7 +49,7 @@ export default function SubscriptionExpiryBanner() {
         colors={
           expiryInfo.urgent
             ? ['rgba(255, 45, 120, 0.16)', 'rgba(255, 82, 82, 0.08)']
-            : ['rgba(255, 214, 0, 0.14)', 'rgba(191, 95, 255, 0.06)']
+            : ['rgba(255, 214, 0, 0.14)', 'rgba(255, 43, 60, 0.06)']
         }
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 0 }}
@@ -67,7 +68,7 @@ export default function SubscriptionExpiryBanner() {
             <Ionicons
               name={expiryInfo.urgent ? 'alert-circle' : 'time-outline'}
               size={18}
-              color={expiryInfo.urgent ? '#FF2D78' : COLORS.neonGold}
+              color={expiryInfo.urgent ? COLORS.neonPink : COLORS.neonGold}
             />
           </View>
         </View>
@@ -80,16 +81,25 @@ export default function SubscriptionExpiryBanner() {
         <View style={styles.actionCol}>
           <TouchableOpacity
             style={[styles.renewBtn, expiryInfo.urgent && styles.urgentBtn]}
-            onPress={() => router.push('/plans')}
+            onPress={() => {
+              haptic.selection();
+              router.push('/plans');
+            }}
             activeOpacity={0.85}
+            accessibilityRole="button"
           >
-            <Text style={styles.renewBtnText}>Renew</Text>
+            <Text style={[styles.renewBtnText, expiryInfo.urgent && styles.urgentBtnText]}>Renew</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.closeBtn}
-            onPress={() => setDismissed(true)}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            onPress={() => {
+              haptic.light();
+              setDismissed(true);
+            }}
+            hitSlop={TOUCH.hitSlop}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss banner"
           >
             <Ionicons name="close" size={16} color={COLORS.textMuted} />
           </TouchableOpacity>
@@ -169,6 +179,9 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#000',
     letterSpacing: 0.5,
+  },
+  urgentBtnText: {
+    color: '#FFFFFF',
   },
   closeBtn: {
     padding: 3,

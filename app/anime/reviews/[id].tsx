@@ -6,9 +6,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { COLORS, SPACING, RADIUS } from '../../../src/constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../../../src/constants/theme';
 import { reviewAPI } from '../../../src/lib/supabase';
 import { useAuth } from '../../../src/context/AuthContext';
+import { haptic } from '../../../src/lib/haptics';
 
 export default function ReviewsScreen() {
   const params = useLocalSearchParams();
@@ -51,6 +52,7 @@ export default function ReviewsScreen() {
     }
     
     setSubmitting(true);
+    haptic.medium();
     try {
       await reviewAPI.upsert(user.id, animeId, rating * 2, text, isSpoiler);
       const { data } = await reviewAPI.getByAnime(animeId);
@@ -84,7 +86,17 @@ export default function ReviewsScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          hitSlop={TOUCH.hitSlop}
+          activeOpacity={0.7}
+          onPress={() => {
+            haptic.selection();
+            router.back();
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
           <Ionicons name="chevron-back" size={22} color={COLORS.text} />
         </TouchableOpacity>
         <View style={styles.headerContent}>
@@ -99,7 +111,16 @@ export default function ReviewsScreen() {
           <Text style={styles.writeLabel}>YOUR REVIEW</Text>
           <View style={styles.starsRow}>
             {[1, 2, 3, 4, 5].map(i => (
-              <TouchableOpacity key={i} onPress={() => setRating(i)}>
+              <TouchableOpacity
+                key={i}
+                hitSlop={TOUCH.hitSlop}
+                onPress={() => {
+                  haptic.selection();
+                  setRating(i);
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`Rate ${i} stars`}
+              >
                 <Ionicons name={i <= rating ? 'star' : 'star-outline'} size={28} color={COLORS.neonGold} />
               </TouchableOpacity>
             ))}
@@ -117,7 +138,11 @@ export default function ReviewsScreen() {
           <View style={styles.writeFooter}>
             <TouchableOpacity
               style={[styles.spoilerToggle, isSpoiler && styles.spoilerToggleActive]}
-              onPress={() => setIsSpoiler(!isSpoiler)}
+              onPress={() => {
+                haptic.selection();
+                setIsSpoiler(!isSpoiler);
+              }}
+              accessibilityRole="button"
             >
               <Ionicons name={isSpoiler ? 'warning' : 'warning-outline'} size={14} color={isSpoiler ? COLORS.neonPink : COLORS.textMuted} />
               <Text style={[styles.spoilerText, isSpoiler && { color: COLORS.neonPink }]}>SPOILER</Text>
@@ -126,8 +151,10 @@ export default function ReviewsScreen() {
               style={[styles.submitBtn, submitting && styles.submitBtnDisabled]} 
               onPress={handleSubmit} 
               disabled={submitting}
+              activeOpacity={0.8}
+              accessibilityRole="button"
             >
-              {submitting ? <ActivityIndicator color={COLORS.bg} size="small" /> : <Text style={styles.submitText}>SUBMIT</Text>}
+              {submitting ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={styles.submitText}>SUBMIT</Text>}
             </TouchableOpacity>
           </View>
         </View>
@@ -197,7 +224,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
   header: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, padding: SPACING.md },
   headerContent: { flex: 1 },
-  backBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border },
+  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border },
   headerSub: { fontSize: 10, color: COLORS.neon, letterSpacing: 2, fontWeight: '700' },
   headerTitle: { fontSize: 18, color: COLORS.text, fontWeight: '800' },
 
@@ -212,12 +239,12 @@ const styles = StyleSheet.create({
   spoilerText: { fontSize: 11, color: COLORS.textMuted, fontWeight: '700', letterSpacing: 1 },
   submitBtn: { backgroundColor: COLORS.neon, paddingVertical: 8, paddingHorizontal: SPACING.lg, borderRadius: RADIUS.sm },
   submitBtnDisabled: { opacity: 0.6 },
-  submitText: { color: COLORS.bg, fontWeight: '800', fontSize: 12, letterSpacing: 1 },
+  submitText: { color: '#FFFFFF', fontWeight: '800', fontSize: 12, letterSpacing: 1 },
 
   list: { padding: SPACING.md, gap: SPACING.md },
   reviewCard: { backgroundColor: COLORS.bgCard, borderRadius: RADIUS.md, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.border },
   reviewTop: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.xs },
-  avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(191,95,255,0.2)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.neon },
+  avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(255,43,60,0.15)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.neon },
   avatarText: { fontSize: 13, color: COLORS.neon, fontWeight: '700' },
   reviewMeta: { flex: 1 },
   reviewUser: { fontSize: 13, color: COLORS.text, fontWeight: '600' },

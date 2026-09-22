@@ -10,11 +10,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../../src/constants/theme';
 import { userAPI } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
 import AnimeCard from '../../src/components/ui/AnimeCard';
 import { BlurView } from 'expo-blur';
+import { haptic } from '../../src/lib/haptics';
 
 type LibraryTab = 'watchlist' | 'completed' | 'dropped';
 
@@ -34,6 +35,7 @@ export default function LibraryScreen() {
 
   const [activeTab, setActiveTab] = useState<LibraryTab>('watchlist');
   const [refreshing, setRefreshing] = useState(false);
+  const mainScrollRef = useRef<ScrollView>(null);
   const scrollRef = useRef<ScrollView>(null);
   const scrollOffset = useRef(0);
   const [sortBy, setSortBy] = useState<'recent' | 'title' | 'rating'>('recent');
@@ -50,7 +52,7 @@ export default function LibraryScreen() {
     setShowSortSheet(true);
   }, []);
 
-  const cardWidth = Math.floor(width * 0.75) + SPACING.md;
+  const cardWidth = Math.floor((width - SPACING.md * 2) * 0.75);
 
   // Cached — shared with Profile and Watchlist screens
   const { data: progressData = [], isLoading: loadingProgress } = useQuery({
@@ -64,7 +66,7 @@ export default function LibraryScreen() {
         Alert.alert('Error', 'Could not load watch history.');
         throw error;
       }
-      return data || [];
+      return (data as any[]) || [];
     },
   });
 
@@ -237,6 +239,7 @@ export default function LibraryScreen() {
   return (
     <View style={styles.container}>
       <ScrollView 
+        ref={mainScrollRef}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.neon} />}
       >
@@ -260,19 +263,29 @@ export default function LibraryScreen() {
               <View style={styles.scrollBtns}>
                 <TouchableOpacity 
                   style={styles.scrollBtn}
+                  hitSlop={TOUCH.hitSlop}
+                  activeOpacity={0.7}
                   onPress={() => {
+                    haptic.light();
                     const newOffset = Math.max(0, scrollOffset.current - cardWidth);
                     scrollRef.current?.scrollTo({ x: newOffset, animated: true });
                   }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Scroll left"
                 >
                   <Ionicons name="chevron-back" size={16} color={COLORS.text} />
                 </TouchableOpacity>
                 <TouchableOpacity 
                   style={styles.scrollBtn}
+                  hitSlop={TOUCH.hitSlop}
+                  activeOpacity={0.7}
                   onPress={() => {
+                    haptic.light();
                     const newOffset = scrollOffset.current + cardWidth;
                     scrollRef.current?.scrollTo({ x: newOffset, animated: true });
                   }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Scroll right"
                 >
                   <Ionicons name="chevron-forward" size={16} color={COLORS.text} />
                 </TouchableOpacity>
@@ -311,7 +324,14 @@ export default function LibraryScreen() {
                 <TouchableOpacity
                   key={t}
                   style={[styles.tabItem, activeTab === t && styles.tabItemActive]}
-                  onPress={() => setActiveTab(t)}
+                  onPress={() => {
+                    haptic.selection();
+                    setActiveTab(t);
+                    // Scroll to top so new tab content is immediately visible
+                    setTimeout(() => mainScrollRef.current?.scrollTo({ y: 0, animated: false }), 50);
+                  }}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: activeTab === t }}
                 >
                   <Text style={[styles.tabText, activeTab === t && styles.tabTextActive]}>
                     {TAB_LABELS[t]}
@@ -331,11 +351,28 @@ export default function LibraryScreen() {
           )}
           
           <View style={styles.filterBar}>
-            <TouchableOpacity style={styles.filterBtn} onPress={handleSortPress}>
+            <TouchableOpacity
+              style={styles.filterBtn}
+              activeOpacity={0.7}
+              onPress={() => {
+                haptic.selection();
+                handleSortPress();
+              }}
+              accessibilityRole="button"
+            >
               <Ionicons name="filter-outline" size={16} color={COLORS.neon} />
               <Text style={styles.filterText}>SORT: {sortBy.toUpperCase()}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.gridBtn} onPress={() => setIsGridView(!isGridView)}>
+            <TouchableOpacity
+              style={styles.gridBtn}
+              hitSlop={TOUCH.hitSlop}
+              activeOpacity={0.7}
+              onPress={() => {
+                haptic.selection();
+                setIsGridView(!isGridView);
+              }}
+              accessibilityRole="button"
+            >
               <Ionicons name={isGridView ? 'list-outline' : 'grid-outline'} size={18} color={COLORS.neon} />
             </TouchableOpacity>
           </View>
@@ -345,17 +382,32 @@ export default function LibraryScreen() {
           ) : tabData.length === 0 ? (
             <View style={styles.emptyGrid}>
               <Ionicons
-                name={activeTab === 'dropped' ? 'pause-circle-outline' : 'cube-outline'}
+                name={
+                  activeTab === 'completed' ? 'checkmark-done-circle-outline' :
+                  activeTab === 'dropped' ? 'pause-circle-outline' : 'cube-outline'
+                }
                 size={48}
                 color={COLORS.textMuted}
               />
               <Text style={styles.emptyGridText}>
-                {activeTab === 'dropped' ? 'NO SHOWS ON HOLD' : `NO DATA IN ${activeTab.toUpperCase()}`}
+                {activeTab === 'completed' ? 'NO COMPLETED ANIME YET' :
+                 activeTab === 'dropped' ? 'NO SHOWS ON HOLD' :
+                 'YOUR WATCHLIST IS EMPTY'}
               </Text>
-              {activeTab === 'dropped' && (
+              {activeTab === 'dropped' ? (
                 <Text style={styles.emptyGridSub}>
                   Series you haven't watched in over 14 days will automatically rest here.
                 </Text>
+              ) : (
+                <TouchableOpacity
+                  style={styles.emptyCtaBtn}
+                  onPress={() => router.push('/(tabs)/explore')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.emptyCtaText}>
+                    {activeTab === 'completed' ? 'FIND MORE TO WATCH →' : 'BROWSE ANIME →'}
+                  </Text>
+                </TouchableOpacity>
               )}
             </View>
           ) : (
@@ -395,10 +447,12 @@ export default function LibraryScreen() {
                   key={opt.id}
                   style={[styles.sortOptionRow, isActive && styles.sortOptionRowActive]}
                   onPress={() => {
+                    haptic.selection();
                     setSortBy(opt.id as any);
                     setShowSortSheet(false);
                   }}
                   activeOpacity={0.8}
+                  accessibilityRole="button"
                 >
                   <View style={[styles.sortIconWrap, isActive && styles.sortIconWrapActive]}>
                     <Ionicons 
@@ -434,10 +488,10 @@ const styles = StyleSheet.create({
   guestTitle: { fontSize: 20, color: COLORS.text, fontWeight: '900', marginTop: SPACING.md, letterSpacing: 2 },
   guestSub: { fontSize: 13, color: COLORS.textMuted, textAlign: 'center', marginTop: SPACING.sm, lineHeight: 20 },
   loginBtn: { marginTop: SPACING.xl, backgroundColor: COLORS.neon, paddingVertical: 12, paddingHorizontal: 32, borderRadius: RADIUS.md },
-  loginBtnText: { color: COLORS.bg, fontWeight: '900', letterSpacing: 1 },
+  loginBtnText: { color: '#FFFFFF', fontWeight: '900', letterSpacing: 1 },
 
   hero: { padding: SPACING.md, marginTop: SPACING.md, position: 'relative' },
-  heroBlob: { position: 'absolute', left: -40, top: -20, width: 120, height: 120, backgroundColor: 'rgba(191,95,255,0.05)', borderRadius: 60, filter: 'blur(40px)' } as any,
+  heroBlob: { position: 'absolute', left: -40, top: -20, width: 120, height: 120, backgroundColor: 'rgba(255,43,60,0.05)', borderRadius: 60, filter: 'blur(40px)' } as any,
   heroTitle: { fontSize: 42, fontWeight: '800', color: COLORS.text, letterSpacing: -1 },
   heroTitleItalic: { color: COLORS.neon, fontStyle: 'italic' },
   heroSub: { fontSize: 13, color: COLORS.textSub, marginTop: 4, maxWidth: '80%' },
@@ -500,15 +554,15 @@ const styles = StyleSheet.create({
   },
   tabItem: { flex: 1, paddingVertical: 10, borderRadius: RADIUS.sm, alignItems: 'center' },
   tabItemActive: { 
-    backgroundColor: '#BD9DFF',
-    shadowColor: '#BD9DFF',
+    backgroundColor: COLORS.neon,
+    shadowColor: COLORS.neon,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
+    shadowOpacity: 0.45,
     shadowRadius: 10,
     elevation: 8,
   },
   tabText: { fontSize: 13, fontWeight: '700', color: COLORS.textSub, letterSpacing: 0.3 },
-  tabTextActive: { color: '#2B1A5C' },
+  tabTextActive: { color: '#FFFFFF', fontWeight: '800' },
 
   filterBar: { flexDirection: 'row', paddingHorizontal: SPACING.md, marginBottom: SPACING.lg, gap: 10 },
   filterBtn: { 
@@ -557,6 +611,21 @@ const styles = StyleSheet.create({
   emptyGrid: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 60, gap: SPACING.md },
   emptyGridText: { fontSize: 11, color: COLORS.textMuted, fontWeight: '800', letterSpacing: 2 },
 
+  emptyCtaBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(255,43,60,0.12)',
+    borderRadius: 100,
+    borderWidth: 1,
+    borderColor: 'rgba(255,43,60,0.35)',
+  },
+  emptyCtaText: {
+    fontSize: 10,
+    color: COLORS.neon,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+  },
+
   // ── Sort modal ───────────────────────────────────────────────────
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)' },
   sortSheet: {
@@ -564,7 +633,7 @@ const styles = StyleSheet.create({
     padding: 24, paddingBottom: 48,
     overflow: 'hidden',
     backgroundColor: 'rgba(10,10,18,0.96)',
-    borderTopWidth: 1, borderColor: 'rgba(191,95,255,0.15)',
+    borderTopWidth: 1, borderColor: 'rgba(255,43,60,0.2)',
   },
   sortHandle: {
     width: 40, height: 4, borderRadius: 2,
@@ -584,14 +653,14 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.05)',
   },
   sortOptionRowActive: {
-    backgroundColor: 'rgba(191,95,255,0.08)',
-    borderColor: 'rgba(191,95,255,0.3)',
+    backgroundColor: 'rgba(255,43,60,0.08)',
+    borderColor: 'rgba(255,43,60,0.3)',
   },
   sortIconWrap: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(191,95,255,0.1)',
+    backgroundColor: 'rgba(255,43,60,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,

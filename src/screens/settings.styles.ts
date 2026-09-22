@@ -9,7 +9,7 @@ export const styles = StyleSheet.create({
   header: {
     flexDirection: 'row', alignItems: 'center', gap: 16,
     paddingHorizontal: 20, paddingBottom: 16,
-    borderBottomWidth: 1, borderBottomColor: 'rgba(189,157,255,0.1)',
+    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)',
   },
   headerBackBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 18, fontWeight: '700', color: COLORS.neon, letterSpacing: -0.5, flex: 1 },
@@ -34,11 +34,11 @@ export const styles = StyleSheet.create({
   identityBadges: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   premiumBadge: {
     paddingHorizontal: 12, paddingVertical: 4,
-    backgroundColor: 'rgba(191,95,255,0.1)',
-    borderRadius: 100, borderWidth: 1, borderColor: 'rgba(191,95,255,0.2)',
+    backgroundColor: 'rgba(255,184,0,0.12)',
+    borderRadius: 100, borderWidth: 1, borderColor: 'rgba(255,184,0,0.35)',
     alignSelf: 'flex-start',
   },
-  premiumBadgeText: { fontSize: 9, fontWeight: '800', color: COLORS.neon, letterSpacing: 2 },
+  premiumBadgeText: { fontSize: 9, fontWeight: '800', color: COLORS.neonGold, letterSpacing: 2 },
   joinedText: { fontSize: 13, color: COLORS.textSub, marginTop: 4 },
 
   freeFeatureList: { gap: 10, marginBottom: 24 },
@@ -48,7 +48,7 @@ export const styles = StyleSheet.create({
   bentoCard: {
     padding: 24, borderRadius: RADIUS.lg,
     backgroundColor: 'rgba(25,25,29,0.4)',
-    borderWidth: 1, borderColor: 'rgba(189,157,255,0.05)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
     marginBottom: 20,
   },
   bentoGlow: {
@@ -74,13 +74,13 @@ export const styles = StyleSheet.create({
   primaryActionText: { color: '#000', fontWeight: '800', fontSize: 14 },
   secondaryAction: {
     paddingVertical: 14, alignItems: 'center',
-    borderRadius: 100, borderWidth: 1, borderColor: 'rgba(189,157,255,0.15)',
+    borderRadius: 100, borderWidth: 1, borderColor: COLORS.borderNeutral,
   },
   secondaryActionText: { color: COLORS.text, fontWeight: '700', fontSize: 14 },
 
   gridRow: { flexDirection: 'row', gap: 20, marginBottom: 20 },
-  localizationCard: { flex: 1, padding: 24, borderRadius: RADIUS.lg, backgroundColor: 'rgba(25,25,29,0.4)', borderWidth: 1, borderColor: 'rgba(189,157,255,0.05)' },
-  halfCard: { flex: 1, padding: 20, borderRadius: 16, backgroundColor: 'rgba(25,25,29,0.4)', borderWidth: 1, borderColor: 'rgba(189,157,255,0.05)' },
+  localizationCard: { flex: 1, padding: 24, borderRadius: RADIUS.lg, backgroundColor: 'rgba(25,25,29,0.4)', borderWidth: 1, borderColor: COLORS.borderNeutral },
+  halfCard: { flex: 1, padding: 20, borderRadius: 16, backgroundColor: 'rgba(25,25,29,0.4)', borderWidth: 1, borderColor: COLORS.borderNeutral },
 
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 20 },
   cardTitle: { fontSize: 18, fontWeight: '800', color: COLORS.text },
@@ -99,7 +99,7 @@ export const styles = StyleSheet.create({
   paymentCard: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     padding: 16, backgroundColor: 'rgba(25,25,29,0.5)',
-    borderRadius: 12, borderWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
+    borderRadius: 12, borderWidth: 1, borderColor: COLORS.borderNeutral,
   },
   visaBox: {
     width: 48, height: 32, backgroundColor: '#111', borderRadius: 6,
@@ -108,12 +108,12 @@ export const styles = StyleSheet.create({
   visaText: { fontSize: 10, fontWeight: '900', color: COLORS.text, fontStyle: 'italic' },
   cardNum: { fontSize: 14, fontWeight: '700', color: COLORS.text },
   cardExpiry: { fontSize: 8, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 1 },
-  primaryPill: { paddingHorizontal: 8, paddingVertical: 2, backgroundColor: 'rgba(191,95,255,0.2)', borderRadius: 100, alignSelf: 'center' },
+  primaryPill: { paddingHorizontal: 8, paddingVertical: 2, backgroundColor: 'rgba(255,43,60,0.15)', borderRadius: 100, alignSelf: 'center' },
   pillText: { fontSize: 8, fontWeight: '900', color: COLORS.neon },
 
   addPaymentBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
-    paddingVertical: 16, borderStyle: 'dashed', borderWidth: 2, borderColor: 'rgba(189,157,255,0.1)',
+    paddingVertical: 16, borderStyle: 'dashed', borderWidth: 2, borderColor: 'rgba(255,43,60,0.2)',
     borderRadius: 12, marginTop: 4,
   },
   addPaymentText: { fontSize: 12, fontWeight: '700', color: COLORS.textSub },
@@ -142,13 +142,13 @@ export const styles = StyleSheet.create({
   },
   deleteAccountText: { fontSize: 12, fontWeight: '700', color: COLORS.danger, opacity: 0.8 },
   versionText: { textAlign: 'center', fontSize: 10, color: COLORS.textMuted, opacity: 0.5, letterSpacing: 1.5, marginTop: 10 },
-  backBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border },
+  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border },
 
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)' },
   modalSheet: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: '#121214', borderTopLeftRadius: RADIUS.lg, borderTopRightRadius: RADIUS.lg,
-    borderWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
+    borderWidth: 1, borderColor: COLORS.borderNeutral,
     padding: 24, paddingBottom: 40,
   },
   modalHandle: {
@@ -159,15 +159,15 @@ export const styles = StyleSheet.create({
   modalLabel: { fontSize: 11, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8, marginTop: 16 },
   modalInput: {
     backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: RADIUS.md, borderWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
+    borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.borderNeutral,
     color: COLORS.text, paddingHorizontal: 16, paddingVertical: 14, fontSize: 14,
   },
   modalSaveBtn: { marginTop: 24, borderRadius: 100, overflow: 'hidden' },
   modalSaveGradient: { paddingVertical: 15, alignItems: 'center', justifyContent: 'center' },
-  modalSaveText: { color: '#000', fontWeight: '800', fontSize: 14 },
+  modalSaveText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14 },
   uploadImageBtn: { borderRadius: 100, overflow: 'hidden', marginTop: 8 },
   uploadImageGradient: { paddingVertical: 14, alignItems: 'center', justifyContent: 'center' },
-  uploadImageText: { color: '#000', fontWeight: '800', fontSize: 14 },
+  uploadImageText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14 },
   modalDivider: { flexDirection: 'row', alignItems: 'center', marginVertical: 20 },
   dividerLine: { flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.06)' },
   dividerText: { marginHorizontal: 16, fontSize: 11, fontWeight: '800', color: COLORS.textMuted },
@@ -326,9 +326,9 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: 'rgba(191, 95, 255, 0.1)',
+    backgroundColor: 'rgba(255, 43, 60, 0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(191, 95, 255, 0.25)',
+    borderColor: 'rgba(255, 43, 60, 0.25)',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 14,

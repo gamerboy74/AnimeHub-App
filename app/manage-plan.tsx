@@ -417,7 +417,7 @@ export default function ManagePlanScreen() {
           {[
             { icon: 'star', text: 'All premium episodes unlocked' },
             { icon: 'ban', text: 'Zero ads, ever' },
-            { icon: 'film', text: 'HD & 4K quality streaming' },
+            { icon: 'film', text: '1080p Full HD streaming' },
             { icon: 'time', text: 'Early access to new episodes' },
             { icon: 'people', text: 'Watch on 2 devices simultaneously' },
           ].map((perk, i) => (
@@ -626,7 +626,7 @@ export default function ManagePlanScreen() {
           <View style={styles.cancelBenefitsCard}>
             <View style={styles.cancelBenefitRow}>
               <Ionicons name="checkmark-circle" size={16} color={COLORS.success} />
-              <Text style={styles.cancelBenefitTxt}>Uninterrupted 1080p/4K streaming until period ends</Text>
+              <Text style={styles.cancelBenefitTxt}>Uninterrupted 1080p Full HD streaming until period ends</Text>
             </View>
             <View style={styles.cancelBenefitRow}>
               <Ionicons name="checkmark-circle" size={16} color={COLORS.success} />

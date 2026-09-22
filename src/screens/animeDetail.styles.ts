@@ -15,10 +15,11 @@ export const styles = StyleSheet.create({
   },
   backBtn: {
     position: 'absolute', left: SPACING.md,
-    width: 38, height: 38, borderRadius: 19,
-    backgroundColor: 'rgba(8,8,16,0.7)',
+    width: 42, height: 42, borderRadius: 21,
+    backgroundColor: 'rgba(8,8,16,0.75)',
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: COLORS.border,
+    zIndex: 10,
   },
   posterRow: {
     position: 'absolute', bottom: -SPACING.xl,
@@ -36,7 +37,7 @@ export const styles = StyleSheet.create({
   metaRow: { flexDirection: 'row', gap: 4, marginTop: SPACING.xs, flexWrap: 'wrap' },
   metaBadge: {
     paddingHorizontal: 7, paddingVertical: 2,
-    backgroundColor: 'rgba(191,95,255,0.12)',
+    backgroundColor: 'rgba(255,43,60,0.1)',
     borderRadius: RADIUS.sm, borderWidth: 1, borderColor: COLORS.border,
   },
   metaBadgeText: { fontSize: 10, color: COLORS.textSub, fontWeight: '600' },
@@ -53,8 +54,8 @@ export const styles = StyleSheet.create({
     gap: SPACING.xs, backgroundColor: COLORS.neon,
     paddingVertical: 13, borderRadius: RADIUS.md,
   },
-  playBigText: { color: COLORS.bg, fontWeight: '800', fontSize: 13, letterSpacing: 1 },
-  playBigSub: { color: COLORS.bg, fontWeight: '500', fontSize: 10, opacity: 0.75, marginTop: 1 },
+  playBigText: { color: '#FFFFFF', fontWeight: '800', fontSize: 13, letterSpacing: 1 },
+  playBigSub: { color: 'rgba(255,255,255,0.85)', fontWeight: '500', fontSize: 10, marginTop: 1 },
   iconActionBtn: {
     width: 48, height: 48,
     backgroundColor: COLORS.bgCard,
@@ -62,7 +63,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: COLORS.border,
   },
-  iconActionBtnActive: { borderColor: COLORS.neon, backgroundColor: 'rgba(191,95,255,0.1)' },
+  iconActionBtnActive: { borderColor: COLORS.neon, backgroundColor: 'rgba(255,43,60,0.15)' },
   iconActionBtnPink: { borderColor: COLORS.neonPink, backgroundColor: 'rgba(255,45,120,0.1)' },
 
   statsStrip: {
@@ -83,8 +84,8 @@ export const styles = StyleSheet.create({
   genreTag: {
     paddingVertical: 5, paddingHorizontal: SPACING.sm,
     borderRadius: RADIUS.xl,
-    backgroundColor: 'rgba(191,95,255,0.1)',
-    borderWidth: 1, borderColor: 'rgba(191,95,255,0.3)',
+    backgroundColor: 'rgba(255,43,60,0.1)',
+    borderWidth: 1, borderColor: 'rgba(255,43,60,0.3)',
   },
   genreTagText: { fontSize: 11, color: COLORS.neon, fontWeight: '600' },
 
@@ -142,7 +143,7 @@ export const styles = StyleSheet.create({
     borderWidth: 1, borderColor: COLORS.neon,
     borderRadius: RADIUS.md, paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.md, marginBottom: SPACING.md,
-    backgroundColor: 'rgba(191,95,255,0.08)',
+    backgroundColor: 'rgba(255,43,60,0.08)',
     alignSelf: 'flex-start',
   },
   writeReviewText: { fontSize: 12, color: COLORS.neon, fontWeight: '700', letterSpacing: 1 },
@@ -163,7 +164,7 @@ export const styles = StyleSheet.create({
   reviewCountLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: '600' },
   seeAllReviewsBtn: {
     flex: 1, height: 44,
-    backgroundColor: 'rgba(191,95,255,0.08)',
+    backgroundColor: 'rgba(255,43,60,0.08)',
     borderRadius: RADIUS.sm,
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: COLORS.neon,
@@ -180,7 +181,7 @@ export const styles = StyleSheet.create({
   reviewHeader: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.xs },
   reviewAvatar: {
     width: 32, height: 32, borderRadius: 16,
-    backgroundColor: 'rgba(191,95,255,0.2)',
+    backgroundColor: 'rgba(255,43,60,0.15)',
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: COLORS.neon,
   },

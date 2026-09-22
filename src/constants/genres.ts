@@ -38,9 +38,9 @@ export const ALL_GENRES: GenreMeta[] = [
     name: 'Fantasy',
     icon: 'sparkles-outline',
     emoji: '🔮',
-    color: '#BF5FFF',
+    color: '#FF4757',
     sub: 'Magic, mythical beasts & lore',
-    grad: ['transparent', 'rgba(191,95,255,0.55)', 'rgba(8,8,16,0.97)'],
+    grad: ['transparent', 'rgba(255,71,87,0.55)', 'rgba(8,8,16,0.97)'],
   },
   {
     name: 'Adventure',

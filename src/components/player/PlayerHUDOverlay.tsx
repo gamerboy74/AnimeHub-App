@@ -1,5 +1,5 @@
-import React, { useRef } from "react";
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from "react-native";
+import React, { useRef, memo } from "react";
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert } from "react-native";
 import { BlurView } from "expo-blur";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -51,7 +51,7 @@ interface PlayerHUDOverlayProps {
   onSeekTo: (seconds: number) => void;
   
   // Settings & popups state
-  qualityLevels: { label: string }[];
+  qualityLevels: { label: string; height?: number; originalIndex?: number; isLocked?: boolean }[];
   subtitleTracks: { id: number; label: string }[];
   activeQualityIndex: number;
   activeSubtitleIndex: number;
@@ -78,7 +78,7 @@ interface PlayerHUDOverlayProps {
   skipLabel: string;
 }
 
-export default function PlayerHUDOverlay({
+function PlayerHUDOverlay({
   showHud,
   isRawVideo,
   useNativePlayerOnly,
@@ -417,28 +417,59 @@ export default function PlayerHUDOverlay({
               <Text style={styles.embedPickerTitle}>Quality</Text>
               {qualityLevels.map((q, i) => {
                 const isActive = i === activeQualityIndex;
+                const isLocked = Boolean(
+                  q.isLocked ||
+                  (!isPremium && (q.height ? q.height > 720 : (parseInt(q.label) > 720 || q.label.includes("1080"))))
+                );
                 return (
                   <TouchableOpacity
                     key={`q-${i}`}
                     style={[
                       styles.embedPickerItem,
                       isActive && styles.embedPickerItemActive,
+                      isLocked && { opacity: 0.75 },
                     ]}
-                    onPress={() => onSelectQuality(i)}
+                    onPress={() => {
+                      if (isLocked) {
+                        Alert.alert(
+                          "Premium Feature",
+                          "1080p Full HD streaming is exclusively available for AnimeHub Premium members. Free tier supports up to 720p HD. Upgrade now to unlock 1080p!",
+                          [
+                            { text: "Cancel", style: "cancel" },
+                            {
+                              text: "View Plans",
+                              style: "default",
+                              onPress: () => {
+                                onSetShowQualityPicker(false);
+                                onNavigateToPlans();
+                              },
+                            },
+                          ]
+                        );
+                        return;
+                      }
+                      onSelectQuality(i);
+                    }}
                   >
                     <Ionicons
-                      name={isActive ? "radio-button-on" : "radio-button-off"}
+                      name={isLocked ? "lock-closed" : (isActive ? "radio-button-on" : "radio-button-off")}
                       size={13}
-                      color={isActive ? COLORS.neonCyan : "rgba(255,255,255,0.4)"}
+                      color={isLocked ? "#FFD700" : (isActive ? COLORS.neonCyan : "rgba(255,255,255,0.4)")}
                     />
                     <Text
                       style={[
                         styles.embedPickerItemText,
                         isActive && { color: COLORS.neonCyan },
+                        isLocked && { color: "rgba(255,255,255,0.7)" },
                       ]}
                     >
                       {q.label}
                     </Text>
+                    {isLocked && (
+                      <View style={styles.embedPickerVipBadge}>
+                        <Text style={styles.embedPickerVipBadgeText}>VIP</Text>
+                      </View>
+                    )}
                   </TouchableOpacity>
                 );
               })}
@@ -541,3 +572,36 @@ export default function PlayerHUDOverlay({
     </View>
   );
 }
+
+export default memo(PlayerHUDOverlay, (prev, next) => {
+  // Avoid re-rendering for sub-second current-time ticks
+  const playStateSame =
+    prev.playerState.isPlaying === next.playerState.isPlaying &&
+    prev.playerState.duration === next.playerState.duration &&
+    Math.floor(prev.playerState.current) === Math.floor(next.playerState.current);
+
+  return (
+    playStateSame &&
+    prev.showHud === next.showHud &&
+    prev.playerReady === next.playerReady &&
+    prev.showQualityPicker === next.showQualityPicker &&
+    prev.showSubtitlePicker === next.showSubtitlePicker &&
+    prev.showSettingsPicker === next.showSettingsPicker &&
+    prev.activeQualityIndex === next.activeQualityIndex &&
+    prev.activeSubtitleIndex === next.activeSubtitleIndex &&
+    prev.resumeToast === next.resumeToast &&
+    prev.skipToast === next.skipToast &&
+    prev.skipLabel === next.skipLabel &&
+    prev.isPremium === next.isPremium &&
+    prev.sniffedMediaUrl === next.sniffedMediaUrl &&
+    prev.serverLabel === next.serverLabel &&
+    prev.isServerLocked === next.isServerLocked &&
+    prev.serversCount === next.serversCount &&
+    prev.qualityLevels === next.qualityLevels &&
+    prev.subtitleTracks === next.subtitleTracks &&
+    prev.autoPlayEnabled === next.autoPlayEnabled &&
+    prev.autoSkipIntroEnabled === next.autoSkipIntroEnabled &&
+    prev.downloader.status === next.downloader.status &&
+    prev.downloader.progress === next.downloader.progress
+  );
+});

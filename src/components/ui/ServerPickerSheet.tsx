@@ -11,7 +11,8 @@ import {
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS } from '../../constants/theme';
+import { COLORS, TOUCH } from '../../constants/theme';
+import { haptic } from '../../lib/haptics';
 import type { Server, ServerLang } from '../../hooks/useServerSelection';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -62,7 +63,17 @@ export default function ServerPickerSheet({
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.title}>SELECT SERVER</Text>
-            <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+            <TouchableOpacity
+              style={styles.closeBtn}
+              hitSlop={TOUCH.hitSlop}
+              activeOpacity={0.7}
+              onPress={() => {
+                haptic.selection();
+                onClose();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+            >
               <Ionicons name="close" size={18} color={COLORS.textMuted} />
             </TouchableOpacity>
           </View>
@@ -77,8 +88,12 @@ export default function ServerPickerSheet({
                     styles.langPill,
                     lang === selectedLang && styles.langPillActive,
                   ]}
-                  onPress={() => onSelectLang(lang)}
+                  onPress={() => {
+                    haptic.selection();
+                    onSelectLang(lang);
+                  }}
                   activeOpacity={0.75}
+                  accessibilityRole="button"
                 >
                   <Text
                     style={[
@@ -108,10 +123,12 @@ export default function ServerPickerSheet({
                   key={`${selectedLang}-${i}`}
                   style={[styles.serverRow, isActive && styles.serverRowActive]}
                   onPress={() => {
+                    haptic.selection();
                     onSelectServer(i);
                     onClose();
                   }}
                   activeOpacity={0.7}
+                  accessibilityRole="button"
                 >
                   {/* Left: status dot + name */}
                   <View style={styles.serverLeft}>
@@ -193,9 +210,9 @@ const styles = StyleSheet.create({
     letterSpacing: 2.5,
   },
   closeBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
     justifyContent: 'center',

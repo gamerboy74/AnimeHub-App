@@ -14,8 +14,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useQuery } from '@tanstack/react-query';
-import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../src/constants/theme';
 import { animeAPI } from '../src/lib/supabase';
+import { haptic } from '../src/lib/haptics';
 import {
   fetchAiringSchedule,
   getScheduleDates,
@@ -101,7 +102,7 @@ export default function ScheduleScreen() {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       {/* ── Gradient header bg ── */}
       <LinearGradient
-        colors={['rgba(191,95,255,0.18)', 'transparent']}
+        colors={['rgba(255,43,60,0.18)', 'transparent']}
         style={styles.headerGradient}
         start={{ x: 0.5, y: 0 }}
         end={{ x: 0.5, y: 1 }}
@@ -110,7 +111,16 @@ export default function ScheduleScreen() {
       </LinearGradient>
 
       {/* ── Back button ── */}
-      <TouchableOpacity style={[styles.backBtn, { top: insets.top + 8 }]} onPress={() => router.back()}>
+      <TouchableOpacity
+        style={[styles.backBtn, { top: insets.top + 8 }]}
+        onPress={() => {
+          haptic.selection();
+          router.back();
+        }}
+        hitSlop={TOUCH.hitSlop}
+        accessibilityRole="button"
+        accessibilityLabel="Go back"
+      >
         <Ionicons name="chevron-back" size={20} color={COLORS.text} />
       </TouchableOpacity>
 
@@ -420,9 +430,9 @@ const styles = StyleSheet.create({
   backBtn: {
     position: 'absolute',
     left: SPACING.md,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -473,8 +483,8 @@ const styles = StyleSheet.create({
     borderColor: COLORS.text,
   },
   dayChipToday: {
-    borderColor: 'rgba(191,95,255,0.45)',
-    backgroundColor: 'rgba(191,95,255,0.08)',
+    borderColor: 'rgba(255,43,60,0.45)',
+    backgroundColor: 'rgba(255,43,60,0.08)',
   },
   dayShort: { fontSize: 11, color: COLORS.textMuted, fontWeight: '700', letterSpacing: 0.5 },
   dayShortActive: { color: '#0a0a12' },
@@ -485,7 +495,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
     paddingVertical: 1,
     borderRadius: 3,
-    backgroundColor: 'rgba(191,95,255,0.25)',
+    backgroundColor: 'rgba(255,43,60,0.25)',
   },
   todayBadgeActive: {
     backgroundColor: 'rgba(10,10,18,0.15)',
@@ -522,7 +532,7 @@ const styles = StyleSheet.create({
   retryBtn: {
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.sm,
-    backgroundColor: 'rgba(191,95,255,0.12)',
+    backgroundColor: 'rgba(255,43,60,0.12)',
     borderRadius: RADIUS.md,
     borderWidth: 1,
     borderColor: COLORS.neon,
@@ -682,7 +692,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.1)',
   },
   filterPillActive: {
-    backgroundColor: 'rgba(191,95,255,0.18)',
+    backgroundColor: 'rgba(255,43,60,0.18)',
     borderColor: COLORS.neon,
   },
   filterPillText: {
@@ -713,7 +723,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: RADIUS.md,
-    backgroundColor: 'rgba(191,95,255,0.15)',
+    backgroundColor: 'rgba(255,43,60,0.15)',
     borderWidth: 1,
     borderColor: COLORS.neon,
   },

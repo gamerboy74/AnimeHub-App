@@ -1,8 +1,7 @@
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, FlatList,
   TouchableOpacity, RefreshControl, ActivityIndicator,
-  Animated, useWindowDimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,22 +12,29 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { AnimeWithStats, userAPI } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
-import { useTrendingAnime, useTopRatedAnime, useRecentAnime } from '../../src/hooks/useQueries';
+import { useTrendingAnime, useTopRatedAnime, useRecentAnime, useGenreAnime, fetchGenreAnime } from '../../src/hooks/useQueries';
 import { usePrefetch } from '../../src/hooks/usePrefetch';
+import HeroCarousel from '../../src/components/ui/HeroCarousel';
 import AnimeCard from '../../src/components/ui/AnimeCard';
+import SectionHeader from '../../src/components/ui/SectionHeader';
 import SubscriptionExpiryBanner from '../../src/components/subscription/SubscriptionExpiryBanner';
-import { GENRE_NAMES } from '../../src/constants/genres';
+import { haptic } from '../../src/lib/haptics';
 
-const GENRES = GENRE_NAMES;
+const POPULAR_GENRES = [
+  { name: 'Action', color: '#FF7346', tagline: 'High-octane battles & adrenaline' },
+  { name: 'Fantasy', color: '#FF4757', tagline: 'Mythical realms, beasts & magic' },
+  { name: 'Sci-Fi', color: '#00F5FF', tagline: 'Futuristic worlds & cyberpunk' },
+  { name: 'Romance', color: '#FF2D78', tagline: 'Heartfelt emotional stories' },
+  { name: 'Adventure', color: '#FFB830', tagline: 'Epic quests & uncharted lands' },
+  { name: 'Comedy', color: '#FFE54C', tagline: 'Hilarious moments & non-stop laughs' },
+];
 
 // ── HERO CAROUSEL INTERVAL (ms) ───────────────────────────────────────────────
-const HERO_INTERVAL_MS = 5000;
 const HERO_SLIDE_COUNT = 5;
 
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const { prefetchAnimeList } = usePrefetch();
@@ -38,6 +44,7 @@ export default function HomeScreen() {
   const { data: trending = [], isLoading: loadingTrend } = useTrendingAnime();
   const { data: topRated = [], isLoading: loadingRated } = useTopRatedAnime();
   const { data: recent = [], isLoading: loadingRecent } = useRecentAnime();
+  const { data: fantasyAnime = [] } = useGenreAnime('Fantasy', 10);
 
   // ── User Watch History (Continue Watching) ─────────────────────────────────────────
   const { data: progressData = [] } = useQuery<any[]>({
@@ -76,17 +83,6 @@ export default function HomeScreen() {
     [trending],
   );
 
-  const [heroIndex, setHeroIndex] = useState(0);
-  const heroIndexRef = useRef(0);
-  const autoPlayRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const isUserScrollingRef = useRef(false);
-  const flatListRef = useRef<FlatList>(null);
-
-  // Sync index to ref to avoid stale closures in setInterval without recreating the timer
-  useEffect(() => {
-    heroIndexRef.current = heroIndex;
-  }, [heroIndex]);
-
   // Silently warm the cache for the top 5 visible cards while the user
   // looks at the hero section — navigation feels instant afterward
   useEffect(() => {
@@ -95,51 +91,13 @@ export default function HomeScreen() {
     }
   }, [trending, prefetchAnimeList]);
 
-  const startAutoPlay = useCallback(() => {
-    if (autoPlayRef.current) clearInterval(autoPlayRef.current);
-    if (heroSlides.length <= 1) return;
-    autoPlayRef.current = setInterval(() => {
-      if (!isUserScrollingRef.current) {
-        const next = (heroIndexRef.current + 1) % heroSlides.length;
-        setHeroIndex(next);
-        flatListRef.current?.scrollToIndex({ index: next, animated: true });
-      }
-    }, HERO_INTERVAL_MS);
-  }, [heroSlides.length]);
-
-  useEffect(() => {
-    startAutoPlay();
-    return () => {
-      if (autoPlayRef.current) clearInterval(autoPlayRef.current);
-    };
-  }, [startAutoPlay]);
-
-  const handleScroll = useCallback((e: any) => {
-    const offsetX = e.nativeEvent.contentOffset.x;
-    const cardWidth = width - SPACING.md * 2;
-    const index = Math.round(offsetX / cardWidth);
-    if (index >= 0 && index < heroSlides.length && index !== heroIndexRef.current) {
-      setHeroIndex(index);
-    }
-  }, [heroSlides.length]);
-
-  const scrollToIndex = useCallback((index: number) => {
-    setHeroIndex(index);
-    flatListRef.current?.scrollToIndex({ index, animated: true });
-  }, []);
-
-  const getItemLayout = useCallback((_: any, index: number) => ({
-    length: width - SPACING.md * 2,
-    offset: (width - SPACING.md * 2) * index,
-    index,
-  }), [width]);
-
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['anime', 'trending'] }),
       queryClient.invalidateQueries({ queryKey: ['anime', 'top-rated'] }),
       queryClient.invalidateQueries({ queryKey: ['anime', 'new-arrivals'] }),
+      queryClient.invalidateQueries({ queryKey: ['anime', 'genre-popular'] }),
       user?.id ? queryClient.invalidateQueries({ queryKey: ['user', user.id, 'history'] }) : Promise.resolve(),
     ]);
     setRefreshing(false);
@@ -162,127 +120,15 @@ export default function HomeScreen() {
       showsVerticalScrollIndicator={false}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.neon} />}
     >
-      {/* Space for Universal Header overlap if needed, otherwise start content */}
-      <View style={{ height: SPACING.md }} />
+      {/* Safe-area top space so content never sits behind the status bar */}
+      <View style={{ height: insets.top > 0 ? insets.top + SPACING.xs : SPACING.md }} />
 
       {/* Subscription Expiry Reminder Banner (renders only if user's subscription expires in <= 2 days) */}
       <SubscriptionExpiryBanner />
 
-      {/* ── Auto-Rotating Hero Paging Carousel ── */}
+      {/* ── Auto-Rotating Hero Paging Carousel (Isolated & Optimized) ── */}
       {heroSlides.length > 0 && (
-        <View style={styles.hero}>
-          <FlatList
-            ref={flatListRef}
-            data={heroSlides}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            keyExtractor={(item) => item.id}
-            getItemLayout={getItemLayout}
-            onScroll={handleScroll}
-            scrollEventThrottle={16}
-            onScrollBeginDrag={() => {
-              isUserScrollingRef.current = true;
-              if (autoPlayRef.current) {
-                clearInterval(autoPlayRef.current);
-                autoPlayRef.current = null;
-              }
-            }}
-            onScrollEndDrag={() => {
-              isUserScrollingRef.current = false;
-              startAutoPlay();
-            }}
-            onMomentumScrollEnd={(e) => {
-              isUserScrollingRef.current = false;
-              const offsetX = e.nativeEvent.contentOffset.x;
-              const cardWidth = width - SPACING.md * 2;
-              const index = Math.round(offsetX / cardWidth);
-              if (index >= 0 && index < heroSlides.length) {
-                setHeroIndex(index);
-              }
-              startAutoPlay();
-            }}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                activeOpacity={0.95}
-                style={{ width: width - SPACING.md * 2, height: 420 }}
-                onPress={() => router.push(`/anime/${item.id}`)}
-              >
-                <Image
-                  source={{ uri: item.banner_url || item.poster_url || '' }}
-                  style={styles.heroBg}
-                  contentFit="cover"
-                  transition={200}
-                />
-                <View style={styles.heroOverlay} />
-
-                <View style={styles.heroContent}>
-                  <View style={styles.heroTrendingBadge}>
-                    <View style={styles.trendingDot} />
-                    <Text style={styles.trendingText}>TRENDING NOW</Text>
-                  </View>
-                  <Text style={styles.heroTitle} numberOfLines={2}>{item.title}</Text>
-                  {item.title_japanese && (
-                    <Text style={styles.heroTitleJp} numberOfLines={1}>{item.title_japanese}</Text>
-                  )}
-                  <View style={styles.heroMeta}>
-                    {item.year && <Text style={styles.heroMetaText}>{item.year}</Text>}
-                    {item.type && <Text style={styles.heroMetaText}>• {item.type}</Text>}
-                    {item.status && <Text style={styles.heroMetaText}>• {item.status}</Text>}
-                    {item.user_rating_avg && (
-                      <View style={styles.heroRating}>
-                        <Ionicons name="star" size={12} color={COLORS.neonGold} />
-                        <Text style={styles.heroRatingText}>{Number(item.user_rating_avg).toFixed(1)}</Text>
-                      </View>
-                    )}
-                  </View>
-                  <View style={styles.heroButtons}>
-                    <TouchableOpacity
-                      style={styles.playBtn}
-                      onPress={() => router.push(`/anime/episodes/${item.id}`)}
-                      accessible={true}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Play ${item.title}`}
-                    >
-                      <Ionicons name="play" size={16} color={COLORS.bg} />
-                      <Text style={styles.playBtnText}>PLAY NOW</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.infoBtn}
-                      onPress={() => router.push(`/anime/${item.id}`)}
-                      accessible={true}
-                      accessibilityRole="button"
-                      accessibilityLabel={`More info about ${item.title}`}
-                    >
-                      <Ionicons name="information-circle-outline" size={16} color={COLORS.neon} />
-                      <Text style={styles.infoBtnText}>MORE INFO</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </TouchableOpacity>
-            )}
-          />
-
-          {/* Dot indicators overlayed on the bottom center */}
-          {heroSlides.length > 1 && (
-            <View style={styles.heroDotRow}>
-              {heroSlides.map((_, i) => (
-                <TouchableOpacity
-                  key={i}
-                  onPress={() => scrollToIndex(i)}
-                  hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-                >
-                  <View
-                    style={[
-                      styles.heroDot,
-                      i === heroIndex && styles.heroDotActive,
-                    ]}
-                  />
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-        </View>
+        <HeroCarousel slides={heroSlides} />
       )}
 
       {/* ── Continue Watching (Quick Jump Back In) ── */}
@@ -301,72 +147,24 @@ export default function HomeScreen() {
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.continueScroll}
+            scrollEventThrottle={100}
           >
             {continueWatching.map((item: any) => {
               const progress = item.episode_duration > 0
                 ? (item.progress_seconds / item.episode_duration) * 100
                 : item.progress_percentage || 0;
               return (
-                <TouchableOpacity
+                <ContinueCard
                   key={item.id || item.episode_id}
-                  style={styles.continueCard}
-                  activeOpacity={0.88}
+                  item={item}
+                  progress={progress}
                   onPress={() => item.episode_id && router.push(`/watch/${item.episode_id}`)}
-                >
-                  <View style={styles.continueThumbBox}>
-                    <Image
-                      source={{ uri: item.thumbnail_url || item.poster_url }}
-                      style={styles.continueThumb}
-                      contentFit="cover"
-                      transition={200}
-                    />
-                    <View style={styles.continueOverlay} />
-                    <LinearGradient
-                      colors={['transparent', 'rgba(8,8,16,0.6)', 'rgba(8,8,16,0.95)']}
-                      locations={[0.2, 0.65, 1]}
-                      style={styles.continueBottomGrad}
-                    />
-                    <View style={styles.continuePlayBox}>
-                      <Ionicons name="play" size={14} color="#000" />
-                    </View>
-                    <View style={styles.continueProgressBox}>
-                      <View style={styles.continueProgressBg}>
-                        <View style={[styles.continueProgressFill, { width: `${Math.min(progress, 100)}%` }]} />
-                      </View>
-                      <View style={styles.continueProgressLabels}>
-                        <Text style={styles.continueProgressEp}>EP {item.episode_number}</Text>
-                        <Text style={styles.continueProgressPercent}>{Math.round(progress)}%</Text>
-                      </View>
-                    </View>
-                  </View>
-                  <Text style={styles.continueCardTitle} numberOfLines={1}>
-                    {item.anime_title || item.title}
-                  </Text>
-                  <Text style={styles.continueCardSub} numberOfLines={1}>
-                    {item.episode_title ? `EP ${item.episode_number} • ${item.episode_title}` : `Episode ${item.episode_number}`}
-                  </Text>
-                </TouchableOpacity>
+                />
               );
             })}
           </ScrollView>
         </View>
       )}
-
-      {/* Genre Pills */}
-      <View style={styles.section}>
-        <Text style={styles.sectionLabel}>GENRES</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.genrePills}>
-          {GENRES.map((g) => (
-            <TouchableOpacity
-              key={g}
-              style={styles.genrePill}
-              onPress={() => router.push(`/genre/${g}`)}
-            >
-              <Text style={styles.genrePillText}>{g}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
 
       {/* Trending */}
       <AnimeRow
@@ -377,6 +175,9 @@ export default function HomeScreen() {
         seeAllRoute="/trending"
       />
 
+      {/* Popular Genres Spotlight */}
+      <PopularGenresSection />
+
       {/* Top Rated */}
       <AnimeRow
         title="TOP RATED"
@@ -385,6 +186,16 @@ export default function HomeScreen() {
         router={router}
         showStats
         seeAllRoute="/top-rated"
+      />
+
+      {/* Curated Genre Row: Fantasy & Magic */}
+      <AnimeRow
+        title="FANTASY & MAGIC"
+        subtitle="MYTHICAL REALMS & LEGENDS"
+        data={fantasyAnime}
+        router={router}
+        showStats
+        seeAllRoute="/genre/Fantasy"
       />
 
       {/* Recently Added */}
@@ -398,6 +209,64 @@ export default function HomeScreen() {
     </ScrollView>
   );
 }
+
+// ─── MEMOIZED CONTINUE WATCHING CARD ──────────────────────────────────────────
+interface ContinueCardProps {
+  item: any;
+  progress: number;
+  onPress: () => void;
+}
+
+const ContinueCard = React.memo(
+  ({ item, progress, onPress }: ContinueCardProps) => (
+    <TouchableOpacity
+      style={styles.continueCard}
+      activeOpacity={0.88}
+      onPress={onPress}
+    >
+      <View style={styles.continueThumbBox}>
+        <Image
+          source={{ uri: item.thumbnail_url || item.poster_url }}
+          style={styles.continueThumb}
+          contentFit="cover"
+          transition={200}
+        />
+        <View style={styles.continueOverlay} />
+        <LinearGradient
+          colors={['transparent', 'rgba(8,8,16,0.6)', 'rgba(8,8,16,0.95)']}
+          locations={[0.2, 0.65, 1]}
+          style={styles.continueBottomGrad}
+        />
+        <View style={styles.continuePlayBox}>
+          <Ionicons name="play" size={14} color="#000" />
+        </View>
+        <View style={styles.continueProgressBox}>
+          <View style={styles.continueProgressBg}>
+            <View style={[styles.continueProgressFill, { width: `${Math.min(progress, 100)}%` }]} />
+          </View>
+            <View style={styles.continueProgressLabels}>
+                    <Text style={styles.continueProgressEp}>EP {item.episode_number}</Text>
+                    <Text style={styles.continueProgressPercent}>
+                      {item.episode_duration > 0
+                        ? `${Math.max(0, Math.ceil((item.episode_duration - item.progress_seconds) / 60))}m left`
+                        : `${Math.round(progress)}%`}
+                    </Text>
+                  </View>
+        </View>
+      </View>
+      <Text style={styles.continueCardTitle} numberOfLines={1}>
+        {item.anime_title || item.title}
+      </Text>
+      <Text style={styles.continueCardSub} numberOfLines={1}>
+        {item.episode_title ? `EP ${item.episode_number} • ${item.episode_title}` : `Episode ${item.episode_number}`}
+      </Text>
+    </TouchableOpacity>
+  ),
+  (prev, next) =>
+    prev.item.id === next.item.id &&
+    prev.item.episode_id === next.item.episode_id &&
+    Math.floor(prev.progress) === Math.floor(next.progress)
+);
 
 // ─── MEMOIZED LOCAL ANIME CARD WRAPPER ─────────────────────────────────────────
 interface HomeAnimeCardProps {
@@ -455,15 +324,11 @@ const AnimeRow = React.memo(
 
     return (
       <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <View>
-            <Text style={styles.sectionLabel}>{title}</Text>
-            <Text style={styles.sectionSub}>{subtitle}</Text>
-          </View>
-          <TouchableOpacity onPress={() => seeAllRoute && router.push(seeAllRoute)}>
-            <Text style={styles.seeAll}>SEE ALL →</Text>
-          </TouchableOpacity>
-        </View>
+        <SectionHeader
+          label={subtitle}
+          title={title}
+          onSeeAll={seeAllRoute ? () => router.push(seeAllRoute) : undefined}
+        />
         <FlatList
           horizontal
           data={data}
@@ -489,6 +354,154 @@ const AnimeRow = React.memo(
     );
   }
 );
+
+// ─── POPULAR GENRES SPOTLIGHT ────────────────────────────────────────────────
+const PopularGenresSection = React.memo(() => {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const [selectedGenre, setSelectedGenre] = useState('Action');
+  const { data: animeList = [], isLoading } = useGenreAnime(selectedGenre, 10);
+  const { prefetchAnime } = usePrefetch();
+
+  // Silently warm TanStack cache for other popular genres on idle so tab switches are instant
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      POPULAR_GENRES.forEach((g) => {
+        if (g.name !== 'Action') {
+          queryClient.prefetchQuery({
+            queryKey: ['anime', 'genre-popular', g.name, 10],
+            staleTime: 10 * 60 * 1000,
+            queryFn: () => fetchGenreAnime(g.name, 10),
+          });
+        }
+      });
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [queryClient]);
+
+  const activeMeta = useMemo(
+    () => POPULAR_GENRES.find((g) => g.name === selectedGenre) || POPULAR_GENRES[0],
+    [selectedGenre]
+  );
+
+  const handleCardPress = useCallback((id: string) => {
+    router.push(`/anime/${id}`);
+  }, [router]);
+
+  const handleLongPress = useCallback((id: string) => {
+    prefetchAnime(id);
+  }, [prefetchAnime]);
+
+  const renderItem = useCallback(({ item }: { item: any }) => (
+    <HomeAnimeCard
+      item={item}
+      onPress={handleCardPress}
+      onLongPress={handleLongPress}
+      showStats
+    />
+  ), [handleCardPress, handleLongPress]);
+
+  const keyExtractor = useCallback((item: any) => item.id, []);
+
+  return (
+    <View style={styles.section}>
+      <SectionHeader
+        label="CURATED DISCOVERY"
+        title="POPULAR GENRES"
+        onSeeAll={() => router.push('/genre')}
+        seeAllLabel="ALL GENRES →"
+      />
+
+      {/* Interactive Genre Chips */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.popularGenreChips}
+      >
+        {POPULAR_GENRES.map((g) => {
+          const isSelected = g.name === selectedGenre;
+          return (
+            <TouchableOpacity
+              key={g.name}
+              style={[
+                styles.popularGenreChip,
+                isSelected && {
+                  borderColor: g.color,
+                  backgroundColor: `${g.color}22`,
+                },
+              ]}
+              onPress={() => {
+                haptic.selection();
+                setSelectedGenre(g.name);
+              }}
+              activeOpacity={0.75}
+            >
+              <Text
+                style={[
+                  styles.popularGenreChipText,
+                  isSelected && [styles.popularGenreChipTextActive, { color: g.color }],
+                ]}
+              >
+                {g.name}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
+      {/* Dynamic Subheader: Tagline & View Specific Genre */}
+      <View style={styles.genreSubheaderRow}>
+        <Text style={styles.genreSubheaderTagline} numberOfLines={1}>
+          {activeMeta.tagline}
+        </Text>
+        <TouchableOpacity
+          onPress={() => router.push(`/genre/${selectedGenre}`)}
+          activeOpacity={0.7}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={[styles.genreSubheaderLink, { color: activeMeta.color }]}>
+            VIEW ALL {selectedGenre.toUpperCase()} →
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Anime Carousel */}
+      {isLoading ? (
+        <View style={styles.genreLoadingContainer}>
+          <ActivityIndicator size="small" color={activeMeta.color} />
+        </View>
+      ) : (
+        <FlatList
+          horizontal
+          data={animeList}
+          keyExtractor={keyExtractor}
+          renderItem={renderItem}
+          contentContainerStyle={{ paddingLeft: SPACING.md, paddingRight: SPACING.sm }}
+          showsHorizontalScrollIndicator={false}
+          removeClippedSubviews
+          windowSize={3}
+          maxToRenderPerBatch={5}
+          initialNumToRender={5}
+          ListFooterComponent={
+            animeList.length > 0 ? (
+              <TouchableOpacity
+                style={styles.moreGenreCard}
+                onPress={() => router.push(`/genre/${selectedGenre}`)}
+                activeOpacity={0.8}
+              >
+                <View style={[styles.moreGenreIconCircle, { borderColor: `${activeMeta.color}66` }]}>
+                  <Ionicons name="arrow-forward" size={20} color={activeMeta.color} />
+                </View>
+                <Text style={styles.moreGenreTitle}>More {selectedGenre}</Text>
+                <Text style={styles.moreGenreSub}>View All</Text>
+              </TouchableOpacity>
+            ) : null
+          }
+        />
+      )}
+    </View>
+  );
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
@@ -516,123 +529,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: COLORS.border,
   },
 
-  hero: {
-    marginHorizontal: SPACING.md,
-    height: 420,
-    borderRadius: RADIUS.lg,
-    overflow: 'hidden',
-    marginBottom: SPACING.lg,
-    position: 'relative',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  heroBg: { ...StyleSheet.absoluteFillObject },
-  heroOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(8,8,16,0.55)',
-  },
-  scanLines: {
-    ...StyleSheet.absoluteFillObject,
-    opacity: 0.1,
-  },
-  heroContent: {
-    position: 'absolute',
-    bottom: 0, left: 0, right: 0,
-    padding: SPACING.lg,
-    paddingBottom: SPACING.xl,
-    backgroundColor: 'rgba(8,8,16,0.7)',
-  },
-  heroTrendingBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: SPACING.xs,
-  },
-  trendingDot: {
-    width: 6, height: 6, borderRadius: 3,
-    backgroundColor: COLORS.neonPink,
-  },
-  trendingText: {
-    fontSize: 10, color: COLORS.neonPink,
-    fontWeight: '700', letterSpacing: 2,
-  },
-  heroTitle: {
-    fontSize: 26, color: COLORS.text,
-    fontWeight: '900', letterSpacing: -0.5,
-    lineHeight: 30,
-  },
-  heroTitleJp: {
-    fontSize: 13, color: COLORS.textSub,
-    marginTop: 4, letterSpacing: 1,
-  },
-  heroMeta: {
-    flexDirection: 'row', alignItems: 'center',
-    gap: 6, marginTop: SPACING.xs, flexWrap: 'wrap',
-  },
-  heroMetaText: { fontSize: 11, color: COLORS.textSub },
-  heroRating: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  heroRatingText: { fontSize: 11, color: COLORS.neonGold, fontWeight: '700' },
-  heroButtons: {
-    flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.md,
-  },
-  playBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: COLORS.neon,
-    paddingVertical: 10, paddingHorizontal: SPACING.lg,
-    borderRadius: RADIUS.sm,
-  },
-  playBtnText: { color: COLORS.bg, fontWeight: '800', fontSize: 12, letterSpacing: 1 },
-  infoBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    borderWidth: 1, borderColor: COLORS.neon,
-    paddingVertical: 10, paddingHorizontal: SPACING.md,
-    borderRadius: RADIUS.sm,
-    backgroundColor: 'rgba(191,95,255,0.1)',
-  },
-  infoBtnText: { color: COLORS.neon, fontWeight: '700', fontSize: 12, letterSpacing: 1 },
 
-  // ── Hero carousel dots & nav ──────────────────────────────────────────────
-  heroDotRow: {
-    position: 'absolute',
-    bottom: 12,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    zIndex: 10,
-  },
-  heroDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: 'rgba(255,255,255,0.3)',
-  },
-  heroDotActive: {
-    width: 20,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: COLORS.neon,
-    shadowColor: COLORS.neon,
-    shadowOpacity: 0.8,
-    shadowRadius: 4,
-  },
-
-  heroCornerTL: {
-    position: 'absolute', top: 0, left: 0,
-    width: 24, height: 24,
-    borderTopWidth: 2, borderLeftWidth: 2,
-    borderColor: COLORS.neon,
-    borderTopLeftRadius: RADIUS.lg,
-  },
-  heroCornerBR: {
-    position: 'absolute', bottom: 0, right: 0,
-    width: 24, height: 24,
-    borderBottomWidth: 2, borderRightWidth: 2,
-    borderColor: COLORS.neonPink,
-    borderBottomRightRadius: RADIUS.lg,
-  },
 
   section: { marginBottom: SPACING.lg },
   sectionHeader: {
@@ -647,16 +544,95 @@ const styles = StyleSheet.create({
   sectionSub: { fontSize: 11, color: COLORS.textMuted, letterSpacing: 1 },
   seeAll: { fontSize: 10, color: COLORS.textSub, letterSpacing: 1 },
 
-  genrePills: { paddingHorizontal: SPACING.md, gap: SPACING.xs },
-  genrePill: {
-    paddingVertical: 7, paddingHorizontal: SPACING.md,
+  genreSectionTag: {
+    fontSize: 9,
+    color: COLORS.neonCyan,
+    fontWeight: '800',
+    letterSpacing: 2,
+    marginBottom: 2,
+  },
+  popularGenreChips: {
+    paddingHorizontal: SPACING.md,
+    gap: 8,
+    paddingBottom: 4,
+  },
+  popularGenreChip: {
+    paddingVertical: 7,
+    paddingHorizontal: 16,
     borderRadius: RADIUS.xl,
     backgroundColor: COLORS.bgCard,
-    borderWidth: 1, borderColor: COLORS.border,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
-  genrePillText: {
-    fontSize: 12, color: COLORS.textSub,
-    fontWeight: '600', letterSpacing: 0.5,
+  popularGenreChipText: {
+    fontSize: 12,
+    color: COLORS.textSub,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  popularGenreChipTextActive: {
+    fontWeight: '700',
+  },
+  genreSubheaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: SPACING.md,
+    marginTop: 6,
+    marginBottom: SPACING.sm,
+  },
+  genreSubheaderTagline: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+    fontStyle: 'italic',
+    flex: 1,
+    marginRight: SPACING.sm,
+  },
+  genreSubheaderLink: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  genreLoadingContainer: {
+    height: 200,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  moreGenreCard: {
+    width: 120,
+    height: 160 * 1.45,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.bgCard,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: SPACING.xs,
+    marginRight: SPACING.md,
+    padding: SPACING.sm,
+  },
+  moreGenreIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  moreGenreTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.text,
+    textAlign: 'center',
+  },
+  moreGenreSub: {
+    fontSize: 10,
+    color: COLORS.textMuted,
+    marginTop: 2,
+    textAlign: 'center',
   },
 
   continueSectionSub: {

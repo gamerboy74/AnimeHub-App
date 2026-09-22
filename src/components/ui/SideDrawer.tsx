@@ -15,10 +15,11 @@ import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { COLORS, RADIUS, SPACING } from '../../constants/theme';
+import { COLORS, RADIUS, SPACING, TOUCH } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
 import RequestAnimeModal from '../settings/RequestAnimeModal';
 import { useTranslation } from '../../context/LocalizationContext';
+import { haptic } from '../../lib/haptics';
 
 const DRAWER_WIDTH = Math.min(Dimensions.get('window').width * 0.8, 320);
 
@@ -88,11 +89,13 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
   }, [visible]);
 
   const navigate = useCallback((route: string) => {
+    haptic.selection();
     onClose();
     setTimeout(() => router.push(route as any), 220);
   }, [onClose, router]);
 
   const handleSignOut = useCallback(async () => {
+    haptic.medium();
     onClose();
     setTimeout(async () => {
       await signOut();
@@ -101,6 +104,7 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
   }, [onClose, signOut, router]);
 
   const handleSignIn = useCallback(() => {
+    haptic.medium();
     onClose();
     setTimeout(() => {
       router.push('/auth/login' as any);
@@ -161,8 +165,18 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
                   {user?.email ?? t('signInSync')}
                 </Text>
               </View>
-              <TouchableOpacity onPress={onClose} style={styles.closeBtn} activeOpacity={0.7}>
-                <Ionicons name="close" size={16} color={COLORS.textSub} />
+              <TouchableOpacity
+                onPress={() => {
+                  haptic.light();
+                  onClose();
+                }}
+                style={styles.closeBtn}
+                hitSlop={TOUCH.hitSlop}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Close menu"
+              >
+                <Ionicons name="close" size={18} color={COLORS.textSub} />
               </TouchableOpacity>
             </View>
 
@@ -182,8 +196,13 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
               {/* ── Request an Anime ─────────────────────────────── */}
               <TouchableOpacity
                 style={styles.requestRow}
-                onPress={() => { onClose(); setTimeout(() => setShowRequest(true), 250); }}
+                onPress={() => {
+                  haptic.selection();
+                  onClose();
+                  setTimeout(() => setShowRequest(true), 250);
+                }}
                 activeOpacity={0.75}
+                accessibilityRole="button"
               >
                 <View style={styles.requestIconWrap}>
                   <Ionicons name="paper-plane-outline" size={18} color="#fff" />
@@ -208,17 +227,17 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
             <View style={[styles.footer, { paddingBottom: insets.bottom + 8 }]}>
               <View style={styles.divider} />
               {user ? (
-                <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut} activeOpacity={0.7}>
+                <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut} activeOpacity={0.7} accessibilityRole="button">
                   <Ionicons name="log-out-outline" size={20} color={COLORS.neonPink} />
                   <Text style={styles.signOutText}>{t('signOut')}</Text>
                 </TouchableOpacity>
               ) : (
-                <TouchableOpacity style={styles.signInBtn} onPress={handleSignIn} activeOpacity={0.7}>
+                <TouchableOpacity style={styles.signInBtn} onPress={handleSignIn} activeOpacity={0.7} accessibilityRole="button">
                   <Ionicons name="log-in-outline" size={20} color={COLORS.neon} />
                   <Text style={styles.signInText}>{t('signIn')}</Text>
                 </TouchableOpacity>
               )}
-              <Text style={styles.versionText}>AnimeHub v1.0.0</Text>
+              <Text style={styles.versionText}>AnimeHub v1.0.2</Text>
             </View>
           </View>
         </Animated.View>
@@ -310,7 +329,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: 'rgba(191,95,255,0.2)',
+    backgroundColor: 'rgba(255,43,60,0.15)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
@@ -327,9 +346,9 @@ const styles = StyleSheet.create({
   username: { fontSize: 15, color: COLORS.text, fontWeight: '700' },
   email: { fontSize: 11, color: COLORS.textMuted, marginTop: 1 },
   closeBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
@@ -360,7 +379,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: RADIUS.sm,
-    backgroundColor: 'rgba(191,95,255,0.08)',
+    backgroundColor: 'rgba(255,43,60,0.08)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
@@ -368,12 +387,12 @@ const styles = StyleSheet.create({
   },
   navLabel: { flex: 1, fontSize: 14, color: COLORS.text, fontWeight: '600' },
   soonBadge: {
-    backgroundColor: 'rgba(255,214,0,0.15)',
+    backgroundColor: 'rgba(255,184,0,0.15)',
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderWidth: 1,
-    borderColor: 'rgba(255,214,0,0.4)',
+    borderColor: 'rgba(255,184,0,0.4)',
   },
   soonText: { fontSize: 9, color: COLORS.neonGold, fontWeight: '800', letterSpacing: 1 },
   footer: {},
@@ -404,9 +423,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.sm,
     borderRadius: RADIUS.md,
     marginTop: 2,
-    backgroundColor: 'rgba(191,95,255,0.06)',
+    backgroundColor: 'rgba(255,43,60,0.06)',
     borderWidth: 1,
-    borderColor: 'rgba(191,95,255,0.15)',
+    borderColor: 'rgba(255,43,60,0.2)',
   },
   requestIconWrap: {
     width: 36,
@@ -418,7 +437,7 @@ const styles = StyleSheet.create({
   },
   requestLabel: { flex: 1, fontSize: 14, color: COLORS.text, fontWeight: '700' },
   newBadge: {
-    backgroundColor: 'rgba(191,95,255,0.2)',
+    backgroundColor: 'rgba(255,43,60,0.2)',
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,

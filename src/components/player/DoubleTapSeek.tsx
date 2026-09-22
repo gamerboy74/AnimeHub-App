@@ -39,14 +39,17 @@ interface Props {
 // ─── Single side component ───────────────────────────────────────────────────
 function SeekSide({
   side,
+  screenWidth,
+  screenHeight,
   onSeekRelative,
   onSingleTap,
 }: {
   side: 'left' | 'right';
+  screenWidth: number;
+  screenHeight: number;
   onSeekRelative: (offset: number) => void;
   onSingleTap: () => void;
 }) {
-  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const offset = side === 'left' ? -SEEK_SECONDS : SEEK_SECONDS;
   const tapTimeRef = useRef<number>(0);
   const singleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -210,10 +213,11 @@ function SeekSide({
 
 // ─── Main export ─────────────────────────────────────────────────────────────
 export default function DoubleTapSeek({ onSeekRelative, onSingleTap }: Props) {
+  const { width, height } = useWindowDimensions();
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-      <SeekSide side="left"  onSeekRelative={onSeekRelative} onSingleTap={onSingleTap} />
-      <SeekSide side="right" onSeekRelative={onSeekRelative} onSingleTap={onSingleTap} />
+      <SeekSide side="left"  screenWidth={width} screenHeight={height} onSeekRelative={onSeekRelative} onSingleTap={onSingleTap} />
+      <SeekSide side="right" screenWidth={width} screenHeight={height} onSeekRelative={onSeekRelative} onSingleTap={onSingleTap} />
     </View>
   );
 }

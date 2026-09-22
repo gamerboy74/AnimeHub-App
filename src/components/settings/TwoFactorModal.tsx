@@ -16,8 +16,9 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '../../lib/supabase';
-import { COLORS } from '../../constants/theme';
+import { COLORS, TOUCH } from '../../constants/theme';
 import { styles } from '../../screens/settings.styles';
+import { haptic } from '../../lib/haptics';
 
 interface TwoFactorModalProps {
   visible: boolean;
@@ -73,6 +74,7 @@ export default function TwoFactorModal({ visible, onClose, onSuccess, t }: TwoFa
 
   const copyToClipboard = async () => {
     if (enrollData?.totp?.secret) {
+      haptic.light();
       await Clipboard.setStringAsync(enrollData.totp.secret);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -87,6 +89,7 @@ export default function TwoFactorModal({ visible, onClose, onSuccess, t }: TwoFa
     }
 
     try {
+      haptic.medium();
       setLoading(true);
       setError(null);
 
@@ -159,7 +162,7 @@ export default function TwoFactorModal({ visible, onClose, onSuccess, t }: TwoFa
                   onPress={enrollMFA}
                 >
                   <LinearGradient
-                    colors={[COLORS.neon, '#BD9DFF']}
+                    colors={[COLORS.neon, COLORS.primaryDark]}
                     style={styles.modalSaveGradient}
                   >
                     <Text style={styles.modalSaveText}>Retry</Text>
@@ -202,7 +205,7 @@ export default function TwoFactorModal({ visible, onClose, onSuccess, t }: TwoFa
                     alignItems: 'center', 
                     justifyContent: 'space-between', 
                     borderWidth: 1, 
-                    borderColor: 'rgba(189,157,255,0.15)' 
+                    borderColor: COLORS.borderNeutral, 
                   }}>
                     <View style={{ flex: 1, marginRight: 12 }}>
                       <Text style={{ color: COLORS.textMuted, fontSize: 9, fontWeight: '800', letterSpacing: 1.5, marginBottom: 2 }}>SECRET KEY</Text>
@@ -212,7 +215,8 @@ export default function TwoFactorModal({ visible, onClose, onSuccess, t }: TwoFa
                     </View>
                     <TouchableOpacity
                       onPress={copyToClipboard}
-                      style={{ backgroundColor: 'rgba(189,157,255,0.15)', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, minWidth: 64, alignItems: 'center' }}
+                      hitSlop={TOUCH.hitSlop}
+                      style={{ backgroundColor: 'rgba(255,43,60,0.12)', borderWidth: 1, borderColor: COLORS.border, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, minWidth: 64, alignItems: 'center' }}
                     >
                       <Text style={{ color: COLORS.text, fontSize: 12, fontWeight: '700' }}>
                         {copied ? 'Copied!' : 'Copy'}
@@ -239,7 +243,7 @@ export default function TwoFactorModal({ visible, onClose, onSuccess, t }: TwoFa
                     disabled={loading}
                   >
                     <LinearGradient
-                      colors={[COLORS.neon, '#BD9DFF']}
+                      colors={[COLORS.neon, COLORS.primaryDark]}
                       start={{ x: 0, y: 0 }}
                       end={{ x: 1, y: 1 }}
                       style={styles.modalSaveGradient}

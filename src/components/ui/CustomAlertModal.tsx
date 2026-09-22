@@ -10,6 +10,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { registerAlertHandler, unregisterAlertHandler, AlertButton } from '../../lib/customAlert';
 import { COLORS, RADIUS } from '../../constants/theme';
+import { haptic } from '../../lib/haptics';
 
 const { width } = Dimensions.get('window');
 
@@ -34,6 +35,11 @@ export default function CustomAlertModal() {
   }, []);
 
   const handleButtonPress = (btn: AlertButton) => {
+    if (btn.style === 'destructive') {
+      haptic.medium();
+    } else {
+      haptic.selection();
+    }
     setVisible(false);
     if (btn.onPress) {
       btn.onPress();
@@ -84,12 +90,12 @@ export default function CustomAlertModal() {
                 onPress={() => setVisible(false)}
               >
                 <LinearGradient
-                  colors={[COLORS.neon, '#BD9DFF']}
+                  colors={[COLORS.neon, COLORS.primaryDark]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                   style={styles.gradient}
                 >
-                  <Text style={styles.btnTextDark}>OK</Text>
+                  <Text style={styles.btnTextLight}>OK</Text>
                 </LinearGradient>
               </TouchableOpacity>
             ) : (
@@ -116,12 +122,12 @@ export default function CustomAlertModal() {
                     onPress={() => handleButtonPress(btn)}
                   >
                     <LinearGradient
-                      colors={isDestructive ? [COLORS.danger, '#ff7346'] : [COLORS.neon, '#BD9DFF']}
+                      colors={isDestructive ? [COLORS.danger, '#C81E2E'] : [COLORS.neon, COLORS.primaryDark]}
                       start={{ x: 0, y: 0 }}
                       end={{ x: 1, y: 1 }}
                       style={styles.gradient}
                     >
-                      <Text style={isDestructive ? styles.btnTextLight : styles.btnTextDark}>
+                      <Text style={styles.btnTextLight}>
                         {btn.text}
                       </Text>
                     </LinearGradient>

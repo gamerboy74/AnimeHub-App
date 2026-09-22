@@ -39,7 +39,7 @@ export const StatChip: React.FC<StatChipProps> = ({
 
   return (
     <View className={`px-4 py-2 border rounded-full flex-row items-center gap-2 ${getVariantStyles()} ${className}`}>
-      {Icon && <Icon size={14} color={variant === 'surface' ? '#919194' : variant === 'primary' ? '#bd9dff' : '#00e3fd'} />}
+      {Icon && <Icon size={14} color={variant === 'surface' ? '#919194' : variant === 'primary' ? '#FF2B3C' : '#00e3fd'} />}
       <Text className={`text-[10px] uppercase font-black tracking-widest ${getTextColor()}`}>
         {label}
       </Text>

@@ -55,7 +55,7 @@ const FALLBACK_FEATURES: PlanFeature[] = [
   { id: '1', label: 'Anime Library',         sub_label: null, free_value: '✓',          premium_value: '✓',       is_highlighted: false, sort_order: 0 },
   { id: '2', label: 'Free Episodes',          sub_label: null, free_value: '✓',          premium_value: '✓',       is_highlighted: false, sort_order: 1 },
   { id: '3', label: 'Premium Episodes',       sub_label: null, free_value: '✗',          premium_value: '✓',       is_highlighted: true,  sort_order: 2 },
-  { id: '4', label: 'Video Quality',          sub_label: null, free_value: 'Up to 720p', premium_value: 'Up to 4K', is_highlighted: true, sort_order: 3 },
+  { id: '4', label: 'Video Quality',          sub_label: null, free_value: 'Up to 720p', premium_value: 'Up to 1080p', is_highlighted: true, sort_order: 3 },
   { id: '5', label: 'Ads',                    sub_label: null, free_value: 'With ads',   premium_value: 'Ad-free', is_highlighted: true,  sort_order: 4 },
   { id: '6', label: 'Simultaneous Streams',   sub_label: null, free_value: '1 device',   premium_value: '2 devices', is_highlighted: false, sort_order: 5 },
   { id: '7', label: 'Offline Downloads',      sub_label: null, free_value: '✗',          premium_value: '✓',       is_highlighted: false, sort_order: 6 },

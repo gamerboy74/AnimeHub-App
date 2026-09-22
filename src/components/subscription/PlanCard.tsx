@@ -48,8 +48,8 @@ export default function PlanCard({
     isFree
       ? ['720p HD Streaming', 'With Ads', '1 Device at a time', 'Free Episode Catalog']
       : isYearly
-      ? ['4K Ultra HD + HDR', '100% Ad-Free Anime', '2 Devices Simultaneous', 'Offline Downloads', 'Save ₹' + (savingsAmount || 389) + '/year']
-      : ['1080p & 4K Ultra HD', '100% Ad-Free Anime', '2 Devices Simultaneous', 'Offline Downloads', 'Cancel Anytime']
+      ? ['1080p Full HD Streaming', '100% Ad-Free Anime', '2 Devices Simultaneous', 'Offline Downloads', 'Save ₹' + (savingsAmount || 389) + '/year']
+      : ['1080p Full HD Streaming', '100% Ad-Free Anime', '2 Devices Simultaneous', 'Offline Downloads', 'Cancel Anytime']
   );
 
   // Badge logic
@@ -62,7 +62,7 @@ export default function PlanCard({
   };
 
   const getCardBg = () => {
-    if (isSelected) return isYearly ? 'rgba(255,214,0,0.09)' : 'rgba(191,95,255,0.09)';
+    if (isSelected) return isYearly ? 'rgba(255,184,0,0.12)' : 'rgba(255,43,60,0.12)';
     return COLORS.bgCard;
   };
 
@@ -244,9 +244,9 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.neonGold,
   },
   badgeDefault: {
-    backgroundColor: 'rgba(191, 95, 255, 0.15)',
+    backgroundColor: 'rgba(255, 43, 60, 0.15)',
     borderWidth: 1,
-    borderColor: 'rgba(191, 95, 255, 0.4)',
+    borderColor: 'rgba(255, 43, 60, 0.4)',
   },
   badgeCurrent: {
     backgroundColor: 'rgba(0, 245, 255, 0.12)',

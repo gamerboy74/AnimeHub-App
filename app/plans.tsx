@@ -8,31 +8,34 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  ActivityIndicator, Alert, Modal, AppState,
+  ActivityIndicator, Alert, Modal, AppState, Platform,
 } from 'react-native';
+import * as ScreenOrientation from 'expo-screen-orientation';
+import * as NavigationBar from 'expo-navigation-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../src/constants/theme';
 import { useAuth } from '../src/context/AuthContext';
 import { supabase, SubscriptionPlan } from '../src/lib/supabase';
 import { usePlans, formatPrice } from '../src/hooks/usePlans';
 import RazorpayCheckout, { RazorpayPaymentResult } from '../src/components/ui/RazorpayCheckout';
+import { haptic } from '../src/lib/haptics';
 
 // ─── Data ───────────────────────────────────────────────────────────────────
 
 const COMPARISON = [
-  { feature: 'Video Quality',     free: '720p HD',      vip: '4K Ultra HD + HDR', bold: true  },
-  { feature: 'Ads',               free: 'With Ads',     vip: 'Zero Ads',          bold: true  },
-  { feature: 'Screens',           free: '1 Device',     vip: '2 Simultaneous',    bold: true  },
-  { feature: 'Downloads',         free: 'None',         vip: 'Unlimited',         bold: true  },
-  { feature: 'New Episodes',      free: 'Delayed',      vip: 'Same-day',          bold: false },
-  { feature: 'Stream Speed',      free: 'Standard',     vip: 'Multi-server',      bold: false },
+  { feature: 'Video Quality',     free: 'Up to 720p HD',      vip: 'Up to 1080p Full HD', bold: true  },
+  { feature: 'Ads',               free: 'With Ads',           vip: 'Zero Ads',            bold: true  },
+  { feature: 'Screens',           free: '1 Device',           vip: '2 Simultaneous',      bold: true  },
+  { feature: 'Downloads',         free: 'None',               vip: 'Unlimited',           bold: true  },
+  { feature: 'New Episodes',      free: 'Delayed',            vip: 'Same-day',            bold: false },
+  { feature: 'Stream Speed',      free: 'Standard',           vip: 'Multi-server',        bold: false },
 ];
 
-const YEARLY_PERKS  = ['4K Ultra HD + HDR', 'Zero Ads', '2 Screens', '4 Months Free'];
-const MONTHLY_PERKS = ['4K Ultra HD + HDR', 'Zero Ads', '2 Screens', 'Cancel Anytime'];
+const YEARLY_PERKS  = ['1080p Full HD', 'Zero Ads', '2 Screens', '4 Months Free'];
+const MONTHLY_PERKS = ['1080p Full HD', 'Zero Ads', '2 Screens', 'Cancel Anytime'];
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -40,6 +43,14 @@ export default function PlansScreen() {
   const router  = useRouter();
   const insets  = useSafeAreaInsets();
   const { user, refreshUser } = useAuth();
+
+  // Enforce portrait mode whenever Plans is open
+  useEffect(() => {
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+    if (Platform.OS === 'android') {
+      NavigationBar.setVisibilityAsync('visible').catch(() => {});
+    }
+  }, []);
 
   const { data: plansData, isLoading } = usePlans();
   const isPremium = user?.subscription_type === 'premium';
@@ -66,7 +77,7 @@ export default function PlansScreen() {
 
   // Single accent token — flows everywhere
   const accent   = isYearly ? COLORS.neonGold : COLORS.neon;
-  const accentBg = isYearly ? 'rgba(255,214,0,0.09)' : 'rgba(191,95,255,0.09)';
+  const accentBg = isYearly ? 'rgba(255,214,0,0.09)' : 'rgba(255,43,60,0.09)';
 
   const activePlan: SubscriptionPlan | null = useMemo(() => {
     if (selectedCycle === 'monthly' && monthlyPlan) return monthlyPlan;
@@ -131,7 +142,7 @@ export default function PlansScreen() {
       const json = await res.json();
       if (!res.ok || json.error) throw new Error(json.error ?? 'Verification failed');
       await refreshUser();
-      Alert.alert('🎉 Welcome to VIP!', `Your ${activePlan?.display_name} is now active. Enjoy 4K anime!`, [{ text: 'Start Watching', onPress: () => router.back() }]);
+      Alert.alert('🎉 Welcome to VIP!', `Your ${activePlan?.display_name} is now active. Enjoy 1080p Full HD anime!`, [{ text: 'Start Watching', onPress: () => router.back() }]);
     } catch {
       Alert.alert('Notice', `Payment was processed. Save Payment ID: ${result.paymentId} and contact support@animehub.app if not upgraded.`);
     } finally {
@@ -259,7 +270,7 @@ export default function PlansScreen() {
             AnimeHub <Text style={{ color: accent }}>VIP</Text>
           </Text>
           <Text style={styles.heroSub}>
-            4K HDR · Zero Ads · Offline Downloads · 2 Screens
+            1080p Full HD · Zero Ads · Offline Downloads · 2 Screens
           </Text>
         </View>
 
@@ -270,11 +281,12 @@ export default function PlansScreen() {
           <TouchableOpacity
             style={[
               styles.card,
-              isYearly
-                ? { borderColor: COLORS.neonGold, borderWidth: 2, backgroundColor: 'rgba(255,214,0,0.09)' }
-                : styles.cardInactive,
+              isYearly ? { borderColor: COLORS.neonGold, borderWidth: 2, backgroundColor: 'rgba(255,214,0,0.09)' } : styles.cardInactive,
             ]}
-            onPress={() => setSelectedCycle('yearly')}
+            onPress={() => {
+              haptic.selection();
+              setSelectedCycle('yearly');
+            }}
             activeOpacity={0.85}
           >
             {/* Tag row */}
@@ -320,10 +332,13 @@ export default function PlansScreen() {
             style={[
               styles.card,
               !isYearly
-                ? { borderColor: COLORS.neon, borderWidth: 2, backgroundColor: 'rgba(191,95,255,0.09)' }
+                ? { borderColor: COLORS.neon, borderWidth: 2, backgroundColor: 'rgba(255,43,60,0.09)' }
                 : styles.cardInactive,
             ]}
-            onPress={() => setSelectedCycle('monthly')}
+            onPress={() => {
+              haptic.selection();
+              setSelectedCycle('monthly');
+            }}
             activeOpacity={0.85}
           >
             {/* Tag row */}
@@ -466,17 +481,19 @@ export default function PlansScreen() {
             activeOpacity={0.88}
           >
             <LinearGradient
-              colors={isYearly ? ['#FFD600', '#FFA500'] : ['#BF5FFF', '#7B2FBE']}
+              colors={isYearly ? ['#FFD600', '#FFA500'] : [COLORS.neon, COLORS.primaryDark]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
               style={styles.ctaGrad}
             >
               {upgrading || verifyingPending ? (
-                <ActivityIndicator color="#000" size="small" />
+                <ActivityIndicator color={isYearly ? '#000' : '#fff'} size="small" />
               ) : (
                 <>
-                  <Text style={styles.ctaTxt}>{isYearly ? 'Get Yearly VIP' : 'Get Monthly VIP'}</Text>
-                  <Ionicons name="arrow-forward" size={14} color="#000" />
+                  <Text style={[styles.ctaTxt, !isYearly && { color: '#FFFFFF' }]}>
+                    {isYearly ? 'Get Yearly VIP' : 'Get Monthly VIP'}
+                  </Text>
+                  <Ionicons name="arrow-forward" size={14} color={isYearly ? '#000' : '#FFFFFF'} />
                 </>
               )}
             </LinearGradient>

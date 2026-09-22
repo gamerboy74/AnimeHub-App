@@ -1,20 +1,24 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View, Text, TextInput, FlatList, StyleSheet, Modal, Alert,
-  TouchableOpacity, ActivityIndicator, ScrollView, Pressable, Dimensions, useWindowDimensions,
+  TouchableOpacity, ActivityIndicator, ScrollView, Pressable,
+  Dimensions, useWindowDimensions, RefreshControl, Platform, Keyboard,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { haptic } from '../../src/lib/haptics';
 import { COLORS, SPACING, RADIUS, SHADOWS } from '../../src/constants/theme';
-import { supabase, animeAPI, Anime, AnimeWithStats } from '../../src/lib/supabase';
-import AnimeCard from '../../src/components/ui/AnimeCard';
+import { supabase, animeAPI, Anime, AnimeWithStats, userAPI } from '../../src/lib/supabase';
+import AnimeCard, { AnimeCardSkeleton } from '../../src/components/ui/AnimeCard';
 import { BlurView } from 'expo-blur';
 import RequestAnimeModal from '../../src/components/settings/RequestAnimeModal';
 import { usePrefetch } from '../../src/hooks/usePrefetch';
+import { useAuth } from '../../src/context/AuthContext';
+import { computeGenres } from '../../src/lib/userStats';
 import {
   SEASONS_LIST,
   SeasonalTarget,
@@ -70,7 +74,7 @@ const BENTO_GENRES = [
 const BENTO_NAMES = new Set(BENTO_GENRES.map(b => b.name));
 const ALL_GENRES_GRID = ALL_GENRES.filter(g => !BENTO_NAMES.has(g.name));
 
-const TRENDING_QUERIES = ['Chainsaw Man', 'Spy x Family', 'Oshi no Ko', 'Jujutsu Kaisen', 'Solo Leveling'];
+const DEFAULT_TRENDING_QUERIES = ['Chainsaw Man', 'Spy x Family', 'Oshi no Ko', 'Jujutsu Kaisen', 'Solo Leveling'];
 
 const truncateTitle = (title: string, maxLength = 16) => {
   if (title.length > maxLength) {
@@ -94,15 +98,67 @@ const STUDIOS = [
 
 const MIN_SEARCH_CHARS = 1;
 
+/** Renders text with the matched substring highlighted in neon. */
+const HighlightText = React.memo(function HighlightText({ text, query }: { text: string; query: string }) {
+  if (!query || query.trim().length < MIN_SEARCH_CHARS) {
+    return <Text style={styles.highlightBase}>{text}</Text>;
+  }
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+  return (
+    <Text style={styles.highlightBase}>
+      {parts.map((part, i) =>
+        part.toLowerCase() === query.toLowerCase()
+          ? <Text key={i} style={styles.highlightMatch}>{part}</Text>
+          : part
+      )}
+    </Text>
+  );
+});
+
 export default function SearchScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { prefetchAnime } = usePrefetch();
   const { width: windowWidth } = useWindowDimensions();
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  // ── User history for personalized chips ──────────────────────────────
+  const { data: userProgress = [] } = useQuery({
+    queryKey: ['user', user?.id, 'history'],
+    enabled: !!user?.id,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    queryFn: async () => {
+      const { data } = await userAPI.getProgress(user!.id);
+      return data ?? [];
+    },
+  });
+
+  // Build personalized chips: top-3 genres → genre-based queries + 2 static fallbacks
+  const trendingChips = useMemo(() => {
+    const genreStats = computeGenres(userProgress as any[]);
+    const topGenres = genreStats.slice(0, 3).map((g: any) => g.genre);
+    // Map genre names to representative show titles or use genre itself as search term
+    const genreToQuery: Record<string, string> = {
+      Action: 'Jujutsu Kaisen', Fantasy: 'Frieren', 'Sci-Fi': 'Oshi no Ko',
+      Romance: 'Your Lie in April', Adventure: 'One Piece',
+      Comedy: 'Spy x Family', Horror: 'Parasyte',
+      'Slice of Life': 'A Silent Voice', Sports: 'Haikyuu',
+    };
+    const personalized = topGenres.map((g: string) => genreToQuery[g] || g);
+    const extras = DEFAULT_TRENDING_QUERIES.filter(q => !personalized.includes(q)).slice(0, 5 - personalized.length);
+    return [...personalized, ...extras];
+  }, [userProgress]);
 
   const numColumns = windowWidth >= 1024 ? 6 : windowWidth >= 768 ? 5 : windowWidth >= 600 ? 4 : 3;
   const availableWidth = windowWidth - SPACING.md * 2;
   const cardWidth = Math.floor((availableWidth - GRID_GAP * (numColumns - 1)) / numColumns);
+
+  // ── Refs ─────────────────────────────────────────────────────────────────
+  const mainScrollRef = useRef<ScrollView>(null);
+  const searchInputRef = useRef<TextInput>(null);
 
   // ── Search State ──────────────────────────────────────────────────────────
   const [query, setQuery] = useState('');
@@ -110,6 +166,14 @@ export default function SearchScreen() {
   const [isFocused, setIsFocused] = useState(false);
   const [showFilter, setShowFilter] = useState(false);
   const [showRequest, setShowRequest] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    await queryClient.invalidateQueries({ queryKey: ['exploreBrowseAll'] });
+    await queryClient.invalidateQueries({ queryKey: ['exploreSimulcast'] });
+    setIsRefreshing(false);
+  }, [queryClient]);
 
   // ── Partition Tabs State ──────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<ExploreTab>('browse');
@@ -118,7 +182,7 @@ export default function SearchScreen() {
   const [browseSort, setBrowseSort] = useState<'popular' | 'top_rated' | 'newest' | 'a_z'>('popular');
   const [browseType, setBrowseType] = useState<string>('all');
   const [browseStatus, setBrowseStatus] = useState<string>('all');
-  const [browseLimit, setBrowseLimit] = useState<number>(30);
+  const PAGE_SIZE = 30;
 
   // ── Simulcasts Season State ───────────────────────────────────────────────
   const [selectedSeason, setSelectedSeason] = useState<SeasonalTarget>(SEASONS_LIST[0]);
@@ -141,31 +205,97 @@ export default function SearchScreen() {
       return (res.data || []) as Anime[];
     },
     enabled: trimmedSearch.length >= MIN_SEARCH_CHARS,
+    placeholderData: keepPreviousData,
     staleTime: 3 * 60 * 1000,
   });
 
-  const clearSearch = () => {
+  const clearSearch = useCallback(() => {
+    haptic.selection();
     setQuery('');
     setDebouncedQuery('');
-  };
+    Keyboard.dismiss();
+    searchInputRef.current?.blur();
+  }, []);
 
   const isSearchActive = query.trim().length > 0;
 
-  // ── Data Query: Browse All Partition ──────────────────────────────────────
-  const { data: browseAnime = [], isLoading: browseLoading } = useQuery({
-    queryKey: ['exploreBrowseAll', browseSort, browseType, browseStatus, browseLimit],
-    queryFn: async () => {
+  const scrollOffsetRef = useRef<number>(0);
+
+  // ── Data Query: Browse All Partition (infinite query, automatically cached per filter) ──
+  const {
+    data: browseInfiniteData,
+    isLoading: browseLoading,
+    isFetchingNextPage: browseFetchingMore,
+    hasNextPage: browseHasMore,
+    fetchNextPage,
+  } = useInfiniteQuery({
+    queryKey: ['exploreBrowseAll', browseSort, browseType, browseStatus],
+    initialPageParam: 0,
+    queryFn: async ({ pageParam = 0 }) => {
       const res = await animeAPI.getBrowse({
-        page: 0,
-        limit: browseLimit,
+        page: pageParam,
+        limit: PAGE_SIZE,
         sortBy: browseSort,
         type: browseType,
         status: browseStatus,
       });
       return (res.data ?? []) as AnimeWithStats[];
     },
-    staleTime: 3 * 60 * 1000,
+    getNextPageParam: (lastPage, allPages) => {
+      if (!lastPage || lastPage.length < PAGE_SIZE) return undefined;
+      return allPages.length;
+    },
+    placeholderData: keepPreviousData,
+    staleTime: 5 * 60 * 1000,
   });
+
+  const browseAllItems = useMemo(() => {
+    if (!browseInfiniteData?.pages) return [];
+    return browseInfiniteData.pages.flat();
+  }, [browseInfiniteData]);
+
+  // Background prefetch all sort tabs for instant zero-latency switching
+  useEffect(() => {
+    const sorts = ['popular', 'top_rated', 'newest', 'a_z'] as const;
+    const timer = setTimeout(() => {
+      sorts.forEach((sort) => {
+        if (sort !== browseSort) {
+          queryClient.prefetchInfiniteQuery({
+            queryKey: ['exploreBrowseAll', sort, 'all', 'all'],
+            initialPageParam: 0,
+            queryFn: async () => {
+              const res = await animeAPI.getBrowse({
+                page: 0,
+                limit: PAGE_SIZE,
+                sortBy: sort,
+                type: 'all',
+                status: 'all',
+              });
+              return (res.data ?? []) as AnimeWithStats[];
+            },
+            getNextPageParam: (lastPage: AnimeWithStats[]) => {
+              if (!lastPage || lastPage.length < PAGE_SIZE) return undefined;
+              return 1;
+            },
+            staleTime: 5 * 60 * 1000,
+          });
+        }
+      });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [queryClient]);
+
+  // Smooth scroll to top only if user had scrolled down
+  useEffect(() => {
+    if (scrollOffsetRef.current > 80) {
+      mainScrollRef.current?.scrollTo({ y: 0, animated: true });
+    }
+  }, [browseSort, browseType, browseStatus]);
+
+  const loadMoreBrowse = useCallback(() => {
+    if (browseFetchingMore || !browseHasMore || browseLoading) return;
+    fetchNextPage();
+  }, [browseFetchingMore, browseHasMore, browseLoading, fetchNextPage]);
 
   // ── Data Query: Simulcasts Season Partition ───────────────────────────────
   const { data: simulcastAnime = [], isLoading: simulcastsLoading } = useQuery({
@@ -221,90 +351,115 @@ export default function SearchScreen() {
   // ──────────────────────────────────────────────────────────────────────────
   // PARTITION 1: BROWSE ALL ANIME
   // ──────────────────────────────────────────────────────────────────────────
+  const renderBrowseFilterHeader = () => (
+    <View>
+      {/* Sort & Filter Controls Row */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.filterPillRow}
+      >
+        {(
+          [
+            { key: 'popular', label: '🔥 Popular' },
+            { key: 'top_rated', label: '⭐ Top Rated' },
+            { key: 'newest', label: '✨ Newest' },
+            { key: 'a_z', label: '🔤 A-Z' },
+          ] as const
+        ).map((s) => (
+          <TouchableOpacity
+            key={s.key}
+            style={[styles.filterPill, browseSort === s.key && styles.filterPillActive]}
+            onPress={() => {
+              if (browseSort !== s.key) {
+                haptic.selection();
+                setBrowseSort(s.key);
+              }
+            }}
+          >
+            <Text style={[styles.filterPillText, browseSort === s.key && styles.filterPillTextActive]}>
+              {s.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+
+        <View style={styles.filterPillDivider} />
+
+        {[
+          { key: 'all', label: 'All Formats' },
+          { key: 'tv', label: 'TV' },
+          { key: 'movie', label: 'Movie' },
+          { key: 'ova', label: 'OVA' },
+        ].map((t) => (
+          <TouchableOpacity
+            key={t.key}
+            style={[styles.filterPill, browseType === t.key && styles.filterPillActiveFormat]}
+            onPress={() => {
+              if (browseType !== t.key) {
+                haptic.selection();
+                setBrowseType(t.key);
+              }
+            }}
+          >
+            <Text style={[styles.filterPillText, browseType === t.key && styles.filterPillTextActive]}>
+              {t.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+
+        <View style={styles.filterPillDivider} />
+
+        {[
+          { key: 'all', label: 'All Status' },
+          { key: 'ongoing', label: 'Airing' },
+          { key: 'completed', label: 'Finished' },
+        ].map((st) => (
+          <TouchableOpacity
+            key={st.key}
+            style={[styles.filterPill, browseStatus === st.key && styles.filterPillActiveStatus]}
+            onPress={() => {
+              if (browseStatus !== st.key) {
+                haptic.selection();
+                setBrowseStatus(st.key);
+              }
+            }}
+          >
+            <Text style={[styles.filterPillText, browseStatus === st.key && styles.filterPillTextActive]}>
+              {st.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {/* Count Bar */}
+      <View style={styles.catalogMetaRow}>
+        <Text style={styles.catalogCountText}>
+          {browseLoading && browseAllItems.length === 0 ? 'Fetching catalog...' : `Showing ${browseAllItems.length} anime`}
+        </Text>
+        <Text style={styles.catalogHintText}>// 3-COLUMN DIRECTORY</Text>
+      </View>
+    </View>
+  );
+
   const renderBrowsePartition = () => {
-    return (
-      <View style={styles.partitionContainer}>
-        {/* Sort & Filter Controls Row */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterPillRow}
-        >
-          {/* Sort Buttons */}
-          {(
-            [
-              { key: 'popular', label: '🔥 Popular' },
-              { key: 'top_rated', label: '⭐ Top Rated' },
-              { key: 'newest', label: '✨ Newest' },
-              { key: 'a_z', label: '🔤 A-Z' },
-            ] as const
-          ).map((s) => (
-            <TouchableOpacity
-              key={s.key}
-              style={[styles.filterPill, browseSort === s.key && styles.filterPillActive]}
-              onPress={() => setBrowseSort(s.key)}
-            >
-              <Text style={[styles.filterPillText, browseSort === s.key && styles.filterPillTextActive]}>
-                {s.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-
-          <View style={styles.filterPillDivider} />
-
-          {/* Type Filters */}
-          {[
-            { key: 'all', label: 'All Formats' },
-            { key: 'tv', label: 'TV' },
-            { key: 'movie', label: 'Movie' },
-            { key: 'ova', label: 'OVA' },
-          ].map((t) => (
-            <TouchableOpacity
-              key={t.key}
-              style={[styles.filterPill, browseType === t.key && styles.filterPillActiveFormat]}
-              onPress={() => setBrowseType(t.key)}
-            >
-              <Text style={[styles.filterPillText, browseType === t.key && styles.filterPillTextActive]}>
-                {t.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-
-          <View style={styles.filterPillDivider} />
-
-          {/* Status Filters */}
-          {[
-            { key: 'all', label: 'All Status' },
-            { key: 'ongoing', label: 'Airing' },
-            { key: 'completed', label: 'Finished' },
-          ].map((st) => (
-            <TouchableOpacity
-              key={st.key}
-              style={[styles.filterPill, browseStatus === st.key && styles.filterPillActiveStatus]}
-              onPress={() => setBrowseStatus(st.key)}
-            >
-              <Text style={[styles.filterPillText, browseStatus === st.key && styles.filterPillTextActive]}>
-                {st.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-
-        {/* Count Bar */}
-        <View style={styles.catalogMetaRow}>
-          <Text style={styles.catalogCountText}>
-            {browseLoading ? 'Fetching catalog...' : `Showing ${browseAnime.length} anime`}
-          </Text>
-          <Text style={styles.catalogHintText}>// 3-COLUMN DIRECTORY</Text>
-        </View>
-
-        {/* Loading Spinner */}
-        {browseLoading && browseAnime.length === 0 ? (
-          <View style={styles.partitionLoading}>
-            <ActivityIndicator color={COLORS.neonGold} size="large" />
-            <Text style={styles.loadingSubText}>LOADING ANIME DIRECTORY...</Text>
+    if (browseLoading && browseAllItems.length === 0) {
+      return (
+        <View style={styles.partitionContainer}>
+          {renderBrowseFilterHeader()}
+          {/* Skeleton shimmer grid while first page loads */}
+          <View style={[styles.threeColGrid, { paddingHorizontal: SPACING.md }]}>
+            {Array.from({ length: 12 }).map((_, i) => (
+              <AnimeCardSkeleton key={i} cardWidth={cardWidth} size="sm" />
+            ))}
           </View>
-        ) : browseAnime.length === 0 ? (
+        </View>
+      );
+    }
+
+    if (!browseLoading && browseAllItems.length === 0) {
+      return (
+        <View style={styles.partitionContainer}>
+          {renderBrowseFilterHeader()}
           <View style={styles.emptyStateContainer}>
             <Ionicons name="filter-outline" size={42} color={COLORS.textMuted} />
             <Text style={styles.emptyStateTitle}>No anime match this filter</Text>
@@ -315,38 +470,42 @@ export default function SearchScreen() {
               <Text style={styles.resetFiltersBtnText}>Reset Filters</Text>
             </TouchableOpacity>
           </View>
-        ) : (
-          <View style={styles.threeColGrid}>
-            {browseAnime.map((item) => (
-              <AnimeCard
-                key={item.id}
-                anime={item}
-                size="sm"
-                style={{ width: cardWidth, marginRight: 0 }}
-                onPress={handleCardPress}
-                onLongPress={() => prefetchAnime(item.id)}
-                showStats
-              />
-            ))}
-          </View>
-        )}
+        </View>
+      );
+    }
 
-        {/* Load More Button */}
-        {browseAnime.length >= browseLimit && (
-          <TouchableOpacity
-            style={styles.loadMoreBtn}
-            onPress={() => setBrowseLimit(prev => prev + 30)}
-            activeOpacity={0.8}
-          >
-            <LinearGradient
-              colors={['rgba(255,214,0,0.15)', 'rgba(255,214,0,0.05)']}
-              style={styles.loadMoreGradient}
-            >
-              <Text style={styles.loadMoreText}>LOAD MORE ANIME ({browseAnime.length}+)</Text>
-              <Ionicons name="chevron-down" size={16} color={COLORS.neonGold} />
-            </LinearGradient>
-          </TouchableOpacity>
-        )}
+    return (
+      <View style={styles.partitionContainer}>
+        {renderBrowseFilterHeader()}
+        <FlatList
+          data={browseAllItems}
+          keyExtractor={(item) => item.id}
+          numColumns={numColumns}
+          key={`browse-grid-${numColumns}`}
+          scrollEnabled={false}
+          contentContainerStyle={styles.threeColGridList}
+          columnWrapperStyle={styles.threeColRow}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={5}
+          renderItem={({ item }) => (
+            <AnimeCard
+              anime={item}
+              size="sm"
+              cardWidth={cardWidth}
+              style={{ width: cardWidth, marginRight: 0 }}
+              onPress={handleCardPress}
+              showStats
+            />
+          )}
+          ListFooterComponent={() =>
+            browseFetchingMore ? (
+              <View style={styles.lazyLoadFooter}>
+                <ActivityIndicator color={COLORS.neonGold} size="small" />
+              </View>
+            ) : null
+          }
+        />
       </View>
     );
   };
@@ -412,7 +571,7 @@ export default function SearchScreen() {
                   transition={300}
                 />
                 <View style={styles.bentoDim} />
-                <LinearGradient colors={['transparent', 'rgba(191,95,255,0.4)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
+                <LinearGradient colors={['transparent', 'rgba(255,43,60,0.4)', 'rgba(8,8,16,0.95)']} style={StyleSheet.absoluteFill} />
                 <View style={styles.bentoContentSq}>
                   <Text style={[styles.bentoGenreName, { color: BENTO_GENRES[2].color }]}>FANTASY</Text>
                 </View>
@@ -555,7 +714,7 @@ export default function SearchScreen() {
         {/* Season Banner Header */}
         <View style={styles.simulcastBanner}>
           <LinearGradient
-            colors={['rgba(0,245,255,0.18)', 'rgba(191,95,255,0.08)', 'rgba(8,8,16,0.95)']}
+            colors={['rgba(0,245,255,0.18)', 'rgba(255,43,60,0.08)', 'rgba(8,8,16,0.95)']}
             start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
             style={styles.simulcastBannerGradient}
           >
@@ -602,6 +761,54 @@ export default function SearchScreen() {
     );
   };
 
+  // ── Memoized Search List Components (Prevents re-renders on keystroke) ──
+  const searchKeyExtractor = useCallback((item: Anime) => item.id, []);
+
+  const renderSearchItem = useCallback(({ item }: { item: Anime }) => (
+    <AnimeCard
+      anime={item}
+      size="sm"
+      cardWidth={cardWidth}
+      style={{ width: cardWidth, marginRight: 0 }}
+      onPress={handleCardPress}
+      onLongPress={() => prefetchAnime(item.id)}
+      showStats
+    />
+  ), [cardWidth, handleCardPress, prefetchAnime]);
+
+  const searchHeaderComponent = useMemo(() => (
+    <View style={styles.searchResultsMeta}>
+      <Text style={styles.searchResultsCountText}>
+        {searchResults.length} {searchResults.length === 1 ? 'anime found' : 'anime found'} for{' '}
+      </Text>
+      <HighlightText text={`"${debouncedQuery.trim()}"`} query={debouncedQuery.trim()} />
+    </View>
+  ), [searchResults.length, debouncedQuery]);
+
+  const searchFooterComponent = useMemo(() => (
+    <View style={styles.searchFooterContainer}>
+      <View style={styles.requestFooterCard}>
+        <View style={styles.requestFooterIconWrap}>
+          <Ionicons name="sparkles" size={18} color={COLORS.neonGold} />
+        </View>
+        <View style={styles.requestFooterTextWrap}>
+          <Text style={styles.requestFooterTitle}>Didn't find what you wanted?</Text>
+          <Text style={styles.requestFooterSub}>Request any anime and we'll import it.</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.requestFooterBtn}
+          onPress={() => {
+            haptic.selection();
+            setShowRequest(true);
+          }}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.requestFooterBtnText}>Request →</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  ), []);
+
   // ──────────────────────────────────────────────────────────────────────────
   // LIVE SEARCH RESULTS (When query.length > 0)
   // ──────────────────────────────────────────────────────────────────────────
@@ -609,7 +816,7 @@ export default function SearchScreen() {
     if (searching) {
       return (
         <View style={styles.center}>
-          <ActivityIndicator color={COLORS.neon} size="large" />
+          <ActivityIndicator color={COLORS.neonCyan} size="large" />
           <Text style={styles.loadingText}>SEARCHING ANIME CATALOG...</Text>
         </View>
       );
@@ -620,39 +827,19 @@ export default function SearchScreen() {
         <FlatList
           key={`search-grid-${numColumns}`}
           data={searchResults}
-          keyExtractor={(item) => item.id}
+          keyExtractor={searchKeyExtractor}
           numColumns={numColumns}
           contentContainerStyle={styles.grid}
           columnWrapperStyle={styles.searchGridRow}
-          renderItem={({ item }) => (
-            <AnimeCard
-              anime={item}
-              size="sm"
-              style={{ width: cardWidth, marginRight: 0 }}
-              onPress={handleCardPress}
-              showStats
-            />
-          )}
+          renderItem={renderSearchItem}
           showsVerticalScrollIndicator={false}
-          ListHeaderComponent={() => (
-            <View>
-              <TouchableOpacity style={styles.backButton} onPress={clearSearch}>
-                <Ionicons name="arrow-back" size={20} color={COLORS.neon} />
-                <Text style={styles.backButtonText}>BACK TO DISCOVERY</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.requestNudge}
-                onPress={() => setShowRequest(true)}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="add-circle-outline" size={16} color={COLORS.neon} />
-                <Text style={styles.requestNudgeText}>
-                  Don't see what you want?{'  '}
-                  <Text style={{ color: COLORS.neon, fontWeight: '800' }}>Request it →</Text>
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
+          keyboardShouldPersistTaps="handled"
+          initialNumToRender={numColumns * 3}
+          maxToRenderPerBatch={numColumns * 2}
+          windowSize={5}
+          removeClippedSubviews={Platform.OS === 'android'}
+          ListHeaderComponent={searchHeaderComponent}
+          ListFooterComponent={searchFooterComponent}
         />
       );
     }
@@ -660,31 +847,45 @@ export default function SearchScreen() {
     if (!searching && debouncedQuery.trim().length >= MIN_SEARCH_CHARS && searchResults.length === 0) {
       return (
         <View style={styles.noResultsContainer}>
-          <Ionicons name="telescope-outline" size={52} color={COLORS.neon} style={{ opacity: 0.6 }} />
-          <Text style={styles.noResultsTitle}>Not in AnimeHub yet</Text>
+          <View style={styles.noResultsIconWrap}>
+            <Ionicons name="search-outline" size={38} color={COLORS.neonCyan} />
+          </View>
+          <Text style={styles.noResultsTitle}>No anime found</Text>
           <Text style={styles.noResultsBody}>
-            We couldn't find{' '}
-            <Text style={{ color: COLORS.neon, fontWeight: '800' }}>"{query}"</Text>
-            {' '}in our catalog.{'\n'}Would you like us to import it?
+            We couldn't find any matches for{' '}
+            <Text style={{ color: COLORS.neonCyan, fontWeight: '800' }}>"{query.trim()}"</Text>
+            .{'\n'}Check your spelling or request to add it to AnimeHub.
           </Text>
-          <TouchableOpacity
-            style={styles.requestCta}
-            onPress={() => setShowRequest(true)}
-            activeOpacity={0.85}
-          >
-            <LinearGradient
-              colors={[COLORS.neon, '#FF2D78']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.requestCtaGradient}
+
+          <View style={styles.noResultsActionRow}>
+            <TouchableOpacity
+              style={styles.requestCta}
+              onPress={() => {
+                haptic.selection();
+                setShowRequest(true);
+              }}
+              activeOpacity={0.85}
             >
-              <Ionicons name="paper-plane-outline" size={18} color="#fff" />
-              <Text style={styles.requestCtaText}>REQUEST THIS ANIME</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={clearSearch} style={styles.backToExplore}>
-            <Text style={styles.backToExploreText}>← Back to Discovery</Text>
-          </TouchableOpacity>
+              <LinearGradient
+                colors={[COLORS.neon, '#FF2D78']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.requestCtaGradient}
+              >
+                <Ionicons name="paper-plane-outline" size={16} color="#fff" />
+                <Text style={styles.requestCtaText}>REQUEST THIS ANIME</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={clearSearch}
+              style={styles.clearSearchBtn}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="arrow-back" size={16} color={COLORS.textSub} />
+              <Text style={styles.clearSearchBtnText}>Back to Explore</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       );
     }
@@ -692,8 +893,19 @@ export default function SearchScreen() {
     return null;
   };
 
+  // The main ScrollView's onScroll-based lazy load trigger for Browse tab
+  const handleMainScroll = useCallback((event: any) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    scrollOffsetRef.current = contentOffset.y;
+    if (activeTab !== 'browse' || !browseHasMore || browseFetchingMore || browseLoading) return;
+    const isNearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 400;
+    if (isNearBottom) {
+      loadMoreBrowse();
+    }
+  }, [activeTab, browseHasMore, browseFetchingMore, browseLoading, loadMoreBrowse]);
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
 
       {/* ── Persistent Search Bar ─────────────────────────────────────────── */}
       <View style={styles.searchSection}>
@@ -704,14 +916,27 @@ export default function SearchScreen() {
             isFocused && { borderColor: COLORS.neonCyan }
           ]}
         >
-          <Ionicons
-            name="search"
-            size={20}
-            color={isFocused ? COLORS.neonCyan : COLORS.textMuted}
-          />
+          {isSearchActive ? (
+            <TouchableOpacity
+              onPress={clearSearch}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              style={styles.searchNavButton}
+              accessibilityLabel="Back to Explore"
+              accessibilityRole="button"
+            >
+              <Ionicons name="arrow-back" size={20} color={COLORS.neonCyan} />
+            </TouchableOpacity>
+          ) : (
+            <Ionicons
+              name="search"
+              size={20}
+              color={isFocused ? COLORS.neonCyan : COLORS.textMuted}
+            />
+          )}
           <TextInput
+            ref={searchInputRef}
             style={styles.input}
-            placeholder="Search anime, movies, studios, genres..."
+            placeholder="Search anime, movies..."
             placeholderTextColor={COLORS.textMuted}
             value={query}
             onChangeText={setQuery}
@@ -723,8 +948,16 @@ export default function SearchScreen() {
             onBlur={() => setIsFocused(false)}
           />
           {isSearchActive ? (
-            <TouchableOpacity onPress={clearSearch} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name="close-circle" size={20} color={isFocused ? COLORS.neonCyan : COLORS.textMuted} />
+            <TouchableOpacity
+              onPress={() => {
+                haptic.selection();
+                setQuery('');
+                setDebouncedQuery('');
+                searchInputRef.current?.focus();
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="close-circle" size={20} color={COLORS.textMuted} />
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
@@ -741,11 +974,23 @@ export default function SearchScreen() {
 
       {/* ── Active Search Results OR 3-Partition Discovery ─────────────────── */}
       {isSearchActive ? (
-        renderSearchResults()
+        <View style={{ flex: 1 }}>
+          {renderSearchResults()}
+        </View>
       ) : (
         <ScrollView
+          ref={mainScrollRef}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 110 }}
+          onScroll={handleMainScroll}
+          scrollEventThrottle={200}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={handleRefresh}
+              tintColor={COLORS.neon}
+            />
+          }
         >
           {/* Quick Trending Queries */}
           <ScrollView
@@ -753,7 +998,7 @@ export default function SearchScreen() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.trendingRow}
           >
-            {TRENDING_QUERIES.map((q) => (
+            {trendingChips.map((q) => (
               <TouchableOpacity
                 key={q}
                 style={styles.trendingChip}
@@ -769,7 +1014,12 @@ export default function SearchScreen() {
           <View style={styles.segmentedContainer}>
             <TouchableOpacity
               style={[styles.segmentBtn, activeTab === 'browse' && styles.segmentBtnActiveGold]}
-              onPress={() => setActiveTab('browse')}
+              onPress={() => {
+                if (activeTab !== 'browse') {
+                  haptic.selection();
+                  setActiveTab('browse');
+                }
+              }}
               activeOpacity={0.8}
             >
               <Ionicons
@@ -784,7 +1034,12 @@ export default function SearchScreen() {
 
             <TouchableOpacity
               style={[styles.segmentBtn, activeTab === 'genres' && styles.segmentBtnActiveNeon]}
-              onPress={() => setActiveTab('genres')}
+              onPress={() => {
+                if (activeTab !== 'genres') {
+                  haptic.selection();
+                  setActiveTab('genres');
+                }
+              }}
               activeOpacity={0.8}
             >
               <Ionicons
@@ -799,7 +1054,12 @@ export default function SearchScreen() {
 
             <TouchableOpacity
               style={[styles.segmentBtn, activeTab === 'simulcasts' && styles.segmentBtnActiveCyan]}
-              onPress={() => setActiveTab('simulcasts')}
+              onPress={() => {
+                if (activeTab !== 'simulcasts') {
+                  haptic.selection();
+                  setActiveTab('simulcasts');
+                }
+              }}
               activeOpacity={0.8}
             >
               <Ionicons
@@ -814,10 +1074,16 @@ export default function SearchScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* ── Active Partition Content ───────────────────────────────────── */}
-          {activeTab === 'browse' && renderBrowsePartition()}
-          {activeTab === 'genres' && renderGenresPartition()}
-          {activeTab === 'simulcasts' && renderSimulcastsPartition()}
+          {/* ── Active Partition Content (Preserved in memory for instantaneous switching) ── */}
+          <View style={activeTab === 'browse' ? undefined : styles.hiddenPartition}>
+            {renderBrowsePartition()}
+          </View>
+          <View style={activeTab === 'genres' ? undefined : styles.hiddenPartition}>
+            {renderGenresPartition()}
+          </View>
+          <View style={activeTab === 'simulcasts' ? undefined : styles.hiddenPartition}>
+            {renderSimulcastsPartition()}
+          </View>
         </ScrollView>
       )}
 
@@ -853,12 +1119,15 @@ export default function SearchScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.bg },
+  container: { flex: 1, backgroundColor: COLORS.bg, paddingTop: 0 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: SPACING.md },
   loadingText: { color: COLORS.textMuted, fontSize: 13, letterSpacing: 2 },
 
   // ── Persistent Search Bar ──────────────────────────────────────────
-  searchSection: { marginTop: SPACING.md, marginBottom: SPACING.xs },
+  searchSection: {
+    marginTop: Platform.OS === 'android' ? SPACING.md : SPACING.sm,
+    marginBottom: SPACING.xs,
+  },
   searchBar: {
     flexDirection: 'row', alignItems: 'center',
     marginHorizontal: SPACING.md,
@@ -938,6 +1207,9 @@ const styles = StyleSheet.create({
     color: '#000',
     fontWeight: '900',
   },
+  hiddenPartition: {
+    display: 'none',
+  },
   livePulseDot: {
     width: 6,
     height: 6,
@@ -982,7 +1254,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.neonGold,
   },
   filterPillActiveFormat: {
-    backgroundColor: 'rgba(191,95,255,0.15)',
+    backgroundColor: 'rgba(255,43,60,0.15)',
     borderColor: COLORS.neon,
   },
   filterPillActiveStatus: {
@@ -1031,27 +1303,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.md,
     marginTop: SPACING.xs,
   },
-  loadMoreBtn: {
-    marginHorizontal: SPACING.md,
-    marginTop: SPACING.sm,
-    marginBottom: SPACING.lg,
-    borderRadius: RADIUS.md,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(255,214,0,0.3)',
+  threeColGridList: {
+    paddingHorizontal: SPACING.md,
+    paddingTop: SPACING.xs,
+    paddingBottom: SPACING.sm,
   },
-  loadMoreGradient: {
-    flexDirection: 'row',
+  threeColRow: {
+    gap: GRID_GAP,
+    marginBottom: SPACING.md,
+    justifyContent: 'flex-start',
+  },
+  lazyLoadFooter: {
+    paddingVertical: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
-  },
-  loadMoreText: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: COLORS.neonGold,
-    letterSpacing: 1,
   },
   emptyStateContainer: {
     alignItems: 'center',
@@ -1259,32 +1524,134 @@ const styles = StyleSheet.create({
   // ── Search Results List ─────────────────────────────────────────────
   grid: { paddingHorizontal: SPACING.md, paddingTop: SPACING.sm, paddingBottom: 110 },
   searchGridRow: { gap: GRID_GAP, marginBottom: SPACING.md, justifyContent: 'flex-start' },
-  backButton: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    marginVertical: SPACING.md, paddingHorizontal: SPACING.md,
+  searchNavButton: {
+    paddingRight: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  backButtonText: { color: COLORS.neon, fontSize: 12, fontWeight: '800', letterSpacing: 1 },
-  requestNudge: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    marginHorizontal: SPACING.sm, marginBottom: SPACING.md,
-    paddingHorizontal: SPACING.md, paddingVertical: 12,
-    backgroundColor: 'rgba(191,95,255,0.07)',
-    borderRadius: RADIUS.md, borderWidth: 1, borderColor: 'rgba(191,95,255,0.15)',
+  searchFooterContainer: {
+    paddingTop: SPACING.md,
+    paddingBottom: SPACING.xl,
   },
-  requestNudgeText: { color: COLORS.textSub, fontSize: 13, fontWeight: '600', flex: 1 },
+  requestFooterCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    padding: SPACING.md,
+    gap: SPACING.sm,
+  },
+  requestFooterIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,214,0,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  requestFooterTextWrap: {
+    flex: 1,
+  },
+  requestFooterTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.text,
+    marginBottom: 2,
+  },
+  requestFooterSub: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+  },
+  requestFooterBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: RADIUS.md,
+    backgroundColor: 'rgba(255,43,60,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,43,60,0.3)',
+  },
+  requestFooterBtnText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: COLORS.neon,
+  },
 
   // ── No Results State ────────────────────────────────────────────────
   noResultsContainer: {
-    flex: 1, alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: SPACING.xl, paddingTop: 80, gap: SPACING.md,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: SPACING.xl,
+    paddingTop: 60,
+    gap: SPACING.md,
   },
-  noResultsTitle: { fontSize: 22, fontWeight: '900', color: COLORS.text, letterSpacing: -0.5, textAlign: 'center' },
-  noResultsBody: { fontSize: 15, color: COLORS.textSub, textAlign: 'center', lineHeight: 24 },
-  requestCta: { borderRadius: RADIUS.lg, overflow: 'hidden', marginTop: SPACING.sm, width: '100%' },
-  requestCtaGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 16 },
-  requestCtaText: { color: '#fff', fontSize: 14, fontWeight: '900', letterSpacing: 2 },
-  backToExplore: { marginTop: SPACING.sm },
-  backToExploreText: { color: COLORS.textMuted, fontSize: 13, fontWeight: '700' },
+  noResultsIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(0,245,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(0,245,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: SPACING.xs,
+  },
+  noResultsTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: COLORS.text,
+    letterSpacing: -0.3,
+    textAlign: 'center',
+  },
+  noResultsBody: {
+    fontSize: 14,
+    color: COLORS.textSub,
+    textAlign: 'center',
+    lineHeight: 22,
+    maxWidth: 320,
+  },
+  noResultsActionRow: {
+    width: '100%',
+    maxWidth: 300,
+    gap: SPACING.sm,
+    marginTop: SPACING.md,
+  },
+  requestCta: {
+    borderRadius: RADIUS.lg,
+    overflow: 'hidden',
+    width: '100%',
+  },
+  requestCtaGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+  },
+  requestCtaText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+  },
+  clearSearchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: RADIUS.lg,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  clearSearchBtnText: {
+    color: COLORS.textSub,
+    fontSize: 13,
+    fontWeight: '700',
+  },
 
   // ── Filter Modal ────────────────────────────────────────────────────
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' },
@@ -1293,7 +1660,7 @@ const styles = StyleSheet.create({
     padding: 24, paddingBottom: 48,
     overflow: 'hidden',
     backgroundColor: 'rgba(19,19,22,0.92)',
-    borderTopWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
+    borderTopWidth: 1, borderColor: COLORS.borderNeutral,
   },
   filterHandle: {
     width: 40, height: 4, borderRadius: 2,
@@ -1307,7 +1674,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 6,
     paddingHorizontal: 16, paddingVertical: 10,
     backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 100, borderWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
+    borderRadius: 100, borderWidth: 1, borderColor: COLORS.borderNeutral,
   },
   filterChipText: { color: COLORS.textSub, fontSize: 12, fontWeight: '700' },
+
+  // ── Search Results Meta + Highlight ──────────────────────────────────
+  searchResultsMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    gap: 2,
+  },
+  searchResultsCountText: {
+    fontSize: 13,
+    color: COLORS.textMuted,
+    fontWeight: '600',
+  },
+  highlightBase: {
+    fontSize: 13,
+    color: COLORS.textSub,
+    fontWeight: '600',
+  },
+  highlightMatch: {
+    color: COLORS.neon,
+    fontWeight: '900',
+    backgroundColor: 'rgba(255,43,60,0.12)',
+    borderRadius: 3,
+  },
 });

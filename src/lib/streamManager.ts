@@ -181,17 +181,85 @@ export async function releaseStreamSession(userId: string): Promise<void> {
 }
 
 /**
+ * Broadcast an instant STOP_OTHER_STREAMS event to all devices actively streaming for this user.
+ */
+export async function broadcastStopStreams(userId: string, sourceDeviceId: string): Promise<void> {
+  try {
+    const topic = `stream-control:${userId}`;
+    const channels = supabase.getChannels();
+    const existing = channels.find((ch) => ch.topic === `realtime:${topic}`);
+
+    if (existing && existing.state === 'joined') {
+      await existing.send({
+        type: 'broadcast',
+        event: 'STOP_OTHER_STREAMS',
+        payload: {
+          sourceDeviceId,
+          timestamp: Date.now(),
+        },
+      });
+      return;
+    }
+
+    const tempChannel = supabase.channel(topic, {
+      config: { broadcast: { ack: true } },
+    });
+
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => {
+        supabase.removeChannel(tempChannel);
+        resolve();
+      }, 3000);
+
+      tempChannel.subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          try {
+            await tempChannel.send({
+              type: 'broadcast',
+              event: 'STOP_OTHER_STREAMS',
+              payload: {
+                sourceDeviceId,
+                timestamp: Date.now(),
+              },
+            });
+          } catch (e) {
+            console.warn('[streamManager] Error broadcasting stop signal:', e);
+          } finally {
+            clearTimeout(timeout);
+            setTimeout(() => {
+              supabase.removeChannel(tempChannel);
+              resolve();
+            }, 250);
+          }
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          clearTimeout(timeout);
+          supabase.removeChannel(tempChannel);
+          resolve();
+        }
+      });
+    });
+  } catch (err) {
+    console.warn('[streamManager] broadcastStopStreams failed (non-fatal):', err);
+  }
+}
+
+/**
  * Remote disconnect: allows a user on their current phone to disconnect
- * other stale/unwanted streaming sessions on other devices.
+ * other stale/unwanted streaming sessions on other devices instantly.
  */
 export async function stopOtherStreams(userId: string): Promise<boolean> {
   try {
     const deviceId = await getDeviceId();
+
+    // 1. Delete rows in Postgres
     const { error } = await supabase
       .from('user_active_streams')
       .delete()
       .eq('user_id', userId)
       .neq('device_id', deviceId);
+
+    // 2. Broadcast instant stop event to all other playing clients via Realtime
+    await broadcastStopStreams(userId, deviceId);
 
     return !error;
   } catch {

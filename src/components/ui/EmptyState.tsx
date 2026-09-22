@@ -1,7 +1,8 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS, SPACING, RADIUS } from '../../constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../../constants/theme';
+import { haptic } from '../../lib/haptics';
 
 interface Props {
   icon?: string;         // Ionicons name
@@ -22,7 +23,12 @@ export default function EmptyState({ icon = 'film-outline', title, subtitle, act
       {actionLabel && onAction && (
         <TouchableOpacity
           style={styles.btn}
-          onPress={onAction}
+          onPress={() => {
+            haptic.light();
+            onAction();
+          }}
+          hitSlop={TOUCH.hitSlop}
+          activeOpacity={0.75}
           accessibilityLabel={actionLabel}
           accessibilityRole="button"
         >
@@ -44,9 +50,9 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: 'rgba(191,95,255,0.1)',
+    backgroundColor: 'rgba(255,43,60,0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(191,95,255,0.3)',
+    borderColor: 'rgba(255,43,60,0.3)',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: SPACING.sm,
@@ -67,7 +73,10 @@ const styles = StyleSheet.create({
     marginTop: SPACING.sm,
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.sm,
-    backgroundColor: 'rgba(191,95,255,0.1)',
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,43,60,0.1)',
     borderRadius: RADIUS.md,
     borderWidth: 1,
     borderColor: COLORS.neon,

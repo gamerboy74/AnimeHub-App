@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Play } from 'lucide-react-native';
 import { AnimeWithStats } from '../../types/database';
+import { COLORS } from '../../constants/theme';
 
 const { width } = Dimensions.get('window');
 
@@ -27,6 +28,8 @@ export const HeroBanner = React.memo(function HeroBanner({ anime, onPress, onPla
           source={{ uri: anime.banner_url || anime.poster_url }}
           style={styles.image}
           contentFit="cover"
+          priority="high"
+          cachePolicy="memory-disk"
           transition={200}
         />
         {/* Top gradient for status bar visibility */}
@@ -61,8 +64,9 @@ export const HeroBanner = React.memo(function HeroBanner({ anime, onPress, onPla
           <TouchableOpacity
             onPress={() => onPlay(anime)}
             style={styles.playBtn}
+            activeOpacity={0.8}
           >
-            <Play color="#080810" size={20} fill="#080810" />
+            <Play color="#FFFFFF" size={20} fill="#FFFFFF" />
             <Text style={styles.playBtnText}>Watch Now</Text>
           </TouchableOpacity>
         </View>
@@ -72,8 +76,8 @@ export const HeroBanner = React.memo(function HeroBanner({ anime, onPress, onPla
 });
 
 const styles = StyleSheet.create({
-  placeholder: { height: 384, backgroundColor: '#1a1a2e' },
-  root: { width: '100%', backgroundColor: '#080810' },
+  placeholder: { height: 384, backgroundColor: COLORS.bgCard },
+  root: { width: '100%', backgroundColor: COLORS.bg },
   imageContainer: { width, height: 450 },
   image: { width: '100%', height: '100%' },
   topGradient: { position: 'absolute', top: 0, left: 0, right: 0, height: 100 },
@@ -84,23 +88,25 @@ const styles = StyleSheet.create({
   },
   genreRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   genreText: {
-    color: '#BF5FFF', fontWeight: '700', fontSize: 12,
+    color: COLORS.primary, fontWeight: '700', fontSize: 12,
     textTransform: 'uppercase', letterSpacing: 1.5,
   },
   title: {
-    color: '#FFFFFF', fontSize: 32, fontWeight: '700',
+    color: '#FFFFFF', fontSize: 32, fontWeight: '800',
     textAlign: 'center', marginBottom: 24,
+    textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 6,
   },
   buttonRow: { flexDirection: 'row', width: '100%', justifyContent: 'center' },
   playBtn: {
-    backgroundColor: '#BF5FFF',
+    backgroundColor: COLORS.primary,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 12, paddingHorizontal: 32, borderRadius: 100,
-    shadowColor: '#BF5FFF', shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8, shadowRadius: 12, elevation: 10,
+    paddingVertical: 14, paddingHorizontal: 36, borderRadius: 100,
+    shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.65, shadowRadius: 16, elevation: 12,
     gap: 8,
   },
   playBtnText: {
-    color: '#080810', fontWeight: '700', fontSize: 18,
+    color: '#FFFFFF', fontWeight: '800', fontSize: 18,
+    letterSpacing: 0.5,
   },
 });

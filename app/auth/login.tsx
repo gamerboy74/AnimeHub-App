@@ -6,9 +6,10 @@ import {
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../../src/constants/theme';
 import { useAuth } from '../../src/context/AuthContext';
-import { supabase } from '../../src/lib/supabase';
+import { supabase, userAPI } from '../../src/lib/supabase';
+import { haptic } from '../../src/lib/haptics';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -17,9 +18,11 @@ export default function LoginScreen() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [passwordNotSet, setPasswordNotSet] = useState(false);
 
   useEffect(() => {
     setError(null);
@@ -33,22 +36,48 @@ export default function LoginScreen() {
   const [forgotError, setForgotError] = useState<string | null>(null);
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      setError('Please fill in all fields');
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
+      haptic.light();
+      setError('Please enter your email address');
       return;
     }
+
+    if (!password) {
+      haptic.light();
+      // Check if this account was created via Google and has no password set
+      const authStatus = await userAPI.checkEmailAuthStatus(cleanEmail);
+      if (authStatus.exists && !authStatus.hasPassword) {
+        setPasswordNotSet(true);
+        setError('Password not set for this account. You registered with Google.');
+        return;
+      }
+      setError('Please enter your password');
+      return;
+    }
+
+    haptic.medium();
     setLoading(true);
     setError(null);
+    setPasswordNotSet(false);
+
     try {
-      const { error: signInError } = await signIn(email, password);
+      const { error: signInError } = await signIn(cleanEmail, password);
       if (signInError) {
-        setError(signInError.message);
+        haptic.light();
+        // Check if user exists and has no password set (e.g. Google OAuth account)
+        const authStatus = await userAPI.checkEmailAuthStatus(cleanEmail);
+        if (authStatus.exists && !authStatus.hasPassword) {
+          setPasswordNotSet(true);
+          setError('Password not set for this account. This account was registered with Google.');
+        } else {
+          setError(signInError.message);
+        }
       } else {
-        // AuthGuard in _layout.tsx handles MFA redirect automatically
-        // on every session change, so we just navigate to home.
         router.replace('/(tabs)');
       }
     } catch (e: any) {
+      haptic.light();
       setError(e.message || 'An unexpected error occurred');
     } finally {
       setLoading(false);
@@ -56,6 +85,7 @@ export default function LoginScreen() {
   };
 
   const handleGoogle = async () => {
+    haptic.selection();
     setGoogleLoading(true);
     setError(null);
     try {
@@ -77,9 +107,11 @@ export default function LoginScreen() {
 
   const handleForgotPassword = async () => {
     if (!forgotEmail.trim()) {
+      haptic.light();
       setForgotError('Please enter your email address');
       return;
     }
+    haptic.selection();
     setForgotLoading(true);
     setForgotError(null);
     try {
@@ -100,7 +132,18 @@ export default function LoginScreen() {
     >
       <ScrollView contentContainerStyle={[styles.inner, { paddingTop: insets.top + SPACING.lg }]}>
         {/* Back */}
-        <TouchableOpacity style={styles.back} onPress={() => router.back()}>
+        <TouchableOpacity
+          style={styles.back}
+          hitSlop={TOUCH.hitSlop}
+          activeOpacity={0.7}
+          onPress={() => {
+            haptic.selection();
+            if (router.canGoBack()) router.back();
+            else router.replace('/(tabs)');
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
           <Ionicons name="chevron-back" size={22} color={COLORS.text} />
         </TouchableOpacity>
 
@@ -116,7 +159,36 @@ export default function LoginScreen() {
         <Text style={styles.title}>SIGN IN</Text>
         <Text style={styles.subtitle}>WELCOME BACK</Text>
 
-        {error ? (
+        {/* Password Not Set Banner */}
+        {passwordNotSet ? (
+          <View style={styles.passwordNotSetBox}>
+            <View style={styles.passwordNotSetHeader}>
+              <Ionicons name="information-circle" size={20} color="#FFA500" />
+              <Text style={styles.passwordNotSetTitle}>Password Not Set</Text>
+            </View>
+            <Text style={styles.passwordNotSetText}>
+              This account was registered using Google sign-in and does not have a password set.
+            </Text>
+            <TouchableOpacity
+              style={styles.googleActionBtn}
+              onPress={handleGoogle}
+              activeOpacity={0.85}
+              disabled={googleLoading}
+            >
+              <Ionicons name="logo-google" size={16} color="#FFFFFF" />
+              <Text style={styles.googleActionBtnText}>Sign In with Google</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.forgotActionBtn}
+              onPress={() => {
+                setForgotEmail(email);
+                setForgotVisible(true);
+              }}
+            >
+              <Text style={styles.forgotActionBtnText}>Or set a password via email link →</Text>
+            </TouchableOpacity>
+          </View>
+        ) : error ? (
           <View style={styles.errorBox}>
             <Ionicons name="warning-outline" size={14} color={COLORS.danger} />
             <Text style={styles.errorText}>{error}</Text>
@@ -133,7 +205,10 @@ export default function LoginScreen() {
                 placeholder="Enter your email"
                 placeholderTextColor={COLORS.textMuted}
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={(text) => {
+                  setEmail(text);
+                  setPasswordNotSet(false);
+                }}
                 autoCapitalize="none"
                 keyboardType="email-address"
                 textContentType="emailAddress"
@@ -151,11 +226,25 @@ export default function LoginScreen() {
                 placeholder="Enter your password"
                 placeholderTextColor={COLORS.textMuted}
                 value={password}
-                onChangeText={setPassword}
-                secureTextEntry
+                onChangeText={(text) => {
+                  setPassword(text);
+                  setPasswordNotSet(false);
+                }}
+                secureTextEntry={!showPassword}
                 textContentType="password"
                 autoComplete="password"
               />
+              <TouchableOpacity
+                onPress={() => setShowPassword(!showPassword)}
+                hitSlop={TOUCH.hitSlop}
+                style={{ padding: 4 }}
+              >
+                <Ionicons
+                  name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                  size={18}
+                  color={COLORS.textMuted}
+                />
+              </TouchableOpacity>
             </View>
             <TouchableOpacity style={styles.forgot} onPress={() => { setForgotEmail(email); setForgotVisible(true); }}>
               <Text style={styles.forgotText}>Forgot password?</Text>
@@ -194,7 +283,13 @@ export default function LoginScreen() {
 
         <View style={styles.footer}>
           <Text style={styles.footerText}>Don't have an account?</Text>
-          <TouchableOpacity onPress={() => router.push('/auth/signup')}>
+          <TouchableOpacity
+            hitSlop={TOUCH.hitSlop}
+            onPress={() => {
+              haptic.selection();
+              router.replace('/auth/signup');
+            }}
+          >
             <Text style={styles.footerLink}>Sign Up</Text>
           </TouchableOpacity>
         </View>
@@ -211,7 +306,16 @@ export default function LoginScreen() {
           <View style={styles.modalCard}>
             <TouchableOpacity
               style={styles.modalClose}
-              onPress={() => { setForgotVisible(false); setForgotSuccess(false); setForgotError(null); }}
+              hitSlop={TOUCH.hitSlop}
+              activeOpacity={0.7}
+              onPress={() => {
+                haptic.selection();
+                setForgotVisible(false);
+                setForgotSuccess(false);
+                setForgotError(null);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
             >
               <Ionicons name="close" size={20} color={COLORS.textMuted} />
             </TouchableOpacity>
@@ -258,7 +362,7 @@ export default function LoginScreen() {
                   disabled={forgotLoading}
                 >
                   {forgotLoading ? (
-                    <ActivityIndicator color={COLORS.bg} />
+                    <ActivityIndicator color="#FFFFFF" />
                   ) : (
                     <Text style={styles.loginBtnText}>SEND RESET LINK</Text>
                   )}
@@ -290,7 +394,7 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.sm,
     shadowColor: COLORS.neon, shadowOpacity: 0.5, shadowRadius: 10,
   },
-  logoText: { fontSize: 28, color: COLORS.bg, fontWeight: '900' },
+  logoText: { fontSize: 28, color: '#FFFFFF', fontWeight: '900' },
   appName: { fontSize: 24, color: COLORS.text, fontWeight: '900', letterSpacing: 2 },
   tagline: { fontSize: 10, color: COLORS.neon, fontWeight: '700', letterSpacing: 2 },
 
@@ -313,6 +417,36 @@ const styles = StyleSheet.create({
   },
   successText: { color: COLORS.neon, fontSize: 13, fontWeight: '600', flex: 1, lineHeight: 20 },
 
+  // Password Not Set Alert Box
+  passwordNotSetBox: {
+    backgroundColor: 'rgba(255, 165, 0, 0.08)',
+    borderRadius: RADIUS.md, borderWidth: 1, borderColor: 'rgba(255, 165, 0, 0.3)',
+    padding: SPACING.md, marginTop: SPACING.md, gap: 10,
+  },
+  passwordNotSetHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+  },
+  passwordNotSetTitle: {
+    color: '#FFA500', fontSize: 14, fontWeight: '800', letterSpacing: 0.5,
+  },
+  passwordNotSetText: {
+    color: COLORS.textSub, fontSize: 12, lineHeight: 18,
+  },
+  googleActionBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: '#DB4437', height: 42, borderRadius: RADIUS.sm,
+    marginTop: 2,
+  },
+  googleActionBtnText: {
+    color: '#FFFFFF', fontSize: 13, fontWeight: '800',
+  },
+  forgotActionBtn: {
+    alignSelf: 'center', paddingVertical: 4,
+  },
+  forgotActionBtnText: {
+    color: COLORS.neon, fontSize: 12, fontWeight: '700',
+  },
+
   form: { marginTop: SPACING.xl, gap: SPACING.lg },
   inputWrap: { gap: SPACING.xs },
   label: { fontSize: 10, color: COLORS.textSub, fontWeight: '700', letterSpacing: 1.5, marginLeft: 4 },
@@ -334,7 +468,7 @@ const styles = StyleSheet.create({
     shadowColor: COLORS.neon, shadowOpacity: 0.3, shadowRadius: 8,
   },
   loginBtnDisabled: { opacity: 0.6 },
-  loginBtnText: { color: COLORS.bg, fontSize: 15, fontWeight: '800', letterSpacing: 1 },
+  loginBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', letterSpacing: 1 },
 
   dividerRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, marginVertical: SPACING.lg },
   dividerLine: { flex: 1, height: 1, backgroundColor: COLORS.border },

@@ -13,6 +13,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING, RADIUS } from '../../constants/theme';
 import { PlanFeature } from '../../lib/supabase';
+import { haptic } from '../../lib/haptics';
 
 interface Props {
   features: PlanFeature[];
@@ -92,7 +93,10 @@ export default function FeatureComparisonTable({ features, accentColor }: Props)
       {/* Table Title Bar */}
       <TouchableOpacity
         style={styles.titleBar}
-        onPress={() => setCollapsed(prev => !prev)}
+        onPress={() => {
+          haptic.selection();
+          setCollapsed(prev => !prev);
+        }}
         activeOpacity={0.8}
       >
         <View style={styles.titleLeft}>
@@ -197,7 +201,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bgCard,
     borderRadius: RADIUS.lg,
     borderWidth: 1,
-    borderColor: 'rgba(191, 95, 255, 0.2)',
+    borderColor: 'rgba(255, 43, 60, 0.2)',
     overflow: 'hidden',
     marginTop: SPACING.sm,
   },

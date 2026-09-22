@@ -18,7 +18,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as NavigationBar from 'expo-navigation-bar';
-import { COLORS, SHADOWS } from '../src/constants/theme';
+import { COLORS, SHADOWS, TOUCH } from '../src/constants/theme';
+import { haptic } from '../src/lib/haptics';
 import {
   getAllDownloads,
   deleteDownload,
@@ -431,8 +432,8 @@ function GroupedAnimeCard({
             <Text style={styles.rowBadgeText}>{group.episodes.length} EP</Text>
           </View>
           <View style={styles.rowBadge}>
-            <Ionicons name="folder-open-outline" size={10} color={COLORS.neon ?? '#BF5FFF'} />
-            <Text style={[styles.rowBadgeText, { color: COLORS.neon ?? '#BF5FFF' }]}>{formatBytes(group.totalSizeBytes)}</Text>
+            <Ionicons name="folder-open-outline" size={10} color={COLORS.neon} />
+            <Text style={[styles.rowBadgeText, { color: COLORS.neon }]}>{formatBytes(group.totalSizeBytes)}</Text>
           </View>
         </View>
       </View>
@@ -713,7 +714,17 @@ export default function DownloadsScreen() {
 
         {/* Sub-Header (Glassmorphic Topbar) */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => setSelectedAnimeName(null)} style={styles.backBtn}>
+          <TouchableOpacity
+            onPress={() => {
+              haptic.selection();
+              setSelectedAnimeName(null);
+            }}
+            style={styles.backBtn}
+            hitSlop={TOUCH.hitSlop}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Back to library"
+          >
             <Ionicons name="arrow-back" size={22} color={COLORS.text} />
           </TouchableOpacity>
           <View style={styles.headerTitleWrap}>
@@ -791,7 +802,17 @@ export default function DownloadsScreen() {
 
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+        <TouchableOpacity
+          onPress={() => {
+            haptic.selection();
+            router.back();
+          }}
+          style={styles.backBtn}
+          hitSlop={TOUCH.hitSlop}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
           <Ionicons name="arrow-back" size={22} color={COLORS.text} />
         </TouchableOpacity>
         <View style={styles.headerTitleWrap}>
@@ -810,8 +831,12 @@ export default function DownloadsScreen() {
             <TouchableOpacity
               key={s}
               style={[styles.sortChip, sortBy === s && styles.sortChipActive]}
-              onPress={() => setSortBy(s)}
+              onPress={() => {
+                haptic.selection();
+                setSortBy(s);
+              }}
               activeOpacity={0.8}
+              accessibilityRole="button"
             >
               <Text style={[styles.sortChipText, sortBy === s && styles.sortChipTextActive]}>
                 {s === 'recent' ? 'Recent' : s === 'title' ? 'Title (A-Z)' : 'Largest Size'}
@@ -876,7 +901,7 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     gap: 14,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(191,95,255,0.08)',
+    borderBottomColor: 'rgba(255,43,60,0.1)',
     backgroundColor: COLORS.bg ?? '#080810',
     zIndex: 10,
   },
@@ -906,7 +931,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.06)',
   },
   sortChipActive: {
-    backgroundColor: 'rgba(191,95,255,0.18)',
+    backgroundColor: 'rgba(255,43,60,0.18)',
     borderColor: COLORS.neon,
   },
   sortChipText: {
@@ -1038,7 +1063,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     justifyContent: 'flex-end',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(191,95,255,0.08)',
+    borderBottomColor: 'rgba(255,43,60,0.1)',
   },
   detailBannerBlur: {
     ...StyleSheet.absoluteFillObject,
@@ -1114,7 +1139,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bgCard ?? '#0E0E1A',
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: 'rgba(191,95,255,0.08)',
+    borderColor: 'rgba(255,43,60,0.12)',
     gap: 14,
     ...SHADOWS.neon,
     shadowOpacity: 0.04,

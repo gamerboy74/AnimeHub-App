@@ -13,8 +13,9 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { COLORS, SPACING, RADIUS } from '../../constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../../constants/theme';
 import { userAPI, User, supabase } from '../../lib/supabase';
+import { haptic } from '../../lib/haptics';
 
 interface Props {
   visible: boolean;
@@ -85,9 +86,10 @@ export default function EditProfileModal({ visible, onClose, user, refreshUser }
   }, [username, user]);
 
   const handleSave = async () => {
-    const cleanUsername = username.trim();
+    const cleanUsername = username.trim().toLowerCase();
     if (!cleanUsername || usernameError) return;
 
+    haptic.medium();
     setSaving(true);
     try {
       if (cleanUsername !== user.username) {
@@ -133,7 +135,16 @@ export default function EditProfileModal({ visible, onClose, user, refreshUser }
 
           <View style={styles.headerRow}>
             <Text style={styles.title}>Edit Profile Information</Text>
-            <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <TouchableOpacity
+              onPress={() => {
+                haptic.light();
+                onClose();
+              }}
+              hitSlop={TOUCH.hitSlop}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Close modal"
+            >
               <Ionicons name="close" size={22} color={COLORS.textSub} />
             </TouchableOpacity>
           </View>
@@ -190,16 +201,16 @@ export default function EditProfileModal({ visible, onClose, user, refreshUser }
             activeOpacity={0.88}
           >
             <LinearGradient
-              colors={[COLORS.neon, COLORS.accent]}
+              colors={[COLORS.neon, COLORS.primaryDark]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
               style={styles.saveGradient}
             >
               {saving ? (
-                <ActivityIndicator color="#000" size="small" />
+                <ActivityIndicator color="#FFFFFF" size="small" />
               ) : (
                 <>
-                  <Ionicons name="checkmark-sharp" size={16} color="#000" />
+                  <Ionicons name="checkmark-sharp" size={16} color="#FFFFFF" />
                   <Text style={styles.saveBtnText}>Save Profile Changes</Text>
                 </>
               )}
@@ -225,7 +236,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: RADIUS.lg,
     borderTopRightRadius: RADIUS.lg,
     borderWidth: 1,
-    borderColor: 'rgba(189,157,255,0.15)',
+    borderColor: COLORS.borderNeutral,
     padding: 24,
     paddingBottom: 36,
   },
@@ -264,7 +275,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.04)',
     borderRadius: RADIUS.md,
     borderWidth: 1,
-    borderColor: 'rgba(189,157,255,0.15)',
+    borderColor: COLORS.borderNeutral,
     color: COLORS.text,
     paddingHorizontal: 14,
     paddingVertical: 12,
@@ -308,7 +319,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   saveBtnText: {
-    color: '#000',
+    color: '#FFFFFF',
     fontWeight: '900',
     fontSize: 14,
     letterSpacing: 0.3,

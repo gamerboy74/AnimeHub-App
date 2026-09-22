@@ -81,6 +81,29 @@ export function useAnimeList(searchQuery?: string, genre?: string) {
   });
 }
 
+export async function fetchGenreAnime(genre: string, limit = 10): Promise<AnimeWithStats[]> {
+  if (!genre) return [];
+  const { data, error } = await supabase
+    .from('anime_with_stats')
+    .select('id, title, title_japanese, poster_url, banner_url, rating, year, status, type, genres, total_episodes, user_rating_avg, review_count, total_watches')
+    .contains('genres', [genre])
+    .order('rating', { ascending: false, nullsFirst: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data as AnimeWithStats[]) || [];
+}
+
+export function useGenreAnime(genre?: string, limit = 10) {
+  return useQuery({
+    queryKey: ['anime', 'genre-popular', genre, limit],
+    staleTime: 10 * 60 * 1000,
+    gcTime: 20 * 60 * 1000,
+    retry: 1,
+    enabled: !!genre,
+    queryFn: () => fetchGenreAnime(genre!, limit),
+  });
+}
+
 export function useAnimeDetails(animeId?: string) {
   return useQuery({
     queryKey: ['anime', animeId],
@@ -162,11 +185,16 @@ export function useUserHistory() {
       if (!userId) return [];
       const { data, error } = await supabase
         .from('user_watch_progress_detailed')
-        .select('*')
+        .select(
+          'anime_id, episode_id, episode_number, episode_title, anime_title, ' +
+          'thumbnail_url, poster_url, progress_seconds, episode_duration, ' +
+          'progress_percentage, is_completed, total_episodes, last_watched'
+        )
         .eq('user_id', userId)
-        .order('last_watched', { ascending: false });
+        .order('last_watched', { ascending: false })
+        .limit(50); // Only the most recent 50 — sufficient for all UI
       if (error) throw error;
-      return data;
+      return (data as unknown as UserWatchProgressDetailed[]) ?? [];
     },
     enabled: !!userId,
   });

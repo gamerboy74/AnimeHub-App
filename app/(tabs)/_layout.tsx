@@ -15,11 +15,11 @@ export default function TabLayout() {
   return (
     <Tabs
       tabBar={(props) => <CustomTabBar {...props} />}
-      screenOptions={{
-        header: () => <UniversalHeader />,
+      screenOptions={({ route }) => ({
+        header: ({ options }) => <UniversalHeader title={route.name !== 'index' ? (options.title as string) : undefined} />,
         headerShown: true,
         tabBarStyle: { position: 'absolute' },
-      }}
+      })}
     >
       <Tabs.Screen name="index" options={{ title: t('home') }} />
       <Tabs.Screen name="explore" options={{ title: t('exploreLabel') }} />
@@ -67,6 +67,7 @@ function CustomTabBar({ state, navigation }: any) {
                   size={22}
                   color={focused ? COLORS.neon : COLORS.textMuted}
                 />
+                {focused && <View style={styles.activeIndicator} />}
               </View>
               <Text style={[styles.tabLabel, focused && styles.tabLabelActive]}>
                 {tab.label}
@@ -113,7 +114,18 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   iconWrapActive: {
-    backgroundColor: 'rgba(191,95,255,0.12)',
+    backgroundColor: 'rgba(255,43,60,0.25)',
+  },
+  activeIndicator: {
+    position: 'absolute',
+    bottom: -4,
+    height: 3,
+    width: 20,
+    borderRadius: 2,
+    backgroundColor: COLORS.neon,
+    shadowColor: COLORS.neon,
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
   },
   iconGlow: {
     position: 'absolute',

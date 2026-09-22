@@ -69,7 +69,7 @@ export const styles = StyleSheet.create({
   },
   embedTrackFill: {
     height: '100%',
-    backgroundColor: '#00F5FF',
+    backgroundColor: COLORS.neon,
     borderRadius: 3,
   },
   embedChip: {
@@ -132,6 +132,21 @@ export const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     flex: 1,
+  },
+  embedPickerVipBadge: {
+    backgroundColor: 'rgba(255, 215, 0, 0.18)',
+    borderColor: 'rgba(255, 215, 0, 0.6)',
+    borderWidth: 1,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    marginLeft: 6,
+  },
+  embedPickerVipBadgeText: {
+    color: '#FFD700',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
 
   // ── Main container ──────────────────────────────────────────────────────
@@ -456,7 +471,7 @@ export const styles = StyleSheet.create({
     borderTopLeftRadius: 32,
     borderTopRightRadius: 32,
     borderWidth: 1,
-    borderColor: "rgba(189,157,255,0.2)",
+    borderColor: COLORS.border,
   },
   selectorHeader: {
     flexDirection: "row",

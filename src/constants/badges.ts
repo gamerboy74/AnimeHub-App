@@ -18,11 +18,11 @@ export interface BadgeDef {
 }
 
 // Imported lazily to avoid circular deps with theme — use raw hex values here.
-const NEON       = '#BF5FFF';
-const NEON_CYAN  = '#00F5FF';
-const NEON_GOLD  = '#FFD600';
-const NEON_PULSE = '#00F5B4';
-const NEON_PINK  = '#FF2D78';
+const NEON       = '#FF2B3C';
+const NEON_CYAN  = '#38BDF8';
+const NEON_GOLD  = '#FFB800';
+const NEON_PULSE = '#00E676';
+const NEON_PINK  = '#FF4757';
 
 export const BADGE_DEFS: BadgeDef[] = [
   {
@@ -81,13 +81,13 @@ export const BADGE_DEFS: BadgeDef[] = [
   },
   {
     id: '9', code: 'LEGEND', name: 'LEGEND', desc: 'Watch 50 episodes',
-    icon: 'star', color: '#BF5FFF',
+    icon: 'star', color: NEON_GOLD,
     check:    (p) => p.length >= 50,
     progress: (p) => ({ cur: Math.min(p.length, 50), max: 50 }),
   },
   {
     id: '10', code: 'OTAKU', name: 'OTAKU KING', desc: 'Watch 100 episodes',
-    icon: 'trophy', color: '#E040FB',
+    icon: 'trophy', color: NEON,
     check:    (p) => p.length >= 100,
     progress: (p) => ({ cur: Math.min(p.length, 100), max: 100 }),
   },

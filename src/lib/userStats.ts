@@ -8,7 +8,7 @@
 
 export const GENRE_COLORS = [
   '#00F5FF', // Cyan
-  '#BF5FFF', // Neon Purple
+  '#FF4757', // Scarlet
   '#FF7346', // Coral
   '#FFD600', // Gold
   '#FF2D78', // Hot Pink

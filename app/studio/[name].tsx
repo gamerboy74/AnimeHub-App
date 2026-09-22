@@ -7,9 +7,10 @@ import { useQuery } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
-import { COLORS, SPACING, RADIUS, SHADOWS } from '../../src/constants/theme';
+import { COLORS, SPACING, RADIUS, SHADOWS, TOUCH } from '../../src/constants/theme';
 import { animeAPI, Anime } from '../../src/lib/supabase';
 import AnimeCard from '../../src/components/ui/AnimeCard';
+import { haptic } from '../../src/lib/haptics';
 
 const STUDIO_COVERS: Record<string, string> = {
   'MAPPA': 'https://images.unsplash.com/photo-1578632767115-351597cf2477?q=80&w=600&auto=format&fit=crop',
@@ -25,7 +26,7 @@ const STUDIO_COVERS: Record<string, string> = {
 };
 
 const STUDIO_COLORS: Record<string, string> = {
-  'MAPPA': COLORS.neon ?? '#BF5FFF',
+  'MAPPA': COLORS.neon,
   'Ufotable': COLORS.neonCyan ?? '#00F5FF',
   'Madhouse': '#FFD600',
   'Wit Studio': COLORS.text ?? '#F0EEFF',
@@ -69,6 +70,7 @@ export default function StudioBrowseScreen() {
   const coverUrl = anime[0]?.banner_url || anime[0]?.poster_url || fallbackCover;
 
   const handleCardPress = useCallback((id: string) => {
+    haptic.selection();
     router.push(`/anime/${id}`);
   }, [router]);
 
@@ -101,7 +103,17 @@ export default function StudioBrowseScreen() {
         
         {/* Navigation / Header */}
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => {
+              haptic.selection();
+              router.back();
+            }}
+            hitSlop={TOUCH.hitSlop}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
             <Ionicons name="chevron-back" size={22} color={COLORS.text} />
           </TouchableOpacity>
           <View style={styles.titleWrap}>
@@ -137,7 +149,7 @@ export default function StudioBrowseScreen() {
           data={anime}
           keyExtractor={keyExtractor}
           numColumns={numColumns}
-          contentContainerStyle={[styles.grid, { paddingBottom: insets.bottom + 32 }]}
+          contentContainerStyle={[styles.grid, { paddingBottom: insets.bottom + 100 }]}
           columnWrapperStyle={styles.row}
           renderItem={renderItem}
           showsVerticalScrollIndicator={false}
@@ -164,9 +176,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.md,
   },
   backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: 'rgba(14,14,26,0.6)',
     alignItems: 'center',
     justifyContent: 'center',

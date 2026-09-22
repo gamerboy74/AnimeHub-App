@@ -154,7 +154,7 @@ export default function Disable2FAModal({ visible, onClose, onSuccess, t }: Disa
                   onPress={onClose}
                 >
                   <LinearGradient
-                    colors={[COLORS.neon, '#BD9DFF']}
+                    colors={[COLORS.neon, COLORS.primaryDark]}
                     style={styles.modalSaveGradient}
                   >
                     <Text style={styles.modalSaveText}>Go Back</Text>

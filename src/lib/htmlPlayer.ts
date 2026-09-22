@@ -9,7 +9,8 @@ export function buildRawPlayerHTML(
   embedUrl: string,
   isHls: boolean,
   qualityPreference: string = 'auto',
-  audioPreference: string = ''
+  audioPreference: string = '',
+  isPremium: boolean = false
 ): string {
   return `
     <!DOCTYPE html>
@@ -187,6 +188,13 @@ export function buildRawPlayerHTML(
 
           window.__rn_setQuality = function(idx) {
             if (hlsInstance) {
+              var targetLevel = hlsInstance.levels[idx];
+              var h = targetLevel ? (targetLevel.height || 0) : 0;
+              var isPrem = ${isPremium ? 'true' : 'false'};
+              if (!isPrem && h > 720) {
+                _rnPost({ type: 'quality_locked', requestedHeight: h });
+                return;
+              }
               hlsInstance.currentLevel = idx;
               _rnPost({ type: 'qualityChanged', current: idx });
             }
@@ -347,23 +355,29 @@ export function buildRawPlayerHTML(
           // Match quality preference helper
           function applyHlsQualityPreference(levels) {
             var rawPref = '${qualityPreference || 'auto'}';
-            if (!rawPref || rawPref === 'auto' || !levels || levels.length === 0) return;
-            var targetH = parseInt(rawPref);
-            if (isNaN(targetH)) return;
+            if (!levels || levels.length === 0) return;
+            var isPrem = ${isPremium ? 'true' : 'false'};
+            var maxAllowedH = isPrem ? 1080 : 720;
+            var targetH = rawPref && rawPref !== 'auto' ? parseInt(rawPref) : maxAllowedH;
+            if (isNaN(targetH) || targetH > maxAllowedH) {
+              targetH = maxAllowedH;
+            }
 
             var bestIdx = -1;
             var bestDiff = 999999;
             for (var i = 0; i < levels.length; i++) {
               var h = levels[i].height || 0;
-              if (h === targetH) {
-                bestIdx = i;
-                break;
-              }
-              if (h > 0) {
-                var diff = Math.abs(h - targetH);
-                if (diff < bestDiff) {
-                  bestDiff = diff;
+              if (h <= maxAllowedH) {
+                if (h === targetH) {
                   bestIdx = i;
+                  break;
+                }
+                if (h > 0) {
+                  var diff = Math.abs(h - targetH);
+                  if (diff < bestDiff) {
+                    bestDiff = diff;
+                    bestIdx = i;
+                  }
                 }
               }
             }
@@ -429,17 +443,39 @@ export function buildRawPlayerHTML(
                     current: hls.currentLevel,
                   });
 
+                  // Cap adaptive streaming at maximum tier allowed (720p for free, 1080p for premium)
+                  var isPrem = ${isPremium ? 'true' : 'false'};
+                  var maxAllowedCap = isPrem ? 1080 : 720;
+                  var capIdx = -1;
+                  for (var c = 0; c < levels.length; c++) {
+                    var lh = levels[c].height || 0;
+                    if (lh <= maxAllowedCap) {
+                      if (capIdx === -1 || lh > (levels[capIdx].height || 0)) {
+                        capIdx = c;
+                      }
+                    }
+                  }
+                  if (capIdx !== -1 && hls) {
+                    hls.autoLevelCapping = capIdx;
+                  }
+
                   applyHlsQualityPreference(levels);
 
                   menuQuality.innerHTML = '';
-                  function createQualityOption(label, idx) {
+                  function createQualityOption(label, idx, isLocked) {
                     var btn = document.createElement('button');
-                    btn.innerText = label;
-                    btn.style.cssText = 'background:transparent; border:none; color:#fff; padding:10px 14px; font-size:11px; font-weight:700; text-align:left; width:100%; cursor:pointer; outline:none; transition:background 0.15s; border-bottom:1px solid rgba(255,255,255,0.06);';
-                    btn.addEventListener('mouseenter', function() { btn.style.background = 'rgba(255,255,255,0.08)'; });
-                    btn.addEventListener('mouseleave', function() { btn.style.background = 'transparent'; });
+                    btn.innerText = label + (isLocked ? ' 🔒 VIP' : '');
+                    btn.style.cssText = 'background:transparent; border:none; color:' + (isLocked ? 'rgba(255,255,255,0.45)' : '#fff') + '; padding:10px 14px; font-size:11px; font-weight:700; text-align:left; width:100%; cursor:' + (isLocked ? 'not-allowed' : 'pointer') + '; outline:none; transition:background 0.15s; border-bottom:1px solid rgba(255,255,255,0.06);';
+                    if (!isLocked) {
+                      btn.addEventListener('mouseenter', function() { btn.style.background = 'rgba(255,255,255,0.08)'; });
+                      btn.addEventListener('mouseleave', function() { btn.style.background = 'transparent'; });
+                    }
                     btn.addEventListener('click', function(e) {
                       e.stopPropagation();
+                      if (isLocked) {
+                        _rnPost({ type: 'quality_locked', requestedHeight: 1080 });
+                        return;
+                      }
                       hls.currentLevel = idx;
                       btnQuality.innerText = label;
                       menuQuality.style.display = 'none';
@@ -449,10 +485,14 @@ export function buildRawPlayerHTML(
                     menuQuality.appendChild(btn);
                   }
 
-                  createQualityOption('AUTO', -1);
+                  createQualityOption('AUTO', -1, false);
                   levels.forEach(function(level, idx) {
-                    var label = level.height ? level.height + 'P' : 'LEVEL ' + idx;
-                    createQualityOption(label, idx);
+                    var h = level.height || 0;
+                    // Filter out qualities above 1080p entirely (1080p is highest we can go)
+                    if (h > 1080) return;
+                    var isLocked = !isPrem && h > 720;
+                    var label = h ? h + 'P' : 'LEVEL ' + idx;
+                    createQualityOption(label, idx, isLocked);
                   });
 
                   btnQuality.style.display = 'inline-block';

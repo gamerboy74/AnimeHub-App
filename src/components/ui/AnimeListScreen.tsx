@@ -1,16 +1,17 @@
 import React, { useCallback } from 'react';
 import {
   View, Text, FlatList, StyleSheet,
-  TouchableOpacity, ActivityIndicator, RefreshControl, Dimensions,
+  TouchableOpacity, ActivityIndicator, RefreshControl, useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { COLORS, SPACING, RADIUS } from '../../constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../../constants/theme';
 import { AnimeWithStats } from '../../lib/supabase';
 import { fetchJikanWithFallback } from '../../lib/jikan';
 import AnimeCard from './AnimeCard';
+import { haptic } from '../../lib/haptics';
 
 export type ListType = 'trending' | 'top-rated' | 'new-arrivals';
 
@@ -32,21 +33,20 @@ const CONFIG: Record<ListType, { title: string; label: string; queryKey: string 
   },
 };
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const NUM_COLUMNS = 3;
-// Calculate item width for 3 columns:
-// Padding: SPACING.md (16) on each side, gap between cols: SPACING.xs (8)
-const HORIZONTAL_PADDING = SPACING.md * 2;
-const TOTAL_GAPS = (NUM_COLUMNS - 1) * SPACING.xs;
-const ITEM_WIDTH = Math.floor((SCREEN_WIDTH - HORIZONTAL_PADDING - TOTAL_GAPS) / NUM_COLUMNS);
-
 interface Props { type: ListType }
 
 export default function AnimeListScreen({ type }: Props) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { width: windowWidth } = useWindowDimensions();
   const cfg = CONFIG[type];
+
+  // Dynamic responsive columns based on viewport
+  const numColumns = windowWidth >= 1024 ? 6 : windowWidth >= 768 ? 5 : windowWidth >= 600 ? 4 : 3;
+  const horizontalPadding = SPACING.md * 2;
+  const totalGaps = (numColumns - 1) * SPACING.xs;
+  const itemWidth = Math.floor((windowWidth - horizontalPadding - totalGaps) / numColumns);
 
   // TanStack query — caches results and warms instantly from home cache
   const {
@@ -72,16 +72,16 @@ export default function AnimeListScreen({ type }: Props) {
   }, [router]);
 
   const renderItem = useCallback(({ item }: { item: AnimeWithStats }) => (
-    <View style={{ width: ITEM_WIDTH }}>
+    <View style={{ width: itemWidth }}>
       <AnimeCard
         anime={item}
         size="sm"
         showStats={type === 'top-rated'}
-        style={{ width: ITEM_WIDTH, marginRight: 0 }}
+        style={{ width: itemWidth, marginRight: 0 }}
         onPress={handleCardPress}
       />
     </View>
-  ), [handleCardPress, type]);
+  ), [handleCardPress, type, itemWidth]);
 
   const keyExtractor = useCallback((item: AnimeWithStats) => item.id, []);
 
@@ -89,7 +89,16 @@ export default function AnimeListScreen({ type }: Props) {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() => {
+            haptic.selection();
+            router.back();
+          }}
+          hitSlop={TOUCH.hitSlop}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <Ionicons name="chevron-back" size={22} color={COLORS.text} />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
@@ -118,10 +127,11 @@ export default function AnimeListScreen({ type }: Props) {
         </View>
       ) : (
         <FlatList
+          key={`anime-list-${numColumns}`}
           data={animeList}
           keyExtractor={keyExtractor}
-          numColumns={NUM_COLUMNS}
-          contentContainerStyle={styles.list}
+          numColumns={numColumns}
+          contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 100 }]}
           columnWrapperStyle={styles.row}
           showsVerticalScrollIndicator={false}
           removeClippedSubviews
@@ -155,9 +165,9 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.border,
   },
   backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: COLORS.bgCard,
     alignItems: 'center',
     justifyContent: 'center',
@@ -182,7 +192,7 @@ const styles = StyleSheet.create({
   retryBtn: {
     paddingHorizontal: SPACING.lg,
     paddingVertical: SPACING.sm,
-    backgroundColor: 'rgba(191,95,255,0.12)',
+    backgroundColor: 'rgba(255,43,60,0.12)',
     borderRadius: RADIUS.md,
     borderWidth: 1,
     borderColor: COLORS.neon,

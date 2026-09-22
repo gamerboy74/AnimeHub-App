@@ -8,10 +8,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
-import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../src/constants/theme';
 import { useAuth } from '../src/context/AuthContext';
 import { userAPI } from '../src/lib/supabase';
 import { BADGE_DEFS } from '../src/constants/badges';
+import { haptic } from '../src/lib/haptics';
 import {
   computeGenres,
   computeStreak,
@@ -205,7 +206,17 @@ export default function StatsScreen() {
     >
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          hitSlop={TOUCH.hitSlop}
+          activeOpacity={0.7}
+          onPress={() => {
+            haptic.selection();
+            router.back();
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
           <Ionicons name="chevron-back" size={22} color={COLORS.text} />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
@@ -299,7 +310,7 @@ export default function StatsScreen() {
         </View>
         <BlurView intensity={20} style={styles.weeklyCard}>
           <LinearGradient
-            colors={['rgba(191,95,255,0.06)', 'transparent']}
+            colors={['rgba(255,43,60,0.08)', 'transparent']}
             style={StyleSheet.absoluteFill}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
@@ -319,7 +330,7 @@ export default function StatsScreen() {
                     <LinearGradient
                       colors={
                         day.isToday
-                          ? [COLORS.neon, '#BF5FFF']
+                          ? [COLORS.neon, COLORS.neonPink]
                           : day.minutes > 0
                           ? [COLORS.neonCyan, '#00F5B4']
                           : ['rgba(255,255,255,0.08)', 'rgba(255,255,255,0.04)']
@@ -419,7 +430,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: COLORS.border, marginBottom: SPACING.sm,
   },
   backBtn: {
-    width: 38, height: 38, borderRadius: 19,
+    width: 40, height: 40, borderRadius: 20,
     backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: COLORS.border,
   },
@@ -427,10 +438,10 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 20, color: COLORS.text, fontWeight: '900' },
   earnedPill: {
     paddingHorizontal: 10, paddingVertical: 4,
-    backgroundColor: 'rgba(191,95,255,0.1)',
-    borderRadius: 20, borderWidth: 1, borderColor: 'rgba(191,95,255,0.3)',
+    backgroundColor: 'rgba(255,43,60,0.12)',
+    borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,43,60,0.35)',
   },
-  earnedPillText: { fontSize: 10, color: '#BF5FFF', fontWeight: '800' },
+  earnedPillText: { fontSize: 10, color: COLORS.neon, fontWeight: '800' },
 
   section: { paddingHorizontal: SPACING.md, marginBottom: SPACING.xl },
   sectionHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: SPACING.md },
@@ -576,6 +587,6 @@ const styles = StyleSheet.create({
   badgeProgressFill: { height: '100%', borderRadius: 2 },
   badgeProgressLabel: { fontSize: 7, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 0.5 },
 
-  emptyBox: { backgroundColor: COLORS.bgElevated, borderRadius: RADIUS.lg, padding: 30, alignItems: 'center', gap: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(189,157,255,0.15)' },
+  emptyBox: { backgroundColor: COLORS.bgElevated, borderRadius: RADIUS.lg, padding: 30, alignItems: 'center', gap: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: COLORS.borderNeutral },
   emptyText: { fontSize: 12, color: COLORS.textMuted, textAlign: 'center' },
 });

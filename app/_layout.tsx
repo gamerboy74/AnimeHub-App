@@ -103,16 +103,16 @@ class ErrorBoundary extends Component<{ children: ReactNode }, EBState> {
 
 const ebStyles = StyleSheet.create({
   container: {
-    flex: 1, backgroundColor: '#080810',
+    flex: 1, backgroundColor: '#08090D',
     alignItems: 'center', justifyContent: 'center',
     padding: 24, gap: 12,
   },
   icon: { fontSize: 48 },
-  title: { fontSize: 20, fontWeight: '900', color: '#F0EEFF', textAlign: 'center' },
-  msg: { fontSize: 12, color: '#8880AA', textAlign: 'center', lineHeight: 18 },
+  title: { fontSize: 20, fontWeight: '900', color: '#F8F9FD', textAlign: 'center' },
+  msg: { fontSize: 12, color: '#9DA4B4', textAlign: 'center', lineHeight: 18 },
   btn: {
     marginTop: 8, paddingVertical: 12, paddingHorizontal: 32,
-    backgroundColor: '#BF5FFF', borderRadius: 12,
+    backgroundColor: '#FF2B3C', borderRadius: 12,
   },
   btnText: { color: '#fff', fontWeight: '800', fontSize: 14, letterSpacing: 0.5 },
 });
@@ -184,6 +184,9 @@ function AuthGuard() {
     return () => { cancelled = true; };
   }, [session]); // ← session only, never pathname
 
+  // Tracks whether user previously had an active session during this app lifecycle.
+  const hadSessionRef = useRef(false);
+
   // ── Route protection ─────────────────────────────────────────────────────
   // Reads from needsMfaRef (no extra network call) on every navigation.
   useEffect(() => {
@@ -191,11 +194,17 @@ function AuthGuard() {
 
     if (!session) {
       const isProtected = PROTECTED_PREFIXES.some(p => pathname.startsWith(p));
-      if (isProtected) {
+      // If user had an active session that was revoked/signed out remotely,
+      // or if navigating to any protected route, redirect to login immediately.
+      if (hadSessionRef.current || isProtected) {
+        hadSessionRef.current = false;
         router.replace('/auth/login');
       }
-    } else if (needsMfaRef.current && pathname !== '/auth/mfa') {
-      router.replace('/auth/mfa');
+    } else {
+      hadSessionRef.current = true;
+      if (needsMfaRef.current && pathname !== '/auth/mfa') {
+        router.replace('/auth/mfa');
+      }
     }
   }, [session, isAuthReady, pathname]);
 
@@ -208,6 +217,7 @@ function AuthGuard() {
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="watch/[id]" options={{ presentation: 'fullScreenModal' }} />
       <Stack.Screen name="downloads" options={{ headerShown: false }} />
+      <Stack.Screen name="plans" options={{ presentation: 'card', headerShown: false }} />
       <Stack.Screen name="auth/login" options={{ presentation: 'modal' }} />
       <Stack.Screen name="auth/signup" options={{ presentation: 'modal' }} />
       <Stack.Screen name="auth/mfa" options={{ presentation: 'modal' }} />

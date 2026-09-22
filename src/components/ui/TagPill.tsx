@@ -12,10 +12,10 @@ interface Props {
 
 const VARIANT_STYLES: Record<Variant, { bg: string; border: string; color: string }> = {
   default:  { bg: 'rgba(255,255,255,0.06)', border: COLORS.border,              color: COLORS.textSub  },
-  neon:     { bg: 'rgba(191,95,255,0.12)',  border: 'rgba(191,95,255,0.4)',     color: COLORS.neon     },
-  gold:     { bg: 'rgba(255,214,0,0.12)',   border: 'rgba(255,214,0,0.4)',      color: COLORS.neonGold },
-  danger:   { bg: 'rgba(255,45,120,0.12)', border: 'rgba(255,45,120,0.4)',      color: COLORS.neonPink },
-  success:  { bg: 'rgba(0,245,180,0.12)',  border: 'rgba(0,245,180,0.4)',       color: COLORS.success  },
+  neon:     { bg: 'rgba(255,43,60,0.12)',   border: 'rgba(255,43,60,0.4)',      color: COLORS.neon     },
+  gold:     { bg: 'rgba(255,184,0,0.12)',   border: 'rgba(255,184,0,0.4)',      color: COLORS.neonGold },
+  danger:   { bg: 'rgba(255,43,60,0.15)',   border: 'rgba(255,43,60,0.5)',      color: COLORS.danger   },
+  success:  { bg: 'rgba(0,230,118,0.12)',   border: 'rgba(0,230,118,0.4)',      color: COLORS.success  },
 };
 
 export default function TagPill({ label, variant = 'default', onPress }: Props) {

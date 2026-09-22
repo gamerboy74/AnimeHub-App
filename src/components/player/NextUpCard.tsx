@@ -1,4 +1,4 @@
-import React from "react";
+import React, { memo } from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { BlurView } from "expo-blur";
 import { Image } from "expo-image";
@@ -17,7 +17,7 @@ interface NextUpCardProps {
   onDismiss?: () => void;
 }
 
-export default function NextUpCard({
+function NextUpCard({
   visible,
   nextEpisode,
   posterUrl,
@@ -75,3 +75,10 @@ export default function NextUpCard({
     </View>
   );
 }
+
+export default memo(NextUpCard, (prev, next) =>
+  prev.visible === next.visible &&
+  prev.autoPlayCountdown === next.autoPlayCountdown &&
+  prev.nextEpisode?.id === next.nextEpisode?.id &&
+  prev.posterUrl === next.posterUrl
+);

@@ -4,6 +4,14 @@ import { Session } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
+import { getDeviceId } from '../lib/streamManager';
+import {
+  recordLocalSessionStart,
+  clearLocalSessionStart,
+  getLocalSessionStartTime,
+  revokeOtherSessions,
+} from '../lib/sessionManager';
+import { getRandomAnimeAvatar } from '../constants/avatars';
 
 // Required for expo-web-browser to complete OAuth sessions on Android
 WebBrowser.maybeCompleteAuthSession();
@@ -13,9 +21,11 @@ type AuthContextType = {
   user: User | null;
   loading: boolean;
   isAuthReady: boolean;  // true once the initial session check is complete
+  hasPassword: boolean;  // true if account has password/email credentials set
   signIn: (email: string, password: string) => Promise<{ error: any }>;
-  signUp: (email: string, password: string, username: string) => Promise<{ error: any }>;
+  signUp: (email: string, password: string, username: string, avatarUrl?: string) => Promise<{ error: any; data?: any; needsEmailConfirmation?: boolean }>;
   signOut: () => Promise<void>;
+  logOutOtherSessions: () => Promise<{ error?: any }>;
   refreshUser: () => Promise<void>;
   signInWithGoogle: () => Promise<{ error: any }>;
   resetPassword: (email: string) => Promise<{ error: any }>;
@@ -42,6 +52,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // the INITIAL_SESSION event has already fired with the cached session.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT' || (event === 'TOKEN_REFRESHED' && !session)) {
+        await clearLocalSessionStart();
         setSession(null);
         setUser(null);
         setLoading(false);
@@ -55,6 +66,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Handle stale / invalid tokens gracefully
       if (event === 'INITIAL_SESSION' && session === null) {
         // No stored session — user is definitely logged out
+        await clearLocalSessionStart();
         setSession(null);
         setUser(null);
         setLoading(false);
@@ -67,6 +79,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setSession(session);
       if (session?.user) {
+        // Record login time if not already recorded
+        const existingLoginTime = await getLocalSessionStartTime();
+        if (!existingLoginTime) {
+          await recordLocalSessionStart();
+        }
         // fetchUserProfile sets isAuthReady inside its finally block.
         // We pass session.user directly to avoid the stale-closure on session state.
         await fetchUserProfile(session.user.id, session.user, event === 'INITIAL_SESSION');
@@ -124,6 +141,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user?.id, user?.subscription_type, user?.subscription_expires_at]);
 
+  // ── Local & Server Sign Out ───────────────────────────────────────────────
+  const signOut = useCallback(async () => {
+    await clearLocalSessionStart();
+    await supabase.auth.signOut();
+    setUser(null);
+    setSession(null);
+  }, []);
+
+  // ── Realtime: listen for remote session revocation broadcast ───────────────
+  // Instantly logs out other connected devices when "Log out other sessions" is invoked.
+  useEffect(() => {
+    if (!session?.user?.id) return;
+
+    const uid = session.user.id;
+    const topic = `user-auth-control:${uid}`;
+    const channel = supabase
+      .channel(topic, {
+        config: { broadcast: { ack: true } },
+      })
+      .on('broadcast', { event: 'REVOKE_OTHER_SESSIONS' }, async (payload) => {
+        const myDeviceId = await getDeviceId();
+        const sourceDeviceId = payload?.sourceDeviceId ?? payload?.payload?.sourceDeviceId;
+        if (sourceDeviceId && sourceDeviceId !== myDeviceId) {
+          console.log('[Auth] Remote session revocation received for this device. Logging out.');
+          await signOut();
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session?.user?.id, signOut]);
+
   // fetchUserProfile accepts the authUser argument directly to avoid closing over
   // the session state variable (which is a new object on every auth event).
   const fetchUserProfile = useCallback(async (userId: string, authUser?: any, isInitial = false) => {
@@ -152,7 +203,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             id: userId,
             email: authUser.email || '',
             username: generatedUsername,
-            avatar_url: metadata.avatar_url || null,
+            avatar_url: metadata.avatar_url || getRandomAnimeAvatar().url,
             subscription_type: 'free' as const,
             role: 'user',
             is_admin: false,
@@ -174,6 +225,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(null);
         }
       } else {
+        // Backfill anime avatar for existing accounts if avatar_url is missing
+        if (!data.avatar_url) {
+          const starterAvatar = getRandomAnimeAvatar().url;
+          Promise.resolve(userAPI.updateProfile(userId, { avatar_url: starterAvatar })).catch(() => {});
+          data.avatar_url = starterAvatar;
+        }
+
         // Dynamic expiry check: if subscription expired, normalize immediately
         const isLapsed = Boolean(
           data.subscription_type === 'premium' &&
@@ -198,6 +256,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else {
           setUser(data);
         }
+
+        // Check if other sessions were revoked while this device was closed/offline
+        try {
+          const { data: prefs } = await userAPI.getPreferences(userId);
+          const meta = (prefs?.subscription_meta as Record<string, unknown>) || {};
+          if (meta.sessions_revoked_at && meta.revoked_by_device) {
+            const revokedAt = new Date(meta.sessions_revoked_at as string).getTime();
+            const myDeviceId = await getDeviceId();
+            if (meta.revoked_by_device !== myDeviceId) {
+              const loginTime = await getLocalSessionStartTime();
+              if (loginTime > 0 && loginTime < revokedAt) {
+                console.log('[Auth] Session was revoked while device was offline. Signing out.');
+                await clearLocalSessionStart();
+                await supabase.auth.signOut();
+                setUser(null);
+                setSession(null);
+                return;
+              }
+            }
+          }
+        } catch {
+          // Best effort check
+        }
       }
     } catch {
       // Keep existing user if we have one — do not clear state on transient errors
@@ -216,51 +297,99 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error };
   }, []);
 
-  const signUp = useCallback(async (email: string, password: string, username: string) => {
-    // Pass username in options.data so that Supabase database triggers expecting it don't crash
+  const signUp = useCallback(async (email: string, password: string, username: string, avatarUrl?: string) => {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanUsername = username.trim();
+
+    // 1. Verify username availability beforehand
+    const userCheck = await userAPI.checkUsernameAvailable(cleanUsername);
+    if (!userCheck.available) {
+      return { error: { message: userCheck.reason || 'Username is not available' } };
+    }
+
+    // Pick chosen avatar or assign a random starter anime character avatar
+    const assignedAvatar = avatarUrl || getRandomAnimeAvatar().url;
+
+    // 2. Register account via Supabase Auth
     const { data, error } = await supabase.auth.signUp({
-      email,
+      email: cleanEmail,
       password,
       options: {
         data: {
-          username: username,
+          username: cleanUsername,
+          avatar_url: assignedAvatar,
         },
       },
     });
-    if (!error && data.user) {
-      // Retry the profile insert/upsert up to 3 times — network blips on signup are common
+
+    if (error) {
+      return { error };
+    }
+
+    // Handle anti-enumeration response: if email is already taken, identities is empty
+    if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+      return {
+        error: { message: 'An account with this email already exists. Please sign in.' },
+      };
+    }
+
+    // Case A: Supabase auto-confirmed the user (data.session exists)
+    if (data?.session && data?.user) {
       let insertError: any = null;
       for (let attempt = 1; attempt <= 3; attempt++) {
         const { error: err } = await supabase.from('users').upsert({
           id: data.user.id,
-          email,
-          username,
+          email: cleanEmail,
+          username: cleanUsername,
+          avatar_url: assignedAvatar,
           subscription_type: 'free',
           role: 'user',
           is_admin: false,
         });
         insertError = err;
         if (!err) break;
-        await new Promise(r => setTimeout(r, attempt * 400)); // back-off: 400ms, 800ms
+        await new Promise(r => setTimeout(r, attempt * 300));
       }
+
       if (insertError) {
-        // Auth user created but profile missing — surface this as an error
-        // Clean up the orphaned auth user so they can retry signup
-        await supabase.auth.signOut();
-        return { error: { message: 'Account created but profile setup failed. Please try again.' } };
+        if (insertError.message?.includes('unique') || insertError.code === '23505') {
+          return { error: { message: 'This username is already taken. Please choose another.' } };
+        }
+        console.warn('[Auth] Profile upsert warning:', insertError.message);
       }
+      return { error: null, data, needsEmailConfirmation: false };
     }
-    return { error };
+
+    // Case B: Email confirmation required (data.session is null)
+    // The username metadata is safely persisted in auth.users.
+    // fetchUserProfile will auto-create the public.users record as soon as
+    // the user clicks the email link and signs in with an authenticated session.
+    return {
+      error: null,
+      data,
+      needsEmailConfirmation: true,
+    };
   }, []);
 
-  const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setSession(null);
-  }, []);
+  const logOutOtherSessions = useCallback(async () => {
+    if (!session?.user?.id) {
+      return { error: new Error('User not authenticated') };
+    }
+    const res = await revokeOtherSessions(session.user.id);
+    if (!res.success) {
+      return { error: new Error(res.error || 'Failed to log out other devices') };
+    }
+    return { error: null };
+  }, [session?.user?.id]);
 
   const refreshUser = useCallback(async () => {
-    if (session?.user) await fetchUserProfile(session.user.id, session.user);
+    const { data: { session: freshSession } } = await supabase.auth.getSession();
+    if (freshSession) {
+      setSession(freshSession);
+      if (freshSession.user) await fetchUserProfile(freshSession.user.id, freshSession.user);
+    } else if (session?.user) {
+      await fetchUserProfile(session.user.id, session.user);
+    }
   }, [session?.user, fetchUserProfile]);
 
   const resetPassword = useCallback(async (email: string) => {
@@ -318,8 +447,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []); // No session dep needed — does not read session state
 
+  // Determine if the user has an email/password credential configured
+  const hasPassword = Boolean(
+    session?.user?.app_metadata?.providers?.includes('email') ||
+    session?.user?.identities?.some((id: any) => id.provider === 'email')
+  );
+
   return (
-    <AuthContext.Provider value={{ session, user, loading, isAuthReady, signIn, signUp, signOut, refreshUser, signInWithGoogle, resetPassword }}>
+    <AuthContext.Provider value={{ session, user, loading, isAuthReady, hasPassword, signIn, signUp, signOut, logOutOtherSessions, refreshUser, signInWithGoogle, resetPassword }}>
       {children}
     </AuthContext.Provider>
   );

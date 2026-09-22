@@ -11,7 +11,7 @@ import { userAPI } from '../../lib/supabase';
 import SideDrawer from './SideDrawer';
 import { useQuery } from '@tanstack/react-query';
 
-export default function UniversalHeader() {
+export default function UniversalHeader({ title }: { title?: string }) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
@@ -56,7 +56,7 @@ export default function UniversalHeader() {
             </View>
           </TouchableOpacity>
 
-          {/* Center: Branding */}
+          {/* Center: Branding + optional tab title */}
           <TouchableOpacity
             style={styles.logoRow}
             onPress={() => router.push('/')}
@@ -65,7 +65,10 @@ export default function UniversalHeader() {
             accessibilityRole="header"
             accessibilityLabel="AnimeHub Home"
           >
-            <Text style={styles.logoText}>ANIMEHUB</Text>
+            <Text style={styles.logoText}>
+              <Text style={styles.logoTextWhite}>ANIME</Text>
+              <Text style={styles.logoTextRed}>HUB</Text>
+            </Text>
           </TouchableOpacity>
 
           {/* Right: Actions */}
@@ -173,19 +176,36 @@ const styles = StyleSheet.create({
   // Logo
   logoRow: {
     flex: 1,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 4,
   },
   logoText: {
     fontSize: 20,
     fontWeight: '900',
-    color: COLORS.neonCyan,
     letterSpacing: 2,
     fontStyle: 'italic',
-    textShadowColor: 'rgba(0,245,255,0.4)',
+    textTransform: 'uppercase',
+  },
+  logoTextWhite: {
+    color: '#FFFFFF',
+    textShadowColor: 'rgba(255,255,255,0.3)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 8,
+  },
+  logoTextRed: {
+    color: COLORS.primary,
+    textShadowColor: 'rgba(255,43,60,0.6)',
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 10,
-    textTransform: 'uppercase',
+  },
+  tabTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+    letterSpacing: 1.5,
+    fontStyle: 'normal',
   },
   // Right actions
   actions: {
@@ -234,7 +254,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: 'rgba(191,95,255,0.2)',
+    backgroundColor: 'rgba(255,43,60,0.15)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -243,7 +263,7 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     borderRadius: 17,
     borderWidth: 1,
-    borderColor: 'rgba(191,95,255,0.3)',
+    borderColor: 'rgba(255,43,60,0.3)',
     shadowColor: COLORS.neon,
     shadowOpacity: 1,
     shadowRadius: 5,

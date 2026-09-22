@@ -6,46 +6,46 @@ module.exports = {
     extend: {
       colors: {
         // Base
-        bg: '#080810',
-        bgCard: '#0E0E1A',
-        bgElevated: '#13131F',
+        bg: '#08090D',
+        bgCard: '#10121A',
+        bgElevated: '#161924',
         
         // Legacy aliases for components
-        'bg-card': '#0E0E1A',
-        'bg-elevated': '#13131F',
+        'bg-card': '#10121A',
+        'bg-elevated': '#161924',
 
         // Accents
-        neon: '#BF5FFF',
-        neonPink: '#FF2D78',
-        neonCyan: '#00F5FF',
-        neonGold: '#FFD600',
+        neon: '#FF2B3C',
+        neonPink: '#FF4757',
+        neonCyan: '#38BDF8',
+        neonGold: '#FFB800',
         
-        primary: '#BF5FFF',
-        secondary: '#FF2D78',
-        accent: '#BF5FFF',
-        premium: '#FFD600',
+        primary: '#FF2B3C',
+        secondary: '#FF4757',
+        accent: '#FF2B3C',
+        premium: '#FFB800',
 
         // Text
-        text: '#F0EEFF',
-        textSub: '#8A87A8',
-        textMuted: '#4A4766',
+        text: '#F8F9FD',
+        textSub: '#9DA4B4',
+        textMuted: '#5F667A',
         
-        textMain: '#F0EEFF',
-        'text-sub': '#8A87A8',
-        'text-muted': '#4A4766',
+        textMain: '#F8F9FD',
+        'text-sub': '#9DA4B4',
+        'text-muted': '#5F667A',
 
         // Borders
-        border: 'rgba(191,95,255,0.2)',
-        borderDim: 'rgba(191,95,255,0.1)',
-        borderBright: 'rgba(191,95,255,0.6)',
+        border: 'rgba(255, 43, 60, 0.15)',
+        borderDim: 'rgba(255, 255, 255, 0.08)',
+        borderBright: 'rgba(255, 43, 60, 0.55)',
         
-        'border-dim': 'rgba(191,95,255,0.1)',
-        'border-bright': 'rgba(191,95,255,0.6)',
+        'border-dim': 'rgba(255, 255, 255, 0.08)',
+        'border-bright': 'rgba(255, 43, 60, 0.55)',
 
         // Status
-        success: '#00F5B4',
-        danger: '#FF2D78',
-        warning: '#FFD600',
+        success: '#00E676',
+        danger: '#FF2B3C',
+        warning: '#FFB800',
       },
       fontFamily: {
         display: ['SpaceGrotesk'],

@@ -8,9 +8,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../src/constants/theme';
 import { userAPI } from '../src/lib/supabase';
 import { useAuth } from '../src/context/AuthContext';
+import { haptic } from '../src/lib/haptics';
 
 export default function FavoritesScreen() {
   const router = useRouter();
@@ -85,7 +86,16 @@ export default function FavoritesScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() => {
+            haptic.selection();
+            router.back();
+          }}
+          hitSlop={TOUCH.hitSlop}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <Ionicons name="chevron-back" size={22} color={COLORS.text} />
         </TouchableOpacity>
         <View>
@@ -185,11 +195,11 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
   center: { alignItems: 'center', justifyContent: 'center', gap: SPACING.md },
   header: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, padding: SPACING.md },
-  backBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border },
+  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border },
   headerSub: { fontSize: 10, color: COLORS.neonPulse || COLORS.neon, letterSpacing: 2, fontWeight: '700' },
   headerTitle: { fontSize: 22, color: COLORS.text, fontWeight: '900' },
 
-  list: { paddingHorizontal: SPACING.md, paddingBottom: SPACING.xxl },
+  list: { paddingHorizontal: SPACING.md, paddingBottom: 110 },
   animeRow: {
     flexDirection: 'row', gap: SPACING.md,
     paddingVertical: SPACING.md, alignItems: 'center',
@@ -201,7 +211,7 @@ const styles = StyleSheet.create({
   ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   ratingText: { fontSize: 11, color: COLORS.neonGold, fontWeight: '700' },
   removeBtn: {
-    width: 36, height: 36, borderRadius: 18,
+    width: 40, height: 40, borderRadius: 20,
     backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center',
   },
   separator: { height: 1, backgroundColor: COLORS.border },
@@ -211,7 +221,7 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.sm, paddingHorizontal: SPACING.xl,
     backgroundColor: COLORS.neon, borderRadius: RADIUS.md,
   },
-  loginBtnText: { color: COLORS.bg, fontWeight: '800', letterSpacing: 1 },
+  loginBtnText: { color: '#FFFFFF', fontWeight: '800', letterSpacing: 1 },
 
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: SPACING.sm },
   emptyText: { fontSize: 14, color: COLORS.textSub, fontWeight: '700' },

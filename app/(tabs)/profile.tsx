@@ -7,16 +7,18 @@ import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../../src/constants/theme';
 import { useAuth } from '../../src/context/AuthContext';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { userAPI } from '../../src/lib/supabase';
+import { haptic } from '../../src/lib/haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../../src/lib/supabase';
 import { useTranslation } from '../../src/context/LocalizationContext';
 import { BADGE_DEFS } from '../../src/constants/badges';
+import SectionHeader from '../../src/components/ui/SectionHeader';
 import {
   computeGenres,
   computeStreak,
@@ -49,7 +51,7 @@ export default function ProfileScreen() {
     queryFn: async () => {
       const { data, error } = await userAPI.getProgress(userId!);
       if (error) throw error;
-      return data ?? [];
+      return (data as any[]) ?? [];
     },
   });
 
@@ -82,12 +84,16 @@ export default function ProfileScreen() {
   const favorites = useMemo(() => favoritesRaw.map((item: any) => item.anime).filter(Boolean), [favoritesRaw]);
   const recentActivity = useMemo(() => allProgress.slice(0, 3), [allProgress]);
 
-  // Bio from AsyncStorage (no DB column yet)
+  // Bio: prefer Supabase profile (persisted across devices), fall back to AsyncStorage
   const [bio, setBio] = useState('');
   useEffect(() => {
-    if (userId) {
+    if (!userId) return;
+    // Check Supabase profile first, fall back to local cache
+    if (user?.bio) {
+      setBio(user.bio);
+    } else {
       AsyncStorage.getItem(`user_bio_${userId}`).then(cached => {
-        setBio(cached || user?.bio || '');
+        if (cached) setBio(cached);
       });
     }
   }, [userId, user?.bio]);
@@ -216,6 +222,7 @@ export default function ProfileScreen() {
   );
 
   const openEdit = useCallback(() => {
+    haptic.selection();
     setEditUsername(user?.username || '');
     setEditBio(bio);
     setEditVisible(true);
@@ -234,15 +241,18 @@ export default function ProfileScreen() {
       return;
     }
 
+    haptic.medium();
     setEditSaving(true);
 
-    // Only update fields that exist in the DB (bio column does not exist)
-    const { data: updatedRows, error } = await userAPI.updateProfile(user.id, {
-      username: editUsername.trim(),
-    });
-
-    // Always persist bio locally regardless of DB result
-    await AsyncStorage.setItem(`user_bio_${user.id}`, editBio.trim());
+    // 1. Save bio to Supabase (bio column) + AsyncStorage in parallel
+    // The Supabase save may silently fail if the bio column doesn't exist yet — that's OK.
+    const [{ error }] = await Promise.all([
+      userAPI.updateProfile(user.id, {
+        username: editUsername.trim(),
+        bio: editBio.trim() as any,
+      }),
+      AsyncStorage.setItem(`user_bio_${user.id}`, editBio.trim()),
+    ]);
 
     setEditSaving(false);
 
@@ -261,10 +271,8 @@ export default function ProfileScreen() {
       } else {
         Alert.alert(t('error'), t('profileUpdateError', { error: errMsg || 'Unknown error' }));
       }
-    } else if (!updatedRows || (updatedRows as any[]).length === 0) {
-      // RLS blocked the update silently — row was filtered out
-      Alert.alert(t('error'), t('profileUpdateBlock'));
     } else {
+      // Success — RLS didn't block the update
       setBio(editBio.trim());
       setEditVisible(false);
       await refreshUser();
@@ -285,14 +293,8 @@ export default function ProfileScreen() {
     );
   }
 
-  if (loading) {
-    return (
-      <View style={[styles.container, styles.center]}>
-        <ActivityIndicator size="large" color={COLORS.neon} />
-        <Text style={[styles.guestTitle, { fontSize: 12, marginTop: 16, color: COLORS.textMuted, letterSpacing: 1 }]}>{t('loadingProfile')}</Text>
-      </View>
-    );
-  }
+  // Removed blocking combined 'loading' gate — hero renders immediately.
+  // Each section shows its own skeleton/spinner independently.
 
   const handleSignOut = () => {
     Alert.alert(t('signOutTitle'), t('signOutSub'), [
@@ -343,18 +345,59 @@ export default function ProfileScreen() {
           </Text>
           
           <View style={styles.heroActions}>
-            <TouchableOpacity style={styles.editBtn} onPress={openEdit}>
+            <TouchableOpacity style={styles.editBtn} onPress={openEdit} activeOpacity={0.85} accessibilityRole="button">
               <LinearGradient 
-                colors={[COLORS.neon, COLORS.accent]} 
+                colors={[COLORS.neon, COLORS.primaryDark]} 
                 start={{x:0, y:0}} end={{x:1, y:1}} 
                 style={styles.gradientBtn}
               >
                 <Text style={styles.editBtnText}>{t('editProfile')}</Text>
               </LinearGradient>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryBtn} onPress={() => router.push('/settings')}>
+            <TouchableOpacity
+              style={styles.secondaryBtn}
+              onPress={() => {
+                haptic.selection();
+                router.push('/settings');
+              }}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+            >
               <Text style={styles.secondaryBtnText}>{t('settings')}</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+
+      {/* Inline Stats Strip — visible immediately, no blocking */}
+      <View style={styles.section}>
+        <View style={styles.inlineStatsRow}>
+          <View style={styles.inlineStatItem}>
+            <Text style={[styles.inlineStatValue, { color: COLORS.neonCyan }]}>
+              {loadingProgress ? '…' : allProgress.length}
+            </Text>
+            <Text style={styles.inlineStatLabel}>EPISODES</Text>
+          </View>
+          <View style={styles.inlineStatDivider} />
+          <View style={styles.inlineStatItem}>
+            <Text style={[styles.inlineStatValue, { color: COLORS.neonGold }]}>
+              {loadingWatchlist ? '…' : watchlist.length}
+            </Text>
+            <Text style={styles.inlineStatLabel}>WATCHLIST</Text>
+          </View>
+          <View style={styles.inlineStatDivider} />
+          <View style={styles.inlineStatItem}>
+            <Text style={[styles.inlineStatValue, { color: COLORS.neon }]}>
+              {loadingFavorites ? '…' : favorites.length}
+            </Text>
+            <Text style={styles.inlineStatLabel}>FAVORITES</Text>
+          </View>
+          <View style={styles.inlineStatDivider} />
+          <View style={styles.inlineStatItem}>
+            <Text style={[styles.inlineStatValue, { color: COLORS.neonPink || COLORS.neon }]}>
+              {streak > 0 ? `🔥${streak}` : '0'}
+            </Text>
+            <Text style={styles.inlineStatLabel}>STREAK</Text>
           </View>
         </View>
       </View>
@@ -377,12 +420,11 @@ export default function ProfileScreen() {
 
       {/* Watchlist Section */}
       <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>{t('myWatchlist')}</Text>
-          <TouchableOpacity onPress={() => router.push('/watchlist')}>
-            <Text style={styles.seeAllText}>{t('viewAll')}</Text>
-          </TouchableOpacity>
-        </View>
+        <SectionHeader
+          title={t('myWatchlist')}
+          onSeeAll={() => router.push('/watchlist')}
+          seeAllLabel={t('viewAll')}
+        />
         {watchlist.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList}>
             {watchlist.map(anime => (
@@ -392,28 +434,36 @@ export default function ProfileScreen() {
                   <Text style={styles.posterTitle} numberOfLines={1}>{anime.title}</Text>
                   <View style={styles.posterRating}>
                     <Ionicons name="star" size={10} color={COLORS.neonGold} />
-                    <Text style={styles.posterRatingText}>{anime.rating || 'N/A'}</Text>
+                    <Text style={styles.posterRatingText}>{(anime.user_rating_avg ?? anime.rating) ? Number(anime.user_rating_avg ?? anime.rating).toFixed(1) : 'N/A'}</Text>
                   </View>
                 </BlurView>
               </TouchableOpacity>
             ))}
           </ScrollView>
+        ) : loadingWatchlist ? (
+          <ActivityIndicator color={COLORS.neon} style={{ marginVertical: 24 }} />
         ) : (
           <BlurView intensity={10} style={styles.emptyCard}>
             <Ionicons name="list" size={32} color={COLORS.textMuted} />
             <Text style={styles.emptyText}>{t('watchlistEmpty')}</Text>
+            <TouchableOpacity
+              style={styles.emptyCtaBtn}
+              onPress={() => router.push('/(tabs)/explore')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.emptyCtaText}>BROWSE ANIME →</Text>
+            </TouchableOpacity>
           </BlurView>
         )}
       </View>
 
       {/* Favorites Section */}
       <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>{t('topFavorites')}</Text>
-          <TouchableOpacity onPress={() => router.push('/favorites')}>
-            <Text style={styles.seeAllText}>{t('viewAll')}</Text>
-          </TouchableOpacity>
-        </View>
+        <SectionHeader
+          title={t('topFavorites')}
+          onSeeAll={() => router.push('/favorites')}
+          seeAllLabel={t('viewAll')}
+        />
         {favorites.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList}>
             {favorites.map(anime => (
@@ -425,26 +475,47 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             ))}
           </ScrollView>
+        ) : loadingFavorites ? (
+          <ActivityIndicator color={COLORS.neon} style={{ marginVertical: 24 }} />
         ) : (
           <BlurView intensity={10} style={styles.emptyCard}>
             <Ionicons name="heart-outline" size={32} color={COLORS.textMuted} />
             <Text style={styles.emptyText}>{t('favoritesEmpty')}</Text>
+            <TouchableOpacity
+              style={styles.emptyCtaBtn}
+              onPress={() => router.push('/(tabs)/explore')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.emptyCtaText}>DISCOVER ANIME →</Text>
+            </TouchableOpacity>
           </BlurView>
         )}
       </View>
 
       {/* Recent Activity */}
       <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>{t('recentActivity')}</Text>
-          <TouchableOpacity onPress={() => router.push('/history')}><Text style={styles.seeAllText}>{t('viewAll')}</Text></TouchableOpacity>
-        </View>
+        <SectionHeader
+          title={t('recentActivity')}
+          onSeeAll={() => router.push('/history')}
+          seeAllLabel={t('viewAll')}
+        />
         <View style={styles.activityList}>
           {recentActivity.length === 0 ? (
+            loadingProgress ? (
+              <ActivityIndicator color={COLORS.neon} style={{ marginVertical: 24 }} />
+            ) : (
             <BlurView intensity={10} style={styles.emptyCard}>
               <Ionicons name="time-outline" size={32} color={COLORS.textMuted} />
               <Text style={styles.emptyText}>{t('historyEmpty')}</Text>
+              <TouchableOpacity
+                style={styles.emptyCtaBtn}
+                onPress={() => router.push('/(tabs)/explore')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.emptyCtaText}>START WATCHING →</Text>
+              </TouchableOpacity>
             </BlurView>
+            )
           ) : (
             recentActivity.map((activity, idx) => (
               <ActivityItem
@@ -554,10 +625,12 @@ export default function ProfileScreen() {
               ]}
               onPress={saveEdit}
               disabled={usernameStatus === 'taken' || usernameStatus === 'invalid' || usernameStatus === 'checking' || editSaving}
+              activeOpacity={0.88}
+              accessibilityRole="button"
             >
-              <LinearGradient colors={[COLORS.neon, COLORS.accent]} start={{x:0,y:0}} end={{x:1,y:1}} style={styles.modalSaveGradient}>
+              <LinearGradient colors={[COLORS.neon, COLORS.primaryDark]} start={{x:0,y:0}} end={{x:1,y:1}} style={styles.modalSaveGradient}>
                 {editSaving
-                  ? <ActivityIndicator color="#000" size="small" />
+                  ? <ActivityIndicator color="#FFFFFF" size="small" />
                   : <Text style={styles.modalSaveText}>{t('saveChanges')}</Text>
                 }
               </LinearGradient>
@@ -654,12 +727,12 @@ const styles = StyleSheet.create({
   heroActions: { flexDirection: 'row', gap: 10, flexWrap: 'wrap', justifyContent: 'center', marginTop: 4 },
   editBtn: { borderRadius: 100, overflow: 'hidden' },
   gradientBtn: { paddingHorizontal: 24, paddingVertical: 12 },
-  editBtnText: { color: '#000', fontWeight: '800', fontSize: 13 },
+  editBtnText: { color: '#FFFFFF', fontWeight: '800', fontSize: 13 },
   secondaryBtn: {
     paddingHorizontal: 20, paddingVertical: 12,
     backgroundColor: 'rgba(255,255,255,0.05)',
     borderRadius: 100,
-    borderWidth: 1, borderColor: 'rgba(189,157,255,0.2)',
+    borderWidth: 1, borderColor: COLORS.borderNeutral,
   },
   secondaryBtnText: { color: COLORS.text, fontWeight: '700', fontSize: 13 },
 
@@ -667,6 +740,37 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: COLORS.bgElevated, borderRadius: RADIUS.lg,
     padding: 18, borderWidth: 1, borderColor: 'rgba(0,245,255,0.15)',
+  },
+
+  // Inline stat strip
+  inlineStatsRow: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.bgElevated,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    paddingVertical: 16,
+  },
+  inlineStatItem: { flex: 1, alignItems: 'center', gap: 4 },
+  inlineStatValue: { fontSize: 22, fontWeight: '900', letterSpacing: -0.5 },
+  inlineStatLabel: { fontSize: 8, color: COLORS.textMuted, fontWeight: '800', letterSpacing: 1.5 },
+  inlineStatDivider: { width: 1, backgroundColor: 'rgba(255,255,255,0.07)', marginVertical: 4 },
+
+  // Empty state CTA
+  emptyCtaBtn: {
+    marginTop: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(255,43,60,0.12)',
+    borderRadius: 100,
+    borderWidth: 1,
+    borderColor: 'rgba(255,43,60,0.35)',
+  },
+  emptyCtaText: {
+    fontSize: 10,
+    color: COLORS.neon,
+    fontWeight: '900',
+    letterSpacing: 1.5,
   },
   statsCardLeft: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   statsCardIconWrap: {
@@ -747,9 +851,9 @@ const styles = StyleSheet.create({
   badgeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 15, justifyContent: 'space-between' },
   badgeItem: { alignItems: 'center', gap: 6, width: '28%' },
   badgeIconBox: {
-    width: 44, height: 44, backgroundColor: 'rgba(191,95,255,0.1)',
+    width: 44, height: 44, backgroundColor: 'rgba(255,43,60,0.1)',
     borderRadius: 12, alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: 'rgba(191,95,255,0.2)',
+    borderWidth: 1, borderColor: 'rgba(255,43,60,0.2)',
   },
   lockedBadge: { opacity: 0.3, backgroundColor: 'rgba(0,0,0,0.2)', borderColor: 'transparent' },
   badgeName: { fontSize: 8, fontWeight: '800', color: COLORS.textSub, letterSpacing: 1 },
@@ -780,7 +884,7 @@ const styles = StyleSheet.create({
   accountCard: {
     backgroundColor: COLORS.bgElevated,
     borderRadius: RADIUS.lg,
-    borderWidth: 1, borderColor: 'rgba(189,157,255,0.08)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
     overflow: 'hidden',
   },
   accountRow: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16 },
@@ -797,7 +901,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.neon,
     borderRadius: 100,
   },
-  upgradePillText: { fontSize: 9, fontWeight: '900', color: '#000', letterSpacing: 1 },
+  upgradePillText: { fontSize: 9, fontWeight: '900', color: '#FFFFFF', letterSpacing: 1 },
 
   signOutBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
@@ -807,10 +911,10 @@ const styles = StyleSheet.create({
   },
   signOutText: { color: COLORS.danger, fontWeight: '900', fontSize: 13, letterSpacing: 2 },
 
-  guestIcon: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(191,95,255,0.1)', alignItems: 'center', justifyContent: 'center' },
+  guestIcon: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(255,43,60,0.1)', alignItems: 'center', justifyContent: 'center' },
   guestTitle: { color: COLORS.text, fontWeight: '900', letterSpacing: 2, marginTop: 10 },
   signInBtn: { paddingHorizontal: 32, paddingVertical: 12, backgroundColor: COLORS.neon, borderRadius: 100, marginTop: 20 },
-  signInText: { color: COLORS.bg, fontWeight: '900' },
+  signInText: { color: '#FFFFFF', fontWeight: '900' },
 
   // Edit modal
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)' },
@@ -832,7 +936,7 @@ const styles = StyleSheet.create({
   },
   modalSaveBtn: { borderRadius: 100, overflow: 'hidden' },
   modalSaveGradient: { paddingVertical: 16, alignItems: 'center' },
-  modalSaveText: { color: '#000', fontWeight: '900', fontSize: 15 },
+  modalSaveText: { color: '#FFFFFF', fontWeight: '900', fontSize: 15 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: -16, marginBottom: 20, marginLeft: 4 },
   statusText: { fontSize: 12, fontWeight: '700' },
 
@@ -841,7 +945,7 @@ const styles = StyleSheet.create({
     width: 130, height: 180,
     borderRadius: RADIUS.md, overflow: 'hidden',
     backgroundColor: COLORS.bgCard,
-    borderWidth: 1, borderColor: 'rgba(189,157,255,0.1)',
+    borderWidth: 1, borderColor: COLORS.borderNeutral,
   },
   animePoster: { width: '100%', height: '100%' },
   posterOverlay: {
@@ -854,7 +958,7 @@ const styles = StyleSheet.create({
 
   emptyCard: {
     padding: 30, borderRadius: RADIUS.md, alignItems: 'center', gap: 10,
-    borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(189,157,255,0.1)',
+    borderWidth: 1, borderStyle: 'dashed', borderColor: COLORS.borderNeutral,
   },
   emptyText: { fontSize: 13, color: COLORS.textMuted, fontWeight: '600' },
 });

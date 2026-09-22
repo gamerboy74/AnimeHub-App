@@ -82,13 +82,13 @@ function buildCheckoutHtml(props: Props): string {
       padding: 24px; text-align: center;
     }
     .spinner-ring {
-      width: 48px; height: 48px; border: 3px solid rgba(191, 95, 255, 0.15);
-      border-top-color: #BF5FFF; border-right-color: #FFD600; border-radius: 50%;
+      width: 48px; height: 48px; border: 3px solid rgba(255, 43, 60, 0.15);
+      border-top-color: #FF2B3C; border-right-color: #FFB800; border-radius: 50%;
       animation: spin 0.9s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite;
       margin-bottom: 20px;
     }
     .brand-title {
-      font-size: 16px; font-weight: 800; letter-spacing: 2px; color: #00F5FF;
+      font-size: 16px; font-weight: 800; letter-spacing: 2px; color: #FF2B3C;
       margin-bottom: 6px; text-transform: uppercase;
     }
     .status-text {
@@ -131,8 +131,8 @@ function buildCheckoutHtml(props: Props): string {
           email: "${safe(userEmail)}"
         },
         theme: {
-          color: "#BF5FFF",
-          backdrop_color: "#080810"
+          color: "#FF2B3C",
+          backdrop_color: "#08090D"
         },
         modal: {
           backdropclose: false,
@@ -485,7 +485,7 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.sm,
     backgroundColor: '#0E0E1A',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(191, 95, 255, 0.2)',
+    borderBottomColor: 'rgba(255, 43, 60, 0.2)',
     gap: SPACING.sm,
   },
   closeBtn: {

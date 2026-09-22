@@ -5,9 +5,10 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../src/constants/theme';
 import { userAPI } from '../src/lib/supabase';
 import { useAuth } from '../src/context/AuthContext';
+import { haptic } from '../src/lib/haptics';
 
 export default function WatchHistoryScreen() {
   const router = useRouter();
@@ -32,6 +33,7 @@ export default function WatchHistoryScreen() {
   }, [queryClient, userId]);
 
   const handleCardPress = useCallback((id: string) => {
+    haptic.selection();
     router.push(`/anime/${id}`);
   }, [router]);
 
@@ -49,7 +51,17 @@ export default function WatchHistoryScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          hitSlop={TOUCH.hitSlop}
+          activeOpacity={0.7}
+          onPress={() => {
+            haptic.selection();
+            router.back();
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
           <Ionicons name="chevron-back" size={22} color={COLORS.text} />
         </TouchableOpacity>
         <View>
@@ -62,7 +74,14 @@ export default function WatchHistoryScreen() {
         <View style={styles.empty}>
           <Ionicons name="time-outline" size={48} color={COLORS.textMuted} />
           <Text style={styles.emptyText}>Sign in to see your watch history</Text>
-          <TouchableOpacity style={styles.loginBtn} onPress={() => router.push('/auth/login')}>
+          <TouchableOpacity
+            style={styles.loginBtn}
+            activeOpacity={0.8}
+            onPress={() => {
+              haptic.selection();
+              router.push('/auth/login');
+            }}
+          >
             <Text style={styles.loginBtnText}>SIGN IN</Text>
           </TouchableOpacity>
         </View>
@@ -108,7 +127,9 @@ const HistoryItemRow = React.memo(
     return (
       <TouchableOpacity
         style={styles.histRow}
+        activeOpacity={0.75}
         onPress={() => onPress(item.anime_id)}
+        accessibilityRole="button"
       >
         <Image
           source={{ uri: item.poster_url || '' }}
@@ -152,10 +173,10 @@ const HistoryItemRow = React.memo(
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
   header: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, padding: SPACING.md },
-  backBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border },
+  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.bgCard, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.border },
   headerSub: { fontSize: 10, color: COLORS.neon, letterSpacing: 2, fontWeight: '700' },
   headerTitle: { fontSize: 22, color: COLORS.text, fontWeight: '900' },
-  list: { paddingHorizontal: SPACING.md, paddingBottom: SPACING.xxl },
+  list: { paddingHorizontal: SPACING.md, paddingBottom: 110 },
   histRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, paddingVertical: SPACING.md },
   poster: { width: 60, height: 85, borderRadius: RADIUS.sm, backgroundColor: COLORS.bgCard },
   histInfo: { flex: 1, gap: 3 },
@@ -173,5 +194,5 @@ const styles = StyleSheet.create({
     marginTop: SPACING.sm, paddingVertical: SPACING.sm, paddingHorizontal: SPACING.xl,
     backgroundColor: COLORS.neon, borderRadius: RADIUS.md,
   },
-  loginBtnText: { color: COLORS.bg, fontWeight: '800', letterSpacing: 1 },
+  loginBtnText: { color: '#FFFFFF', fontWeight: '800', letterSpacing: 1 },
 });

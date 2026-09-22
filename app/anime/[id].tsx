@@ -9,13 +9,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import YoutubePlayer from 'react-native-youtube-iframe';
 import * as ScreenOrientation from 'expo-screen-orientation';
-import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
+import { COLORS, SPACING, RADIUS, TOUCH } from '../../src/constants/theme';
 import { supabase, userAPI, AnimeWithStats, Episode, Review, Character, RelatedAnime } from '../../src/lib/supabase';
 import { styles } from '../../src/screens/animeDetail.styles';
 import { useAuth } from '../../src/context/AuthContext';
 import { useAnimeDetails, useEpisodes, useAnimeCharacters, useAnimeRelations, useAnimeWatchProgress } from '../../src/hooks/useQueries';
 import { useToggleFavorite, useToggleWatchlist } from '../../src/hooks/useOptimisticMutations';
 import { getAllDownloads } from '../../src/hooks/useHlsDownloader';
+import { haptic } from '../../src/lib/haptics';
 
 const { width, height } = Dimensions.get('window');
 
@@ -131,6 +132,7 @@ export default function AnimeDetailScreen() {
 
   const toggleFav = () => {
     if (!user) { router.push('/auth/login'); return; }
+    haptic.medium();
     const next = !isFav;
     setIsFav(next);
     favMutation.mutate(next);
@@ -138,6 +140,7 @@ export default function AnimeDetailScreen() {
 
   const toggleWatchlist = () => {
     if (!user) { router.push('/auth/login'); return; }
+    haptic.selection();
     const next = !inWatchlist;
     setInWatchlist(next);
     wlMutation.mutate(next);
@@ -169,7 +172,13 @@ export default function AnimeDetailScreen() {
           {/* Back button */}
           <TouchableOpacity
             style={[styles.backBtn, { top: insets.top + SPACING.sm }]}
-            onPress={() => router.back()}
+            onPress={() => {
+              haptic.selection();
+              router.back();
+            }}
+            hitSlop={TOUCH.hitSlop}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
           >
             <Ionicons name="chevron-back" size={22} color={COLORS.text} />
           </TouchableOpacity>
@@ -178,7 +187,13 @@ export default function AnimeDetailScreen() {
           {anime.trailer_url ? (
             <TouchableOpacity
               style={[styles.trailerOverlayBtn, { top: insets.top + SPACING.sm }]}
-              onPress={() => setTrailerVisible(true)}
+              onPress={() => {
+                haptic.selection();
+                setTrailerVisible(true);
+              }}
+              hitSlop={TOUCH.hitSlop}
+              accessibilityRole="button"
+              accessibilityLabel="Play trailer"
             >
               <Ionicons name="play" size={14} color={COLORS.neon} />
               <Text style={styles.trailerOverlayText}>TRAILER</Text>
@@ -407,7 +422,7 @@ const EpisodesTab = React.memo(function EpisodesTab({ episodes, anime, router, u
                       <Text style={styles.epNum}>{ep.episode_number}</Text>
                     )}
                     {isInProgress && progressRatio > 0 && (
-                      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 3, backgroundColor: 'rgba(191,95,255,0.2)' }}>
+                      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 3, backgroundColor: 'rgba(255,43,60,0.2)' }}>
                         <View style={{ height: 3, width: `${Math.round(progressRatio * 100)}%` as any, backgroundColor: COLORS.neon }} />
                       </View>
                     )}
