@@ -13,7 +13,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { fetchEpisodeById } from './useQueries';
+import { fetchEpisodeById, fetchEpisodesByAnimeId } from './useQueries';
 
 // ─── Stale times must match what useQueries.ts uses ───────────────────────────
 const STALE_ANIME   = 10 * 60 * 1000;
@@ -49,15 +49,7 @@ export function usePrefetch() {
         queryClient.prefetchQuery({
           queryKey: ['episodes', animeId],
           staleTime: STALE_ANIME,
-          queryFn: async () => {
-            const { data, error } = await supabase
-              .from('episodes')
-              .select('id, anime_id, episode_number, title, thumbnail_url, video_url, duration, is_premium, air_date')
-              .eq('anime_id', animeId)
-              .order('episode_number', { ascending: true });
-            if (error) throw error;
-            return data ?? [];
-          },
+          queryFn: () => fetchEpisodesByAnimeId(animeId),
         }),
       ]);
     },

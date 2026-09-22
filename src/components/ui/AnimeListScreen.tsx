@@ -10,8 +10,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS, TOUCH } from '../../constants/theme';
 import { AnimeWithStats } from '../../lib/supabase';
 import { fetchJikanWithFallback } from '../../lib/jikan';
-import AnimeCard from './AnimeCard';
 import { haptic } from '../../lib/haptics';
+import AnimeCard, { AnimeCardSkeleton } from './AnimeCard';
 
 export type ListType = 'trending' | 'top-rated' | 'new-arrivals';
 
@@ -113,9 +113,16 @@ export default function AnimeListScreen({ type }: Props) {
       </View>
 
       {isLoading && animeList.length === 0 ? (
-        <View style={styles.centered}>
-          <ActivityIndicator color={COLORS.neon} size="large" />
-          <Text style={styles.loadingText}>Loading {cfg.title}…</Text>
+        <View style={[styles.list, { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: SPACING.xs, rowGap: SPACING.md }]}>
+          {Array.from({ length: numColumns * 4 }).map((_, i) => (
+            <AnimeCardSkeleton
+              key={i}
+              cardWidth={itemWidth}
+              size="sm"
+              showStats={type === 'top-rated'}
+              style={{ width: itemWidth, marginRight: 0 }}
+            />
+          ))}
         </View>
       ) : error && animeList.length === 0 ? (
         <View style={styles.centered}>

@@ -136,35 +136,7 @@ const AnimeCard = React.memo(function AnimeCard({ anime, onPress, onLongPress, s
 export default AnimeCard;
 
 
-export function AnimeCardSkeleton({ cardWidth: w = 160, size = 'md' }: { cardWidth?: number; size?: 'sm' | 'md' | 'lg' }) {
-  const opacity = useRef(new Animated.Value(0.4)).current;
-
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(opacity, { toValue: 0.9, duration: 750, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 0.4, duration: 750, useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [opacity]);
-
-  const h = size === 'lg' ? 220 : w * 1.45;
-
-  return (
-    <Animated.View
-      style={{
-        width: w,
-        height: h,
-        borderRadius: RADIUS.md,
-        backgroundColor: COLORS.bgCard,
-        marginRight: SPACING.sm,
-        opacity,
-      }}
-    />
-  );
-}
+export { AnimeCardSkeleton, type AnimeCardSkeletonProps } from './Skeleton';
 
 const styles = StyleSheet.create({
   container: {

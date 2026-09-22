@@ -834,17 +834,20 @@ export const buildMainInjectedJS = (
     // Fix 1: only the TOP frame sends player_tap. With injectedJavaScriptForMainFrameOnly=false
     // the listener fires in every iframe — without this guard one tap fires 2-3 messages,
     // causing the HUD to toggle on/off/on in rapid succession.
-    document.addEventListener('click', function() {
-      try {
-        if (window === window.top) {
-          // Top frame: notify RN directly
-          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'player_tap' }));
-        } else {
-          // Child frame: bubble up to parent which will relay to RN
-          window.parent.postMessage(JSON.stringify({ type: 'iframe_click' }), '*');
-        }
-      } catch(e) {}
-    }, true); // capture phase — fires before the player's own handlers
+    if (!window.__rn_tap_listener_attached) {
+      window.__rn_tap_listener_attached = true;
+      document.addEventListener('click', function() {
+        try {
+          if (window === window.top) {
+            // Top frame: notify RN directly
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'player_tap' }));
+          } else {
+            // Child frame: bubble up to parent which will relay to RN
+            window.parent.postMessage(JSON.stringify({ type: 'iframe_click' }), '*');
+          }
+        } catch(e) {}
+      }, true); // capture phase — fires before the player's own handlers
+    }
 
   })();
   true;
@@ -923,15 +926,18 @@ export const buildNativePlayerOnlyJS = (resumeSeconds: number, pollIntervalMs: n
     } catch(e) {}
 
     // 2) Tap → Toggle HUD listener
-    document.addEventListener('click', function() {
-      try {
-        if (window === window.top) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'player_tap' }));
-        } else {
-          window.parent.postMessage(JSON.stringify({ type: 'iframe_click' }), '*');
-        }
-      } catch(e) {}
-    }, true);
+    if (!window.__rn_tap_listener_attached) {
+      window.__rn_tap_listener_attached = true;
+      document.addEventListener('click', function() {
+        try {
+          if (window === window.top) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'player_tap' }));
+          } else {
+            window.parent.postMessage(JSON.stringify({ type: 'iframe_click' }), '*');
+          }
+        } catch(e) {}
+      }, true);
+    }
 
     window.addEventListener('message', function(e) {
       try {

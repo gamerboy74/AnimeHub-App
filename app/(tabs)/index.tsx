@@ -18,6 +18,7 @@ import HeroCarousel from '../../src/components/ui/HeroCarousel';
 import AnimeCard from '../../src/components/ui/AnimeCard';
 import SectionHeader from '../../src/components/ui/SectionHeader';
 import SubscriptionExpiryBanner from '../../src/components/subscription/SubscriptionExpiryBanner';
+import { HomeScreenSkeleton, AnimeRowSkeleton, AnimeCardSkeleton } from '../../src/components/ui/Skeleton';
 import { haptic } from '../../src/lib/haptics';
 
 const POPULAR_GENRES = [
@@ -44,7 +45,7 @@ export default function HomeScreen() {
   const { data: trending = [], isLoading: loadingTrend } = useTrendingAnime();
   const { data: topRated = [], isLoading: loadingRated } = useTopRatedAnime();
   const { data: recent = [], isLoading: loadingRecent } = useRecentAnime();
-  const { data: fantasyAnime = [] } = useGenreAnime('Fantasy', 10);
+  const { data: fantasyAnime = [], isLoading: loadingFantasy } = useGenreAnime('Fantasy', 10);
 
   // ── User Watch History (Continue Watching) ─────────────────────────────────────────
   const { data: progressData = [] } = useQuery<any[]>({
@@ -104,13 +105,9 @@ export default function HomeScreen() {
   }, [queryClient, user?.id]);
 
   // Only block full render on trending (needed for hero section).
-  // Top-rated and recent render progressively via AnimeRow (returns null if empty).
+  // Top-rated and recent render progressively via AnimeRow (shows skeleton if loading).
   if (loadingTrend) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator color={COLORS.neon} size="large" />
-      </View>
-    );
+    return <HomeScreenSkeleton insets={insets} />;
   }
 
   return (
@@ -173,6 +170,7 @@ export default function HomeScreen() {
         data={trending}
         router={router}
         seeAllRoute="/trending"
+        isLoading={loadingTrend}
       />
 
       {/* Popular Genres Spotlight */}
@@ -186,6 +184,7 @@ export default function HomeScreen() {
         router={router}
         showStats
         seeAllRoute="/top-rated"
+        isLoading={loadingRated}
       />
 
       {/* Curated Genre Row: Fantasy & Magic */}
@@ -196,6 +195,7 @@ export default function HomeScreen() {
         router={router}
         showStats
         seeAllRoute="/genre/Fantasy"
+        isLoading={loadingFantasy}
       />
 
       {/* Recently Added */}
@@ -205,6 +205,7 @@ export default function HomeScreen() {
         data={recent}
         router={router}
         seeAllRoute="/new-arrivals"
+        isLoading={loadingRecent}
       />
     </ScrollView>
   );
@@ -297,7 +298,17 @@ const HomeAnimeCard = React.memo(
 
 // ─── MEMOIZED ANIME ROW ────────────────────────────────────────────────────────
 const AnimeRow = React.memo(
-  ({ title, subtitle, data, router, showStats = false, seeAllRoute }: any) => {
+  ({ title, subtitle, data, router, showStats = false, seeAllRoute, isLoading = false }: any) => {
+    if (isLoading && (!data || !data.length)) {
+      return (
+        <AnimeRowSkeleton
+          title={title}
+          subtitle={subtitle}
+          showStats={showStats}
+          count={4}
+        />
+      );
+    }
     if (!data?.length) return null;
 
     // One hook call per list row — not per card. Cards receive a stable callback.
@@ -350,7 +361,8 @@ const AnimeRow = React.memo(
       prevProps.subtitle === nextProps.subtitle &&
       prevProps.data === nextProps.data &&
       prevProps.showStats === nextProps.showStats &&
-      prevProps.seeAllRoute === nextProps.seeAllRoute
+      prevProps.seeAllRoute === nextProps.seeAllRoute &&
+      prevProps.isLoading === nextProps.isLoading
     );
   }
 );
@@ -467,9 +479,16 @@ const PopularGenresSection = React.memo(() => {
 
       {/* Anime Carousel */}
       {isLoading ? (
-        <View style={styles.genreLoadingContainer}>
-          <ActivityIndicator size="small" color={activeMeta.color} />
-        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingLeft: SPACING.md, paddingRight: SPACING.sm }}
+          scrollEnabled={false}
+        >
+          {Array.from({ length: 4 }).map((_, i) => (
+            <AnimeCardSkeleton key={i} size="md" showStats />
+          ))}
+        </ScrollView>
       ) : (
         <FlatList
           horizontal

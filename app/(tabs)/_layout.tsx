@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { Tabs } from 'expo-router';
 import { View, TouchableOpacity, Text, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,14 +12,20 @@ import { haptic } from '../../src/lib/haptics';
 export default function TabLayout() {
   const { t } = useTranslation();
 
+  const screenOptions = useCallback(({ route }: any) => ({
+    header: ({ options }: any) => (
+      <UniversalHeader title={route.name !== 'index' ? (options.title as string) : undefined} />
+    ),
+    headerShown: true,
+    tabBarStyle: { position: 'absolute' as const },
+  }), []);
+
+  const renderTabBar = useCallback((props: any) => <CustomTabBar {...props} />, []);
+
   return (
     <Tabs
-      tabBar={(props) => <CustomTabBar {...props} />}
-      screenOptions={({ route }) => ({
-        header: ({ options }) => <UniversalHeader title={route.name !== 'index' ? (options.title as string) : undefined} />,
-        headerShown: true,
-        tabBarStyle: { position: 'absolute' },
-      })}
+      tabBar={renderTabBar}
+      screenOptions={screenOptions}
     >
       <Tabs.Screen name="index" options={{ title: t('home') }} />
       <Tabs.Screen name="explore" options={{ title: t('exploreLabel') }} />
@@ -29,16 +35,16 @@ export default function TabLayout() {
   );
 }
 
-function CustomTabBar({ state, navigation }: any) {
+const CustomTabBar = React.memo(function CustomTabBar({ state, navigation }: any) {
   const insets = useSafeAreaInsets();
   const { t } = useTranslation();
   
-  const TABS = [
+  const TABS = useMemo(() => [
     { name: 'index', icon: 'home', iconOutline: 'home-outline', label: t('home') },
     { name: 'explore', icon: 'search', iconOutline: 'search-outline', label: t('exploreLabel') },
     { name: 'library', icon: 'bookmark', iconOutline: 'bookmark-outline', label: t('libraryLabel') },
     { name: 'profile', icon: 'person', iconOutline: 'person-outline', label: t('profileLabel') },
-  ];
+  ], [t]);
 
   return (
     <View style={[styles.tabBarContainer, { paddingBottom: insets.bottom || SPACING.sm }]}>
@@ -78,7 +84,7 @@ function CustomTabBar({ state, navigation }: any) {
       </View>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   tabBarContainer: {

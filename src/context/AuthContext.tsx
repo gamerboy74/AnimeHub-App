@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { supabase, userAPI, User } from '../lib/supabase';
 import { Session } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -453,8 +453,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     session?.user?.identities?.some((id: any) => id.provider === 'email')
   );
 
+  const authValue = useMemo(() => ({
+    session,
+    user,
+    loading,
+    isAuthReady,
+    hasPassword,
+    signIn,
+    signUp,
+    signOut,
+    logOutOtherSessions,
+    refreshUser,
+    signInWithGoogle,
+    resetPassword,
+  }), [
+    session,
+    user,
+    loading,
+    isAuthReady,
+    hasPassword,
+    signIn,
+    signUp,
+    signOut,
+    logOutOtherSessions,
+    refreshUser,
+    signInWithGoogle,
+    resetPassword,
+  ]);
+
   return (
-    <AuthContext.Provider value={{ session, user, loading, isAuthReady, hasPassword, signIn, signUp, signOut, logOutOtherSessions, refreshUser, signInWithGoogle, resetPassword }}>
+    <AuthContext.Provider value={authValue}>
       {children}
     </AuthContext.Provider>
   );

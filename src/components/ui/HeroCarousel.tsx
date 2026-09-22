@@ -20,6 +20,7 @@ import { useIsFocused } from '@react-navigation/native';
 import { COLORS, SPACING, RADIUS } from '../../constants/theme';
 import { Anime, AnimeWithStats } from '../../lib/supabase';
 import { haptic } from '../../lib/haptics';
+import { HeroCarouselSkeleton } from './Skeleton';
 
 const DEFAULT_INTERVAL_MS = 5000;
 
@@ -389,7 +390,7 @@ export const HeroCarousel = React.memo(function HeroCarousel({
     [cardWidth, handlePress, handlePlay, handleInfo]
   );
 
-  if (!slides || slides.length === 0) return null;
+  if (!slides || slides.length === 0) return <HeroCarouselSkeleton />;
 
   return (
     <View style={styles.heroContainer}>
@@ -644,3 +645,6 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
 });
+
+export { HeroCarouselSkeleton } from './Skeleton';
+

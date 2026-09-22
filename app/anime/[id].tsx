@@ -16,6 +16,7 @@ import { useAuth } from '../../src/context/AuthContext';
 import { useAnimeDetails, useEpisodes, useAnimeCharacters, useAnimeRelations, useAnimeWatchProgress } from '../../src/hooks/useQueries';
 import { useToggleFavorite, useToggleWatchlist } from '../../src/hooks/useOptimisticMutations';
 import { getAllDownloads } from '../../src/hooks/useHlsDownloader';
+import { HeroBannerSkeleton, SkeletonBox } from '../../src/components/ui/Skeleton';
 import { haptic } from '../../src/lib/haptics';
 
 const { width, height } = Dimensions.get('window');
@@ -148,8 +149,21 @@ export default function AnimeDetailScreen() {
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator color={COLORS.neon} size="large" />
+      <View style={styles.container}>
+        <HeroBannerSkeleton height={300} />
+        <View style={{ padding: SPACING.md, gap: SPACING.md, marginTop: SPACING.md }}>
+          <SkeletonBox width="75%" height={26} borderRadius={RADIUS.sm} />
+          <SkeletonBox width="45%" height={16} borderRadius={RADIUS.sm} />
+          <View style={{ flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.xs }}>
+            <SkeletonBox width={120} height={40} borderRadius={RADIUS.full} />
+            <SkeletonBox width={120} height={40} borderRadius={RADIUS.full} />
+          </View>
+          <View style={{ marginTop: SPACING.md, gap: SPACING.sm }}>
+            <SkeletonBox width="100%" height={14} borderRadius={RADIUS.sm} />
+            <SkeletonBox width="92%" height={14} borderRadius={RADIUS.sm} />
+            <SkeletonBox width="60%" height={14} borderRadius={RADIUS.sm} />
+          </View>
+        </View>
       </View>
     );
   }

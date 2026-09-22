@@ -60,7 +60,7 @@ import {
 } from "../../src/lib/streamManager";
 
 // ─── CONSTANTS ─────────────────────────────────────────────────────────────────
-const NEAR_END_THRESHOLD_FALLBACK = 60;
+const NEAR_END_THRESHOLD_SEC = 20;
 const MIN_PROGRESS_SECONDS = 5;
 const AUTO_PLAY_COUNTDOWN_SEC = 5;
 
@@ -292,6 +292,10 @@ export default function WatchScreen() {
     hasCapturedInitialResumeRef.current = false;
     hasShownResumeToastRef.current = false;
     initialResumeSecondsRef.current = 0;
+    isPageLoadedRef.current = false;
+    currentHostRef.current = "";
+    nearEndFired.current = false;
+    episodeIdRef.current = id as string;
   }
 
   if (!hasCapturedInitialResumeRef.current && savedProgress !== undefined) {
@@ -491,27 +495,46 @@ export default function WatchScreen() {
     };
   }, [queryClient]);
 
-  // ── Episode complete — start auto-play countdown ─────────────────────────────
+  // ── Episode complete & Auto-play countdown ──────────────────────────────────
+  const startAutoPlayCountdown = useCallback(
+    (initialSeconds: number = AUTO_PLAY_COUNTDOWN_SEC) => {
+      if (!nextEpisode) return;
+      setShowNextUp(true);
+      if (!autoPlayEnabled) return;
+
+      const nextEpisodeId = nextEpisode.id;
+      const startSec = Math.max(1, initialSeconds);
+
+      // Do not restart if already ticking
+      if (countdownRef.current) return;
+
+      setAutoPlayCountdown(startSec);
+      let remaining = startSec;
+      countdownRef.current = setInterval(() => {
+        remaining -= 1;
+        setAutoPlayCountdown(remaining);
+        if (remaining <= 0) {
+          if (countdownRef.current) {
+            clearInterval(countdownRef.current);
+            countdownRef.current = null;
+          }
+          setAutoPlayCountdown(null);
+          setShowNextUp(false);
+          router.replace(`/watch/${nextEpisodeId}`);
+        }
+      }, 1000);
+    },
+    [nextEpisode, autoPlayEnabled]
+  );
+
   const handleEpisodeComplete = useCallback(() => {
     if (!nextEpisode) return;
     setShowNextUp(true);
     if (!autoPlayEnabled) return;
 
-    const nextEpisodeId = nextEpisode.id;
-
-    setAutoPlayCountdown(AUTO_PLAY_COUNTDOWN_SEC);
-    let remaining = AUTO_PLAY_COUNTDOWN_SEC;
-    if (countdownRef.current) clearInterval(countdownRef.current);
-    countdownRef.current = setInterval(() => {
-      remaining -= 1;
-      setAutoPlayCountdown(remaining);
-      if (remaining <= 0) {
-        clearInterval(countdownRef.current!);
-        countdownRef.current = null;
-        router.replace(`/watch/${nextEpisodeId}`);
-      }
-    }, 1000);
-  }, [nextEpisode, autoPlayEnabled]);
+    if (countdownRef.current) return;
+    startAutoPlayCountdown(AUTO_PLAY_COUNTDOWN_SEC);
+  }, [nextEpisode, autoPlayEnabled, startAutoPlayCountdown]);
 
   const cancelAutoPlay = useCallback(() => {
     if (countdownRef.current) {
@@ -862,15 +885,20 @@ export default function WatchScreen() {
             setPlayerState((prev) => ({ ...prev, isPlaying: playing, duration }));
           }
 
-          if (duration > 0) {
-            const threshold = Math.min(NEAR_END_THRESHOLD_FALLBACK, duration * 0.1);
-            if (!nearEndFired.current && duration - current < threshold && nextEpisode) {
+          if (duration > 0 && nextEpisode) {
+            const threshold = NEAR_END_THRESHOLD_SEC;
+            if (!nearEndFired.current && duration - current <= threshold) {
               nearEndFired.current = true;
               setShowNextUp(true);
-            } else if (nearEndFired.current && duration - current >= threshold) {
+              if (autoPlayEnabled) {
+                const remaining = Math.max(1, Math.min(threshold, Math.round(duration - current)));
+                startAutoPlayCountdown(remaining);
+              }
+            } else if (nearEndFired.current && duration - current > threshold + 2) {
               // User scrubbed back out of the near-end zone — hide the card and reset
               nearEndFired.current = false;
               setShowNextUp(false);
+              cancelAutoPlay();
             }
           }
         }
@@ -1006,7 +1034,7 @@ export default function WatchScreen() {
         }
       } catch (_) { }
     },
-    [handleProgress, handleEpisodeComplete, nextEpisode, toggleHud, handleDownloadMessage, isPremium]
+    [handleProgress, handleEpisodeComplete, nextEpisode, toggleHud, handleDownloadMessage, isPremium, autoPlayEnabled, startAutoPlayCountdown, cancelAutoPlay]
   );
 
   // ── Trigger download onPress ────────────────────────────────────────────────
@@ -1189,13 +1217,16 @@ export default function WatchScreen() {
   }, [cancelAutoPlay]);
   const handlePlayNow = useCallback(() => {
     cancelAutoPlay();
+    setShowNextUp(false);
     if (nextEpisode?.id) router.replace(`/watch/${nextEpisode.id}`);
   }, [cancelAutoPlay, nextEpisode?.id]);
   const handleCloseSelectorSheet = useCallback(() => setShowSelector(false), []);
   const handleSelectEpisode = useCallback((epId: string) => {
+    cancelAutoPlay();
+    setShowNextUp(false);
     setShowSelector(false);
     router.replace(`/watch/${epId}`);
-  }, []);
+  }, [cancelAutoPlay]);
   const handleCloseServerPicker = useCallback(() => setShowServerPicker(false), []);
   const handleSelectLang = useCallback((lang: any) => {
     srv.selectLang(lang);
@@ -1311,6 +1342,7 @@ export default function WatchScreen() {
 
       {/* ── WEBVIEW PLAYER ── */}
       <WebView
+        key={`${episode?.id ?? id}-${srv.embedUrl}`}
         ref={webviewRef}
         source={isWifiBlocked ? { html: '<!DOCTYPE html><html><body style="background:#000;"></body></html>' } : webViewSource}
         style={StyleSheet.absoluteFill}
@@ -1339,6 +1371,7 @@ export default function WatchScreen() {
           if (spinnerTimeoutRef.current) clearTimeout(spinnerTimeoutRef.current);
           setPlayerReady(true);
           isPageLoadedRef.current = true;
+          webviewRef.current?.injectJavaScript(`${injectedJS}; true;`);
         }}
         userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         thirdPartyCookiesEnabled={true}

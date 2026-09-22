@@ -14,6 +14,7 @@ import { COLORS, SPACING, RADIUS, TOUCH } from '../../src/constants/theme';
 import { userAPI } from '../../src/lib/supabase';
 import { useAuth } from '../../src/context/AuthContext';
 import AnimeCard from '../../src/components/ui/AnimeCard';
+import { AnimeCardSkeleton } from '../../src/components/ui/Skeleton';
 import { BlurView } from 'expo-blur';
 import { haptic } from '../../src/lib/haptics';
 
@@ -35,7 +36,7 @@ export default function LibraryScreen() {
 
   const [activeTab, setActiveTab] = useState<LibraryTab>('watchlist');
   const [refreshing, setRefreshing] = useState(false);
-  const mainScrollRef = useRef<ScrollView>(null);
+  const flatListRef = useRef<FlatList>(null);
   const scrollRef = useRef<ScrollView>(null);
   const scrollOffset = useRef(0);
   const [sortBy, setSortBy] = useState<'recent' | 'title' | 'rating'>('recent');
@@ -236,194 +237,262 @@ export default function LibraryScreen() {
     );
   }
 
-  return (
-    <View style={styles.container}>
-      <ScrollView 
-        ref={mainScrollRef}
-        showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.neon} />}
-      >
-        {/* Hero Header */}
-        <View style={styles.hero}>
-          <View style={styles.heroBlob} />
-          <Text style={styles.heroTitle}>
-            My <Text style={styles.heroTitleItalic}>Library</Text>
-          </Text>
-          <Text style={styles.heroSub}>Your curated digital archive of parallel worlds and neon dreams.</Text>
+  const renderItem = useCallback(
+    ({ item }: { item: any }) => (
+      <LibraryGridItem
+        anime={item}
+        onPress={handleGridItemPress}
+        isGridView={isGridView}
+      />
+    ),
+    [handleGridItemPress, isGridView]
+  );
+
+  const keyExtractor = useCallback(
+    (item: any, idx: number) => item?.id || item?.anime_id || `lib-${idx}`,
+    []
+  );
+
+  const renderHeader = useMemo(() => (
+    <View>
+      {/* Hero Header */}
+      <View style={styles.hero}>
+        <View style={styles.heroBlob} />
+        <Text style={styles.heroTitle}>
+          My <Text style={styles.heroTitleItalic}>Library</Text>
+        </Text>
+        <Text style={styles.heroSub}>Your curated digital archive of parallel worlds and neon dreams.</Text>
+      </View>
+
+      {/* Continue Watching */}
+      {continueWatching.length > 0 && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <View>
+              <Text style={styles.sectionLabel}>IN PROGRESS</Text>
+              <Text style={styles.sectionTitle}>Continue Watching</Text>
+            </View>
+            <View style={styles.scrollBtns}>
+              <TouchableOpacity 
+                style={styles.scrollBtn}
+                hitSlop={TOUCH.hitSlop}
+                activeOpacity={0.7}
+                onPress={() => {
+                  haptic.light();
+                  const newOffset = Math.max(0, scrollOffset.current - cardWidth);
+                  scrollRef.current?.scrollTo({ x: newOffset, animated: true });
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Scroll left"
+              >
+                <Ionicons name="chevron-back" size={16} color={COLORS.text} />
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.scrollBtn}
+                hitSlop={TOUCH.hitSlop}
+                activeOpacity={0.7}
+                onPress={() => {
+                  haptic.light();
+                  const newOffset = scrollOffset.current + cardWidth;
+                  scrollRef.current?.scrollTo({ x: newOffset, animated: true });
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Scroll right"
+              >
+                <Ionicons name="chevron-forward" size={16} color={COLORS.text} />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <ScrollView 
+            ref={scrollRef}
+            horizontal 
+            showsHorizontalScrollIndicator={false} 
+            contentContainerStyle={styles.continueScroll}
+            snapToInterval={cardWidth}
+            decelerationRate="fast"
+            onScroll={(e) => {
+              scrollOffset.current = e.nativeEvent.contentOffset.x;
+            }}
+            scrollEventThrottle={16}
+          >
+            {continueWatching.map((item, idx) => (
+              <ContinueWatchingItem
+                key={item.id || item.episode_id || `cw-${idx}`}
+                item={item}
+                itemWidth={Math.floor(width * 0.75)}
+                onPress={handleContinueWatchingPress}
+              />
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Library Tabs & Filtering */}
+      <View style={styles.libraryHeaderSection}>
+        <View style={styles.tabBarRow}>
+          <View style={styles.tabInner}>
+            {(['watchlist', 'completed', 'dropped'] as LibraryTab[]).map((t) => (
+              <TouchableOpacity
+                key={t}
+                style={[styles.tabItem, activeTab === t && styles.tabItemActive]}
+                onPress={() => {
+                  haptic.selection();
+                  setActiveTab(t);
+                  setTimeout(() => flatListRef.current?.scrollToOffset({ offset: 0, animated: false }), 50);
+                }}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: activeTab === t }}
+              >
+                <Text style={[styles.tabText, activeTab === t && styles.tabTextActive]}>
+                  {TAB_LABELS[t]}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
 
-        {/* Continue Watching */}
-        {continueWatching.length > 0 && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <View>
-                <Text style={styles.sectionLabel}>IN PROGRESS</Text>
-                <Text style={styles.sectionTitle}>Continue Watching</Text>
-              </View>
-              <View style={styles.scrollBtns}>
-                <TouchableOpacity 
-                  style={styles.scrollBtn}
-                  hitSlop={TOUCH.hitSlop}
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    haptic.light();
-                    const newOffset = Math.max(0, scrollOffset.current - cardWidth);
-                    scrollRef.current?.scrollTo({ x: newOffset, animated: true });
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Scroll left"
-                >
-                  <Ionicons name="chevron-back" size={16} color={COLORS.text} />
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  style={styles.scrollBtn}
-                  hitSlop={TOUCH.hitSlop}
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    haptic.light();
-                    const newOffset = scrollOffset.current + cardWidth;
-                    scrollRef.current?.scrollTo({ x: newOffset, animated: true });
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Scroll right"
-                >
-                  <Ionicons name="chevron-forward" size={16} color={COLORS.text} />
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <ScrollView 
-              ref={scrollRef}
-              horizontal 
-              showsHorizontalScrollIndicator={false} 
-              contentContainerStyle={styles.continueScroll}
-              snapToInterval={cardWidth}
-              decelerationRate="fast"
-              onScroll={(e) => {
-                scrollOffset.current = e.nativeEvent.contentOffset.x;
-              }}
-              scrollEventThrottle={16}
-            >
-              {continueWatching.map((item, idx) => (
-                <ContinueWatchingItem
-                  key={item.id || item.episode_id || `cw-${idx}`}
-                  item={item}
-                  itemWidth={Math.floor(width * 0.75)}
-                  onPress={handleContinueWatchingPress}
-                />
-              ))}
-            </ScrollView>
+        {activeTab === 'dropped' && (
+          <View style={styles.onHoldNotice}>
+            <Ionicons name="information-circle-outline" size={16} color={COLORS.neonCyan} />
+            <Text style={styles.onHoldNoticeText}>
+              Anime paused for 14+ days appear here. Resuming any episode moves them back to Continue Watching.
+            </Text>
           </View>
         )}
-
-        {/* Library Tabs & Filtering */}
-        <View style={styles.librarySection}>
-          <View style={styles.tabBarRow}>
-            <View style={styles.tabInner}>
-              {(['watchlist', 'completed', 'dropped'] as LibraryTab[]).map((t) => (
-                <TouchableOpacity
-                  key={t}
-                  style={[styles.tabItem, activeTab === t && styles.tabItemActive]}
-                  onPress={() => {
-                    haptic.selection();
-                    setActiveTab(t);
-                    // Scroll to top so new tab content is immediately visible
-                    setTimeout(() => mainScrollRef.current?.scrollTo({ y: 0, animated: false }), 50);
-                  }}
-                  accessibilityRole="tab"
-                  accessibilityState={{ selected: activeTab === t }}
-                >
-                  <Text style={[styles.tabText, activeTab === t && styles.tabTextActive]}>
-                    {TAB_LABELS[t]}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          {activeTab === 'dropped' && (
-            <View style={styles.onHoldNotice}>
-              <Ionicons name="information-circle-outline" size={16} color={COLORS.neonCyan} />
-              <Text style={styles.onHoldNoticeText}>
-                Anime paused for 14+ days appear here. Resuming any episode moves them back to Continue Watching.
-              </Text>
-            </View>
-          )}
-          
-          <View style={styles.filterBar}>
-            <TouchableOpacity
-              style={styles.filterBtn}
-              activeOpacity={0.7}
-              onPress={() => {
-                haptic.selection();
-                handleSortPress();
-              }}
-              accessibilityRole="button"
-            >
-              <Ionicons name="filter-outline" size={16} color={COLORS.neon} />
-              <Text style={styles.filterText}>SORT: {sortBy.toUpperCase()}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.gridBtn}
-              hitSlop={TOUCH.hitSlop}
-              activeOpacity={0.7}
-              onPress={() => {
-                haptic.selection();
-                setIsGridView(!isGridView);
-              }}
-              accessibilityRole="button"
-            >
-              <Ionicons name={isGridView ? 'list-outline' : 'grid-outline'} size={18} color={COLORS.neon} />
-            </TouchableOpacity>
-          </View>
-
-          {loading ? (
-            <ActivityIndicator color={COLORS.neon} style={{ marginTop: SPACING.xl }} />
-          ) : tabData.length === 0 ? (
-            <View style={styles.emptyGrid}>
-              <Ionicons
-                name={
-                  activeTab === 'completed' ? 'checkmark-done-circle-outline' :
-                  activeTab === 'dropped' ? 'pause-circle-outline' : 'cube-outline'
-                }
-                size={48}
-                color={COLORS.textMuted}
-              />
-              <Text style={styles.emptyGridText}>
-                {activeTab === 'completed' ? 'NO COMPLETED ANIME YET' :
-                 activeTab === 'dropped' ? 'NO SHOWS ON HOLD' :
-                 'YOUR WATCHLIST IS EMPTY'}
-              </Text>
-              {activeTab === 'dropped' ? (
-                <Text style={styles.emptyGridSub}>
-                  Series you haven't watched in over 14 days will automatically rest here.
-                </Text>
-              ) : (
-                <TouchableOpacity
-                  style={styles.emptyCtaBtn}
-                  onPress={() => router.push('/(tabs)/explore')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.emptyCtaText}>
-                    {activeTab === 'completed' ? 'FIND MORE TO WATCH →' : 'BROWSE ANIME →'}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          ) : (
-            <View style={isGridView ? styles.grid : styles.listColumn}>
-              {tabData.map((anime: any, idx: number) => (
-                <LibraryGridItem
-                  key={anime?.id || anime?.anime_id || `grid-${idx}`}
-                  anime={anime}
-                  onPress={handleGridItemPress}
-                  isGridView={isGridView}
-                />
-              ))}
-            </View>
-          )}
+        
+        <View style={styles.filterBar}>
+          <TouchableOpacity
+            style={styles.filterBtn}
+            activeOpacity={0.7}
+            onPress={() => {
+              haptic.selection();
+              handleSortPress();
+            }}
+            accessibilityRole="button"
+          >
+            <Ionicons name="filter-outline" size={16} color={COLORS.neon} />
+            <Text style={styles.filterText}>SORT: {sortBy.toUpperCase()}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.gridBtn}
+            hitSlop={TOUCH.hitSlop}
+            activeOpacity={0.7}
+            onPress={() => {
+              haptic.selection();
+              setIsGridView(!isGridView);
+            }}
+            accessibilityRole="button"
+          >
+            <Ionicons name={isGridView ? 'list-outline' : 'grid-outline'} size={18} color={COLORS.neon} />
+          </TouchableOpacity>
         </View>
-      </ScrollView>
+      </View>
+    </View>
+  ), [
+    continueWatching,
+    cardWidth,
+    width,
+    handleContinueWatchingPress,
+    activeTab,
+    sortBy,
+    isGridView,
+    handleSortPress,
+  ]);
+
+  const renderEmpty = useMemo(() => {
+    if (loading) {
+      if (isGridView) {
+        const gridColWidth = Math.floor((width - SPACING.md * 2 - SPACING.sm) / 2);
+        return (
+          <View style={[styles.gridRow, { flexDirection: 'row', flexWrap: 'wrap' }]}>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <View key={i} style={styles.gridItem}>
+                <AnimeCardSkeleton cardWidth={gridColWidth - SPACING.sm * 2} size="md" style={{ width: '100%', marginRight: 0 }} />
+              </View>
+            ))}
+          </View>
+        );
+      }
+      return (
+        <View style={{ paddingHorizontal: SPACING.md, gap: SPACING.sm }}>
+          {Array.from({ length: 5 }).map((_, i) => (
+            <View key={i} style={[styles.listItem, { opacity: 0.6 }]}>
+              <View style={[styles.listPoster, { backgroundColor: COLORS.bgCard }]} />
+              <View style={{ flex: 1, gap: 8 }}>
+                <View style={{ width: '60%', height: 16, backgroundColor: COLORS.bgCard, borderRadius: 4 }} />
+                <View style={{ width: '30%', height: 12, backgroundColor: COLORS.bgCard, borderRadius: 4 }} />
+              </View>
+            </View>
+          ))}
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.emptyGrid}>
+        <Ionicons
+          name={
+            activeTab === 'completed' ? 'checkmark-done-circle-outline' :
+            activeTab === 'dropped' ? 'pause-circle-outline' : 'cube-outline'
+          }
+          size={48}
+          color={COLORS.textMuted}
+        />
+        <Text style={styles.emptyGridText}>
+          {activeTab === 'completed' ? 'NO COMPLETED ANIME YET' :
+           activeTab === 'dropped' ? 'NO SHOWS ON HOLD' :
+           'YOUR WATCHLIST IS EMPTY'}
+        </Text>
+        {activeTab === 'dropped' ? (
+          <Text style={styles.emptyGridSub}>
+            Series you haven't watched in over 14 days will automatically rest here.
+          </Text>
+        ) : (
+          <TouchableOpacity
+            style={styles.emptyCtaBtn}
+            onPress={() => router.push('/(tabs)/explore')}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.emptyCtaText}>
+              {activeTab === 'completed' ? 'FIND MORE TO WATCH →' : 'BROWSE ANIME →'}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  }, [loading, isGridView, width, activeTab, router]);
+
+  return (
+    <View style={styles.container}>
+      <FlatList
+        ref={flatListRef}
+        key={isGridView ? 'library-grid-2' : 'library-list-1'}
+        data={loading ? [] : tabData}
+        keyExtractor={keyExtractor}
+        numColumns={isGridView ? 2 : 1}
+        columnWrapperStyle={isGridView ? styles.gridRow : undefined}
+        renderItem={renderItem}
+        ListHeaderComponent={renderHeader}
+        ListEmptyComponent={renderEmpty}
+        contentContainerStyle={[
+          styles.listContainer,
+          { paddingBottom: insets.bottom + 80 },
+          !isGridView && { paddingHorizontal: SPACING.sm },
+        ]}
+        showsVerticalScrollIndicator={false}
+        initialNumToRender={8}
+        maxToRenderPerBatch={6}
+        windowSize={5}
+        removeClippedSubviews
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={COLORS.neon}
+          />
+        }
+      />
 
       {/* Sort Bottom Sheet Modal */}
       <Modal 
@@ -484,6 +553,7 @@ export default function LibraryScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg },
+  listContainer: { flexGrow: 1 },
   center: { alignItems: 'center', justifyContent: 'center', padding: SPACING.xl },
   guestTitle: { fontSize: 20, color: COLORS.text, fontWeight: '900', marginTop: SPACING.md, letterSpacing: 2 },
   guestSub: { fontSize: 13, color: COLORS.textMuted, textAlign: 'center', marginTop: SPACING.sm, lineHeight: 20 },
@@ -544,6 +614,7 @@ const styles = StyleSheet.create({
   continueCardSub: { fontSize: 12, color: COLORS.textMuted, marginTop: 2 },
 
   librarySection: { marginTop: SPACING.xl, paddingBottom: 100 },
+  libraryHeaderSection: { marginTop: SPACING.xl, marginBottom: SPACING.md },
   tabBarRow: { paddingHorizontal: SPACING.md, marginBottom: SPACING.lg },
   tabInner: { 
     flexDirection: 'row',
@@ -590,7 +661,8 @@ const styles = StyleSheet.create({
   filterText: { fontSize: 10, fontWeight: '900', color: COLORS.textSub, letterSpacing: 2 },
 
   grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: SPACING.sm },
-  gridItem: { width: '50%', padding: SPACING.sm, marginBottom: SPACING.md },
+  gridRow: { paddingHorizontal: SPACING.sm },
+  gridItem: { flex: 1, maxWidth: '50%', padding: SPACING.sm, marginBottom: SPACING.md },
   posterBox: { 
     aspectRatio: 2/3, 
     borderRadius: RADIUS.md, 

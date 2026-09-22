@@ -447,9 +447,14 @@ export default function SearchScreen() {
         <View style={styles.partitionContainer}>
           {renderBrowseFilterHeader()}
           {/* Skeleton shimmer grid while first page loads */}
-          <View style={[styles.threeColGrid, { paddingHorizontal: SPACING.md }]}>
+          <View style={styles.threeColGrid}>
             {Array.from({ length: 12 }).map((_, i) => (
-              <AnimeCardSkeleton key={i} cardWidth={cardWidth} size="sm" />
+              <AnimeCardSkeleton
+                key={i}
+                cardWidth={cardWidth}
+                size="sm"
+                style={{ width: cardWidth, marginRight: 0 }}
+              />
             ))}
           </View>
         </View>
@@ -733,9 +738,15 @@ export default function SearchScreen() {
 
         {/* Simulcast Anime Grid */}
         {simulcastsLoading ? (
-          <View style={styles.partitionLoading}>
-            <ActivityIndicator color={COLORS.neonCyan} size="large" />
-            <Text style={styles.loadingSubText}>LOADING SIMULCAST SCHEDULE...</Text>
+          <View style={styles.threeColGrid}>
+            {Array.from({ length: 9 }).map((_, i) => (
+              <AnimeCardSkeleton
+                key={i}
+                cardWidth={cardWidth}
+                size="sm"
+                style={{ width: cardWidth, marginRight: 0 }}
+              />
+            ))}
           </View>
         ) : (
           <View style={styles.threeColGrid}>
@@ -815,9 +826,15 @@ export default function SearchScreen() {
   const renderSearchResults = () => {
     if (searching) {
       return (
-        <View style={styles.center}>
-          <ActivityIndicator color={COLORS.neonCyan} size="large" />
-          <Text style={styles.loadingText}>SEARCHING ANIME CATALOG...</Text>
+        <View style={styles.threeColGrid}>
+          {Array.from({ length: 9 }).map((_, i) => (
+            <AnimeCardSkeleton
+              key={i}
+              cardWidth={cardWidth}
+              size="sm"
+              style={{ width: cardWidth, marginRight: 0 }}
+            />
+          ))}
         </View>
       );
     }

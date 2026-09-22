@@ -127,21 +127,24 @@ export function useAnimeDetails(animeId?: string) {
 // EPISODE QUERIES
 // ----------------------------------------------------------------------
 
+// Shared fetcher — used by useEpisodes and usePrefetch to guarantee identical cache projection
+export async function fetchEpisodesByAnimeId(animeId: string): Promise<Episode[]> {
+  if (!animeId) return [];
+  const { data, error } = await supabase
+    .from('episodes')
+    .select('*')
+    .eq('anime_id', animeId)
+    .order('episode_number', { ascending: true });
+  if (error) throw error;
+  return (data as Episode[]) ?? [];
+}
+
 export function useEpisodes(animeId?: string) {
   return useQuery({
     queryKey: ['episodes', animeId],
     staleTime: 10 * 60 * 1000,
     gcTime: 20 * 60 * 1000,
-    queryFn: async (): Promise<Episode[]> => {
-      if (!animeId) return [];
-      const { data, error } = await supabase
-        .from('episodes')
-        .select('*')
-        .eq('anime_id', animeId)
-        .order('episode_number', { ascending: true });
-      if (error) throw error;
-      return data;
-    },
+    queryFn: () => fetchEpisodesByAnimeId(animeId!),
     enabled: !!animeId,
   });
 }

@@ -14,9 +14,11 @@ interface HeroBannerProps {
   onPlay: (anime: AnimeWithStats) => void;
 }
 
+import { HeroBannerSkeleton } from './Skeleton';
+
 // Memoized: only re-renders if anime reference changes
 export const HeroBanner = React.memo(function HeroBanner({ anime, onPress, onPlay }: HeroBannerProps) {
-  if (!anime) return <View style={styles.placeholder} />;
+  if (!anime) return <HeroBannerSkeleton />;
 
   // Slice genres once — not on every render
   const visibleGenres = useMemo(() => anime.genres?.slice(0, 3) ?? [], [anime.genres]);
@@ -110,3 +112,5 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 });
+
+export { HeroBannerSkeleton } from './Skeleton';

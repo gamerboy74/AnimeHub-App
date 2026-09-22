@@ -47,8 +47,10 @@ export function LocalizationProvider({ children }: { children: React.ReactNode }
     };
   }, [locale]);
 
+  const contextValue = useMemo(() => ({ locale, t }), [locale, t]);
+
   return (
-    <LocalizationContext.Provider value={{ locale, t }}>
+    <LocalizationContext.Provider value={contextValue}>
       {children}
     </LocalizationContext.Provider>
   );
