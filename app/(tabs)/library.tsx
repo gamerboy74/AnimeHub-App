@@ -12,7 +12,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS, TOUCH } from '../../src/constants/theme';
 import { userAPI } from '../../src/lib/supabase';
-import { useAuth } from '../../src/context/AuthContext';
+import { useUserId, useIsAuthenticated } from '../../src/context/AuthContext';
 import AnimeCard from '../../src/components/ui/AnimeCard';
 import { AnimeCardSkeleton } from '../../src/components/ui/Skeleton';
 import { BlurView } from 'expo-blur';
@@ -30,8 +30,8 @@ export default function LibraryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const { user } = useAuth();
-  const userId = user?.id;
+  const userId = useUserId();
+  const isAuthenticated = useIsAuthenticated();
   const queryClient = useQueryClient();
 
   const [activeTab, setActiveTab] = useState<LibraryTab>('watchlist');
@@ -88,13 +88,17 @@ export default function LibraryScreen() {
 
   const loading = loadingProgress || loadingWatchlist;
 
-  // Memoized — avoids recomputing on each render triggered by tab switch
-  const uniqueProgress = useMemo(
-    () => progressData.filter((p, index, self) =>
-      index === self.findIndex(t => t.anime_id === p.anime_id)
-    ),
-    [progressData],
-  );
+  // Memoized — single-pass O(N) deduplication
+  const uniqueProgress = useMemo(() => {
+    const seen = new Set<string>();
+    const result: any[] = [];
+    for (const p of progressData) {
+      if (!p?.anime_id || seen.has(p.anime_id)) continue;
+      seen.add(p.anime_id);
+      result.push(p);
+    }
+    return result;
+  }, [progressData]);
   const isAnimeCompleted = useCallback(
     (p: any) => p.is_completed && p.total_episodes && p.episode_number === p.total_episodes,
     [],
@@ -224,7 +228,7 @@ export default function LibraryScreen() {
 
   // Leftover helper replaced by memoized tabData
 
-  if (!user) {
+  if (!isAuthenticated) {
     return (
       <View style={[styles.container, styles.center]}>
         <Ionicons name="library-outline" size={64} color={COLORS.textMuted} />

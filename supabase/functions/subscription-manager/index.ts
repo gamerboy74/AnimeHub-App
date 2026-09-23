@@ -77,22 +77,44 @@ async function sendPushNotification(
       .select('token')
       .eq('user_id', userId);
 
-    if (tokens && tokens.length > 0) {
-      const messages = tokens.map((t: { token: string }) => ({
-        to: t.token,
-        sound: 'default',
-        title,
-        body,
-        data: { url },
-      }));
-      await fetch('https://exp.host/--/api/v2/push/send', {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(messages),
-      });
+    if (!tokens || tokens.length === 0) return;
+
+    // channelId is REQUIRED for Android 8+ banners to appear
+    const messages = tokens.map((t: { token: string }) => ({
+      to: t.token,
+      sound: 'default',
+      title,
+      body,
+      channelId: 'default',             // ← REQUIRED for Android 8+ banners
+      data: { action_url: url },        // ← action_url matches the tap handler in usePushNotifications
+    }));
+
+    const res = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip, deflate',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(messages),
+    });
+
+    if (!res.ok) {
+      console.warn(`[Push] Expo push API returned non-OK for user ${userId}:`, res.status);
+      return;
+    }
+
+    // Prune DeviceNotRegistered tokens so they don't accumulate
+    const result = await res.json();
+    const tickets: Array<{ status: string; details?: { error?: string } }> = result?.data ?? [];
+    const staleTokens: string[] = [];
+    tickets.forEach((ticket, i) => {
+      if (ticket.status === 'error' && ticket.details?.error === 'DeviceNotRegistered') {
+        staleTokens.push(tokens[i].token);
+      }
+    });
+    if (staleTokens.length > 0) {
+      await db.from('user_push_tokens').delete().in('token', staleTokens);
     }
   } catch (err) {
     console.warn(`[Push] Push notification skipped for user ${userId}:`, err);
@@ -131,13 +153,16 @@ async function expireSubscriptions(db: SupabaseClient) {
     .from('users')
     .select('id, billing_cycle, subscription_expires_at')
     .eq('subscription_type', 'premium')
-    .neq('billing_cycle', 'admin_grant')
     .not('subscription_expires_at', 'is', null)
     .lte('subscription_expires_at', now);
 
   if (usersErr) throw new Error(`Failed to query expired users: ${usersErr.message}`);
 
-  const expiredSet = new Set<string>((expiredUsers ?? []).map(u => u.id));
+  const expiredSet = new Set<string>(
+    (expiredUsers ?? [])
+      .filter(u => u.billing_cycle !== 'admin_grant')
+      .map(u => u.id)
+  );
 
   // 2. Secondary check: Legacy preferences records if any exist
   const { data: prefs } = await db
@@ -361,18 +386,35 @@ serve(async (req) => {
       auth: { persistSession: false },
     });
 
+    // Security check: Guard privileged actions
+    const authHeader = req.headers.get('Authorization') || '';
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    const isServiceRole = token === SUPABASE_SERVICE_KEY;
+
     switch (action) {
       case 'expire': {
+        // Safe to run by cron or client triggered sweep since it strictly checks expires_at <= now()
         const result = await expireSubscriptions(db);
         return Response.json(result, { headers: corsHeaders });
       }
 
       case 'remind': {
+        if (!isServiceRole) {
+          return Response.json({ error: 'Unauthorized: Service role key required for reminder sweep' }, {
+            status: 403, headers: corsHeaders,
+          });
+        }
         const result = await sendRenewalReminders(db);
         return Response.json(result, { headers: corsHeaders });
       }
 
       case 'upgrade': {
+        // STRICT SECURITY GUARD: Upgrades must NEVER be callable by arbitrary clients
+        if (!isServiceRole) {
+          return Response.json({ error: 'Unauthorized: Subscription upgrades require verified payment processing' }, {
+            status: 403, headers: corsHeaders,
+          });
+        }
         const { userId, billingCycle, razorpayOrderId, razorpayPaymentId } = body;
         if (!userId || !billingCycle) {
           return Response.json({ error: 'userId and billingCycle are required' }, {
@@ -393,6 +435,18 @@ serve(async (req) => {
             status: 400, headers: corsHeaders,
           });
         }
+
+        // Verify that caller owns this userId or is service_role
+        if (!isServiceRole) {
+          if (!token) {
+            return Response.json({ error: 'Authentication required' }, { status: 401, headers: corsHeaders });
+          }
+          const { data: authData, error: authErr } = await db.auth.getUser(token);
+          if (authErr || !authData?.user || authData.user.id !== userId) {
+            return Response.json({ error: 'Forbidden' }, { status: 403, headers: corsHeaders });
+          }
+        }
+
         const result = await getUserStatus(db, userId);
         return Response.json(result, { headers: corsHeaders });
       }

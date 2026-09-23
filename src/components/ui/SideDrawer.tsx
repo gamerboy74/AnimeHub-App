@@ -20,12 +20,16 @@ import { useAuth } from '../../context/AuthContext';
 import RequestAnimeModal from '../settings/RequestAnimeModal';
 import { useTranslation } from '../../context/LocalizationContext';
 import { haptic } from '../../lib/haptics';
+import { useQuery } from '@tanstack/react-query';
+import { userAPI } from '../../lib/supabase';
+
+import { useUIStore } from '../../store/uiStore';
 
 const DRAWER_WIDTH = Math.min(Dimensions.get('window').width * 0.8, 320);
 
 interface SideDrawerProps {
-  visible: boolean;
-  onClose: () => void;
+  visible?: boolean;
+  onClose?: () => void;
 }
 
 const NAV_ITEMS = [
@@ -42,11 +46,27 @@ const NAV_ITEMS = [
   { key: 'settings', label: 'Settings', icon: 'settings-outline', route: '/settings' },
 ] as const;
 
-export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
+export default function SideDrawer({ visible, onClose }: SideDrawerProps = {}) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, signOut } = useAuth();
   const { t } = useTranslation();
+
+  const storeOpen = useUIStore((s) => s.drawerOpen);
+  const storeSetOpen = useUIStore((s) => s.setDrawerOpen);
+  const isVisible = visible !== undefined ? visible : storeOpen;
+  const handleClose = onClose ?? useCallback(() => storeSetOpen(false), [storeSetOpen]);
+
+  const { data: unreadCount = 0 } = useQuery({
+    queryKey: ['notifications', 'unread-count', user?.id],
+    enabled: !!user?.id,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      const { count } = await userAPI.getUnreadNotificationCount(user!.id);
+      return count ?? 0;
+    },
+  });
 
   const translateX = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
   const overlayOpacity = useRef(new Animated.Value(0)).current;
@@ -54,7 +74,7 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
   const [showRequest, setShowRequest] = useState(false);
 
   useEffect(() => {
-    if (visible) {
+    if (isVisible) {
       setModalVisible(true);
       // Wait one frame so Modal is mounted before animating
       requestAnimationFrame(() => {
@@ -86,30 +106,30 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
         }),
       ]).start(() => setModalVisible(false));
     }
-  }, [visible]);
+  }, [isVisible]);
 
   const navigate = useCallback((route: string) => {
     haptic.selection();
-    onClose();
+    handleClose();
     setTimeout(() => router.push(route as any), 220);
-  }, [onClose, router]);
+  }, [handleClose, router]);
 
   const handleSignOut = useCallback(async () => {
     haptic.medium();
-    onClose();
+    handleClose();
     setTimeout(async () => {
       await signOut();
       router.replace('/auth/login' as any);
     }, 220);
-  }, [onClose, signOut, router]);
+  }, [handleClose, signOut, router]);
 
   const handleSignIn = useCallback(() => {
     haptic.medium();
-    onClose();
+    handleClose();
     setTimeout(() => {
       router.push('/auth/login' as any);
     }, 220);
-  }, [onClose, router]);
+  }, [handleClose, router]);
 
   const initials = user?.username?.substring(0, 2).toUpperCase() ?? '??';
   const hasValidAvatar = !!(user?.avatar_url &&
@@ -123,11 +143,11 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
         transparent
         animationType="none"
         statusBarTranslucent
-        onRequestClose={onClose}
+        onRequestClose={handleClose}
       >
         {/* Dimmed overlay — tapping closes drawer */}
         <Animated.View style={[styles.overlay, { opacity: overlayOpacity }]}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+          <Pressable style={StyleSheet.absoluteFill} onPress={handleClose} />
         </Animated.View>
 
         {/* Drawer panel */}
@@ -168,7 +188,7 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
               <TouchableOpacity
                 onPress={() => {
                   haptic.light();
-                  onClose();
+                  handleClose();
                 }}
                 style={styles.closeBtn}
                 hitSlop={TOUCH.hitSlop}
@@ -198,7 +218,7 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
                 style={styles.requestRow}
                 onPress={() => {
                   haptic.selection();
-                  onClose();
+                  handleClose();
                   setTimeout(() => setShowRequest(true), 250);
                 }}
                 activeOpacity={0.75}
@@ -219,7 +239,13 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
               ))}
               <Text style={styles.navSection}>{t('appLabel')}</Text>
               {NAV_ITEMS.filter(i => ['Notifications', 'Settings'].includes(i.label)).map((item) => (
-                <NavRow key={item.key} item={item} label={t(item.key as any)} onPress={() => navigate(item.route)} />
+                <NavRow
+                  key={item.key}
+                  item={item}
+                  label={t(item.key as any)}
+                  onPress={() => navigate(item.route)}
+                  badgeCount={item.key === 'notifications' ? unreadCount : undefined}
+                />
               ))}
             </ScrollView>
 
@@ -254,14 +280,18 @@ export default function SideDrawer({ visible, onClose }: SideDrawerProps) {
 
 // ─── Reusable nav row ─────────────────────────────────────────────────────────
 const NavRow = React.memo(
-  ({ item, label, onPress }: { item: any; label: string; onPress: () => void }) => {
+  ({ item, label, onPress, badgeCount }: { item: any; label: string; onPress: () => void; badgeCount?: number }) => {
     return (
       <TouchableOpacity style={styles.navItem} onPress={onPress} activeOpacity={0.7}>
         <View style={styles.navIconWrap}>
           <Ionicons name={item.icon as any} size={20} color={COLORS.neon} />
         </View>
         <Text style={styles.navLabel}>{label}</Text>
-        {item.badge ? (
+        {typeof badgeCount === 'number' && badgeCount > 0 ? (
+          <View style={styles.countBadge}>
+            <Text style={styles.countBadgeText}>{badgeCount > 99 ? '99+' : badgeCount}</Text>
+          </View>
+        ) : item.badge ? (
           <View style={styles.soonBadge}>
             <Text style={styles.soonText}>{item.badge}</Text>
           </View>
@@ -276,6 +306,7 @@ const NavRow = React.memo(
       prevProps.item.key === nextProps.item.key &&
       prevProps.item.icon === nextProps.item.icon &&
       prevProps.item.badge === nextProps.item.badge &&
+      prevProps.badgeCount === nextProps.badgeCount &&
       prevProps.label === nextProps.label
     );
   }
@@ -395,6 +426,16 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,184,0,0.4)',
   },
   soonText: { fontSize: 9, color: COLORS.neonGold, fontWeight: '800', letterSpacing: 1 },
+  countBadge: {
+    backgroundColor: COLORS.neon,
+    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 20,
+  },
+  countBadgeText: { fontSize: 10, color: '#fff', fontWeight: '800' },
   footer: {},
   signOutBtn: {
     flexDirection: 'row',

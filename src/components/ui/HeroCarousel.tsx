@@ -27,6 +27,8 @@ const DEFAULT_INTERVAL_MS = 5000;
 interface HeroSlideItemProps {
   item: Anime | AnimeWithStats;
   cardWidth: number;
+  rank: number;
+  totalSlides: number;
   onPress: (id: string) => void;
   onPlay: (id: string) => void;
   onInfo: (id: string) => void;
@@ -36,6 +38,8 @@ interface HeroSlideItemProps {
 const HeroSlideItem = React.memo(function HeroSlideItem({
   item,
   cardWidth,
+  rank,
+  totalSlides,
   onPress,
   onPlay,
   onInfo,
@@ -115,12 +119,29 @@ const HeroSlideItem = React.memo(function HeroSlideItem({
         pointerEvents="none"
       />
 
+      {/* Top Floating Rank Tag (1 to 10) */}
+      <View style={styles.heroTopRankTag}>
+        <Ionicons name="trophy" size={11} color={COLORS.neonGold} style={{ marginRight: 4 }} />
+        <Text style={styles.heroTopRankHash}>#</Text>
+        <Text style={styles.heroTopRankNum}>{rank}</Text>
+        <Text style={styles.heroTopRankTotal}>/{totalSlides}</Text>
+      </View>
+
       {/* Hero content card */}
       <View style={styles.heroContent}>
-        {/* Trending badge */}
-        <View style={styles.heroTrendingBadge}>
-          <Animated.View style={[styles.trendingDot, { opacity: pulseAnim }]} />
-          <Text style={styles.trendingText}>TRENDING NOW</Text>
+        {/* Badge Row with Rank Tag & Trending indicator */}
+        <View style={styles.heroBadgeRow}>
+          <View style={styles.heroRankTag}>
+            <Text style={styles.heroRankTagHash}>#</Text>
+            <Text style={styles.heroRankTagNum}>{rank}</Text>
+            <View style={styles.heroRankDivider} />
+            <Text style={styles.heroRankTagLabel}>TOP 10</Text>
+          </View>
+
+          <View style={styles.heroTrendingBadge}>
+            <Animated.View style={[styles.trendingDot, { opacity: pulseAnim }]} />
+            <Text style={styles.trendingText}>TRENDING NOW</Text>
+          </View>
         </View>
 
         {/* Title */}
@@ -378,16 +399,18 @@ export const HeroCarousel = React.memo(function HeroCarousel({
   const keyExtractor = useCallback((item: Anime | AnimeWithStats) => item.id, []);
 
   const renderItem = useCallback(
-    ({ item }: { item: Anime | AnimeWithStats }) => (
+    ({ item, index }: { item: Anime | AnimeWithStats; index: number }) => (
       <HeroSlideItem
         item={item}
         cardWidth={cardWidth}
+        rank={index + 1}
+        totalSlides={slides.length}
         onPress={handlePress}
         onPlay={handlePlay}
         onInfo={handleInfo}
       />
     ),
-    [cardWidth, handlePress, handlePlay, handleInfo]
+    [cardWidth, slides.length, handlePress, handlePlay, handleInfo]
   );
 
   if (!slides || slides.length === 0) return <HeroCarouselSkeleton />;
@@ -405,7 +428,7 @@ export const HeroCarousel = React.memo(function HeroCarousel({
         snapToAlignment="start"
         decelerationRate="fast"
         bounces={false}
-        removeClippedSubviews={false} // Keep all 5 slides hot in memory for 0-flash cycling
+        removeClippedSubviews={false} // Keep all 10 slides hot in memory for 0-flash cycling
         windowSize={Math.max(3, slides.length)}
         initialNumToRender={slides.length}
         maxToRenderPerBatch={slides.length}
@@ -509,11 +532,84 @@ const styles = StyleSheet.create({
     paddingBottom: SPACING.xl,
     zIndex: 3,
   },
+  heroTopRankTag: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(8, 9, 13, 0.78)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 214, 0, 0.35)',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: RADIUS.md,
+    zIndex: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
+  },
+  heroTopRankHash: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: COLORS.neonGold,
+  },
+  heroTopRankNum: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  heroTopRankTotal: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textMuted,
+    marginLeft: 2,
+  },
+  heroBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: SPACING.xs,
+    flexWrap: 'wrap',
+  },
+  heroRankTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 214, 0, 0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 214, 0, 0.4)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: RADIUS.sm,
+    gap: 2,
+  },
+  heroRankTagHash: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: COLORS.neonGold,
+  },
+  heroRankTagNum: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  heroRankDivider: {
+    width: 1,
+    height: 10,
+    backgroundColor: 'rgba(255, 214, 0, 0.35)',
+    marginHorizontal: 4,
+  },
+  heroRankTagLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: COLORS.neonGold,
+    letterSpacing: 1,
+  },
   heroTrendingBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: SPACING.xs,
   },
   trendingDot: {
     width: 6,
@@ -626,19 +722,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 6,
     zIndex: 10,
   },
   heroDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
     backgroundColor: 'rgba(255,255,255,0.3)',
   },
   heroDotActive: {
-    width: 20,
-    height: 6,
-    borderRadius: 3,
+    width: 16,
+    height: 5,
+    borderRadius: 2.5,
     backgroundColor: COLORS.neon,
     shadowColor: COLORS.neon,
     shadowOpacity: 0.8,

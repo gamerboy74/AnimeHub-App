@@ -1,15 +1,16 @@
-import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import React, { useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  ActivityIndicator, Animated,
+  ActivityIndicator, Animated, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useQuery } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS, TOUCH } from '../src/constants/theme';
-import { useAuth } from '../src/context/AuthContext';
+import { useAuth, useUserId } from '../src/context/AuthContext';
 import { userAPI } from '../src/lib/supabase';
 import { BADGE_DEFS } from '../src/constants/badges';
 import { haptic } from '../src/lib/haptics';
@@ -88,24 +89,27 @@ function BadgeCard({ badge }: { badge: any }) {
 export default function StatsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { user } = useAuth();
+  const userId = useUserId();
 
-  const [allProgress, setAllProgress] = useState<any[]>([]);
-  const [watchlist, setWatchlist]     = useState<any[]>([]);
-  const [dbStats, setDbStats]         = useState<any>(null);
-  const [dbBadges, setDbBadges]       = useState<any[]>([]);
-  const [loading, setLoading]         = useState(true);
-
-  const fetchData = useCallback(async () => {
-    if (!user) return;
-    try {
+  const {
+    data: statsData,
+    isLoading: loading,
+    isRefetching,
+    refetch,
+  } = useQuery({
+    queryKey: ['user', userId, 'stats-summary'],
+    enabled: !!userId,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    queryFn: async () => {
+      if (!userId) return null;
       const [progressRes, watchlistRes, statsRes, badgesRes] = await Promise.all([
-        userAPI.getProgressLight(user.id),
-        userAPI.getWatchlistLight(user.id),
-        userAPI.getUserStats(user.id),
-        userAPI.getUserBadges(user.id),
+        userAPI.getProgressLight(userId),
+        userAPI.getWatchlistLight(userId),
+        userAPI.getUserStats(userId),
+        userAPI.getUserBadges(userId),
       ]);
-      
+
       if (progressRes.error) {
         console.error('[Stats] Error fetching watch progress:', progressRes.error);
       }
@@ -113,28 +117,19 @@ export default function StatsScreen() {
         console.error('[Stats] Error fetching watchlist:', watchlistRes.error);
       }
 
-      setAllProgress(progressRes.data || []);
-      setWatchlist(watchlistRes.data || []);
-      
-      if (statsRes && !statsRes.error && statsRes.data) {
-        setDbStats(statsRes.data);
-      } else {
-        setDbStats(null);
-      }
-      
-      if (badgesRes && !badgesRes.error && badgesRes.data) {
-        setDbBadges(badgesRes.data);
-      } else {
-        setDbBadges([]);
-      }
-    } catch (err) {
-      console.error('[Stats] Unexpected error loading stats data:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [user?.id]);
+      return {
+        allProgress: progressRes.data || [],
+        watchlist: watchlistRes.data || [],
+        dbStats: statsRes && !statsRes.error && statsRes.data ? statsRes.data : null,
+        dbBadges: badgesRes && !badgesRes.error && badgesRes.data ? badgesRes.data : [],
+      };
+    },
+  });
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  const allProgress = useMemo(() => statsData?.allProgress ?? [], [statsData?.allProgress]);
+  const watchlist = useMemo(() => statsData?.watchlist ?? [], [statsData?.watchlist]);
+  const dbStats = statsData?.dbStats ?? null;
+  const dbBadges = useMemo(() => statsData?.dbBadges ?? [], [statsData?.dbBadges]);
 
   const streak = useMemo(() => {
     return dbStats ? dbStats.current_streak : computeStreak(allProgress);
@@ -203,6 +198,14 @@ export default function StatsScreen() {
       style={styles.root}
       contentContainerStyle={{ paddingTop: insets.top, paddingBottom: 120 }}
       showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefetching}
+          onRefresh={refetch}
+          tintColor={COLORS.neon}
+          colors={[COLORS.neon]}
+        />
+      }
     >
       {/* Header */}
       <View style={styles.header}>

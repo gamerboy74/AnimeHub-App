@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, RefreshControl, Platform } from 'react-native';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,14 +7,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS, TOUCH } from '../src/constants/theme';
 import { userAPI } from '../src/lib/supabase';
-import { useAuth } from '../src/context/AuthContext';
+import { useUserId } from '../src/context/AuthContext';
 import { haptic } from '../src/lib/haptics';
 
 export default function WatchHistoryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
-  const userId = user?.id;
+  const userId = useUserId();
   const queryClient = useQueryClient();
 
   const { data: history = [], isLoading: loading, isRefetching } = useQuery({
@@ -48,6 +47,12 @@ export default function WatchHistoryScreen() {
 
   const ItemSeparator = useCallback(() => <View style={styles.separator} />, []);
 
+  const getItemLayout = useCallback((_: any, index: number) => ({
+    length: 118,
+    offset: 118 * index,
+    index,
+  }), []);
+
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
@@ -70,7 +75,7 @@ export default function WatchHistoryScreen() {
         </View>
       </View>
 
-      {!user ? (
+      {!userId ? (
         <View style={styles.empty}>
           <Ionicons name="time-outline" size={48} color={COLORS.textMuted} />
           <Text style={styles.emptyText}>Sign in to see your watch history</Text>
@@ -98,6 +103,7 @@ export default function WatchHistoryScreen() {
           data={history}
           keyExtractor={keyExtractor}
           contentContainerStyle={styles.list}
+          getItemLayout={getItemLayout}
           refreshControl={
             <RefreshControl
               refreshing={isRefetching}
@@ -107,6 +113,10 @@ export default function WatchHistoryScreen() {
           }
           renderItem={renderItem}
           ItemSeparatorComponent={ItemSeparator}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          removeClippedSubviews={Platform.OS === 'android'}
         />
       )}
     </View>
@@ -135,7 +145,9 @@ const HistoryItemRow = React.memo(
           source={{ uri: item.poster_url || '' }}
           style={styles.poster}
           contentFit="cover"
-          transition={200}
+          transition={150}
+          recyclingKey={item.episode_id || item.anime_id}
+          cachePolicy="memory-disk"
         />
         <View style={styles.histInfo}>
           <Text style={styles.animeTitle} numberOfLines={1}>{item.anime_title}</Text>

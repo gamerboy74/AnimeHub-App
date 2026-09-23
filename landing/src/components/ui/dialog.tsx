@@ -28,17 +28,17 @@ export function Dialog({ open, onOpenChange, children }: DialogProps) {
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 animate-in fade-in-0 duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 animate-in fade-in-0 duration-200 overflow-y-auto">
       {/* Backdrop */}
       <div
         className="fixed inset-0 bg-black/80 backdrop-blur-md transition-opacity"
         onClick={() => onOpenChange(false)}
       />
       {/* Modal Dialog Body */}
-      <div className="relative z-50 w-full max-w-lg overflow-hidden rounded-3xl border border-white/15 bg-[#0E1117] p-6 sm:p-8 shadow-2xl shadow-black/80">
+      <div className="relative z-50 w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl border border-white/15 bg-[#0E1117] p-5 sm:p-8 shadow-2xl shadow-black/80 my-auto">
         <button
           onClick={() => onOpenChange(false)}
-          className="absolute right-5 top-5 rounded-full p-2 text-slate-400 hover:bg-white/10 hover:text-white transition-colors"
+          className="absolute right-4 top-4 rounded-full p-2 text-slate-400 hover:bg-white/10 hover:text-white transition-colors z-20"
           aria-label="Close"
         >
           <X className="size-5" />

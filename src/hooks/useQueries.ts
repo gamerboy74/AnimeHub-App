@@ -25,7 +25,7 @@ export function useTrendingAnime() {
     staleTime: 15 * 60 * 1000,
     gcTime: 20 * 60 * 1000,
     retry: 2,
-    queryFn: (): Promise<AnimeWithStats[]> => fetchJikanWithFallback('trending', 15),
+    queryFn: (): Promise<AnimeWithStats[]> => fetchJikanWithFallback('trending', 20),
   });
 }
 

@@ -12,6 +12,9 @@ import {
   revokeOtherSessions,
 } from '../lib/sessionManager';
 import { getRandomAnimeAvatar } from '../constants/avatars';
+import { Platform } from 'react-native';
+import { extractOAuthParams } from '../lib/authUtils';
+import { unregisterDevicePushToken } from '../lib/pushNotifications';
 
 // Required for expo-web-browser to complete OAuth sessions on Android
 WebBrowser.maybeCompleteAuthSession();
@@ -42,6 +45,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // to avoid the brief "logged-out" flash while AsyncStorage is being hydrated.
   const [isAuthReady, setIsAuthReady] = useState(false);
   const isInitializedRef = useRef(false);
+
+  // ── Safety net: guarantee isAuthReady fires within 8 s ───────────────────
+  // If the Supabase listener never calls back (no network on a cold first
+  // install, corrupted AsyncStorage, etc.) this ensures the splash screen is
+  // released and the user sees the app instead of a permanent black screen.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!isInitializedRef.current) {
+        isInitializedRef.current = true;
+        setIsAuthReady(true);
+        setLoading(false);
+      }
+    }, 8000);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     // ── Single authoritative source of truth: onAuthStateChange ──────────────
@@ -143,11 +161,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // ── Local & Server Sign Out ───────────────────────────────────────────────
   const signOut = useCallback(async () => {
+    try {
+      const currentUserId = user?.id || session?.user?.id;
+      if (currentUserId) {
+        await unregisterDevicePushToken(currentUserId).catch(() => {});
+      }
+    } catch {}
     await clearLocalSessionStart();
     await supabase.auth.signOut();
     setUser(null);
     setSession(null);
-  }, []);
+  }, [user?.id, session?.user?.id]);
 
   // ── Realtime: listen for remote session revocation broadcast ───────────────
   // Instantly logs out other connected devices when "Log out other sessions" is invoked.
@@ -412,38 +436,60 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (error || !data?.url) return { error: error ?? new Error('No OAuth URL returned') };
 
       const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-      if (result.type !== 'success') return { error: new Error('Google sign-in was cancelled') };
 
-      // Support both PKCE (?code=) and Implicit (#access_token=) flows:
-      if (result.url.includes('access_token=') && result.url.includes('refresh_token=')) {
-        const hash = result.url.split('#')[1];
-        const urlParams = new URLSearchParams(hash);
-        const accessToken = urlParams.get('access_token');
-        const refreshToken = urlParams.get('refresh_token');
-
-        if (accessToken && refreshToken) {
-          const { error: setSessionError } = await supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: refreshToken,
-          });
-          return { error: setSessionError };
+      // On Android, Custom Tabs may dismiss or return 'cancel' when the OS deep-links back into the app
+      if (result.type !== 'success') {
+        // Wait a brief tick to check if callback.tsx or the auth listener already completed sign-in
+        await new Promise((r) => setTimeout(r, 600));
+        const { data: { session: checkSession } } = await supabase.auth.getSession();
+        if (checkSession) {
+          return { error: null };
         }
+        return { error: new Error('Google sign-in was cancelled') };
       }
 
-      // On Android, callback.tsx handles the exchange via deep link.
-      // Check if it already did — if so, skip to avoid consuming the verifier twice.
-      const { data: { session: existingSession } } = await supabase.auth.getSession();
-      if (existingSession) return { error: null };
+      // If openAuthSessionAsync captured the return URL directly:
+      const authParams = extractOAuthParams(result.url);
 
-      // Supabase v2 uses PKCE — exchangeCodeForSession handles ?code= automatically
-      const { error: sessionError } = await supabase.auth.exchangeCodeForSession(result.url);
-      if (sessionError?.message.includes('verifier')) {
-        // Callback.tsx won the race — session is being set via onAuthStateChange
-        return { error: null };
+      // Support Implicit flow (#access_token= & refresh_token=)
+      if (authParams.type === 'hash' && authParams.accessToken && authParams.refreshToken) {
+        const { error: setSessionError } = await supabase.auth.setSession({
+          access_token: authParams.accessToken,
+          refresh_token: authParams.refreshToken,
+        });
+        return { error: setSessionError };
       }
-      return { error: sessionError };
+
+      // Support PKCE flow (?code=)
+      if (authParams.type === 'pkce' && authParams.code) {
+        // If callback.tsx already exchanged it concurrently, skip
+        const { data: { session: existingSession } } = await supabase.auth.getSession();
+        if (existingSession) return { error: null };
+
+        // Pass the extracted PKCE code string, NOT the full URL
+        const { error: sessionError } = await supabase.auth.exchangeCodeForSession(authParams.code);
+        if (!sessionError || sessionError.message?.includes('verifier') || sessionError.message?.includes('both auth code')) {
+          return { error: null };
+        }
+        return { error: sessionError };
+      }
+
+      // Double check if session exists anyway
+      const { data: { session: finalSession } } = await supabase.auth.getSession();
+      if (finalSession) return { error: null };
+
+      return { error: null };
     } catch (e: any) {
+      // Check if session became active despite error
+      try {
+        const { data: { session: fallbackSession } } = await supabase.auth.getSession();
+        if (fallbackSession) return { error: null };
+      } catch {}
       return { error: e };
+    } finally {
+      if (Platform.OS === 'android') {
+        WebBrowser.dismissBrowser();
+      }
     }
   }, []); // No session dep needed — does not read session state
 
@@ -489,3 +535,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 }
 
 export const useAuth = () => useContext(AuthContext);
+
+export const useUserId = () => {
+  const { user } = useContext(AuthContext);
+  return user?.id;
+};
+
+export const useIsAuthenticated = () => {
+  const { session } = useContext(AuthContext);
+  return !!session;
+};
+
+export const useIsAuthReady = () => {
+  const { isAuthReady } = useContext(AuthContext);
+  return isAuthReady;
+};

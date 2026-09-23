@@ -158,7 +158,7 @@ export function buildRawPlayerHTML(
           var btnQuality = document.getElementById('btn-quality');
           var menuQuality = document.getElementById('quality-menu');
           
-          var videoSrc = '${embedUrl}';
+          var videoSrc = ${JSON.stringify(embedUrl)};
           var hideTimeout = null;
           var lastTap = 0;
           var hlsInstance = null;
@@ -354,7 +354,7 @@ export function buildRawPlayerHTML(
 
           // Match quality preference helper
           function applyHlsQualityPreference(levels) {
-            var rawPref = '${qualityPreference || 'auto'}';
+            var rawPref = ${JSON.stringify(qualityPreference || 'auto')};
             if (!levels || levels.length === 0) return;
             var isPrem = ${isPremium ? 'true' : 'false'};
             var maxAllowedH = isPrem ? 1080 : 720;
@@ -390,7 +390,7 @@ export function buildRawPlayerHTML(
 
           // Match audio preference helper
           function applyHlsAudioPreference(tracks) {
-            var rawAudio = '${audioPreference || ''}'.toLowerCase();
+            var rawAudio = (${JSON.stringify(audioPreference || '')}).toLowerCase();
             if (!rawAudio || !tracks || tracks.length <= 1 || !hlsInstance) return;
 
             var targetIdx = -1;
@@ -417,7 +417,7 @@ export function buildRawPlayerHTML(
           }
 
           function initPlayer() {
-            if (${isHls}) {
+            if (${isHls ? 'true' : 'false'}) {
               if (typeof Hls !== 'undefined' && Hls.isSupported()) {
                 var hls = new Hls();
                 hlsInstance = hls;

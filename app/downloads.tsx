@@ -25,6 +25,7 @@ import {
   deleteDownload,
   type DownloadedEpisode,
 } from '../src/hooks/useHlsDownloader';
+import { useDownloadStore } from '../src/store/downloadStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 
@@ -83,6 +84,11 @@ function OfflinePlayer({
   const [subtitlesEnabled, setSubtitlesEnabled] = useState(true);
   const [contentFit, setContentFit] = useState<'contain' | 'fill' | 'cover'>('contain');
 
+  const [showHud, setShowHud] = useState(true);
+  const showHudRef = useRef(true);
+  const currentTimeRef = useRef(0);
+  const hudTimerRef = useRef<any>(null);
+
   useEffect(() => {
     const playingSub = (player as any).addListener?.('playingChange', (event: any) => {
       setIsPlaying(event.isPlaying);
@@ -93,20 +99,27 @@ function OfflinePlayer({
       const time    = player.currentTime;
       const dur     = player.duration;
 
+      currentTimeRef.current = time;
+
       setIsPlaying((prev) => (prev !== playing ? playing : prev));
       setDuration((prev) => (prev !== dur ? dur : prev));
-      setCurrentTime((prev) => (Math.abs(prev - time) >= 0.25 ? time : prev));
+
+      // Gate state updates: only re-render when HUD is visible to save ~2,880 renders/episode
+      if (showHudRef.current) {
+        setCurrentTime((prev) => (Math.abs(prev - time) >= 0.5 ? time : prev));
+      }
 
       // Auto-enable subtitles if they should be enabled and a track is available but not selected
       if (subtitlesEnabled && player.availableSubtitleTracks && player.availableSubtitleTracks.length > 0 && !player.subtitleTrack) {
         player.subtitleTrack = player.availableSubtitleTracks[0];
       }
 
-      // Auto-resume: if the player stopped but the user didn't pause it,
-      // kick it back to playing. Covers HLS segment-boundary stalls,
-      // buffering pauses, and any other unexpected stops.
-      const isEnding = (dur > 0 && !isNaN(dur) && !isNaN(time) && time >= dur - 0.5);
-      if (!playing && !userPausedRef.current && !isEnding) {
+      // Auto-resume: if the player stopped unexpectedly during playback (e.g. buffer stall),
+      // kick it back to playing only if player has valid duration, is not at the end, and not errored.
+      const hasValidDuration = dur > 0 && !isNaN(dur);
+      const isEnding = hasValidDuration && !isNaN(time) && time >= dur - 0.8;
+      const isPlayerError = (player as any).status === 'error';
+      if (!playing && !userPausedRef.current && hasValidDuration && !isEnding && !isPlayerError) {
         player.play();
       }
     }, 500);
@@ -117,25 +130,32 @@ function OfflinePlayer({
     };
   }, [player, subtitlesEnabled]);
 
-  const [showHud, setShowHud] = useState(true);
-  const hudTimerRef = useRef<any>(null);
-
   const resetHudTimer = useCallback(() => {
+    showHudRef.current = true;
     setShowHud(true);
+    setCurrentTime(currentTimeRef.current);
     if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
-    hudTimerRef.current = setTimeout(() => setShowHud(false), 4000);
+    hudTimerRef.current = setTimeout(() => {
+      showHudRef.current = false;
+      setShowHud(false);
+    }, 4000);
   }, []);
 
   const toggleHud = useCallback(() => {
     setShowHud((prev) => {
-      if (prev) {
+      const next = !prev;
+      showHudRef.current = next;
+      if (next) {
+        setCurrentTime(currentTimeRef.current);
         if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
-        return false;
+        hudTimerRef.current = setTimeout(() => {
+          showHudRef.current = false;
+          setShowHud(false);
+        }, 4000);
       } else {
         if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
-        hudTimerRef.current = setTimeout(() => setShowHud(false), 4000);
-        return true;
       }
+      return next;
     });
   }, []);
 
@@ -542,8 +562,11 @@ function SubscriptionLockOverlay({
 export default function DownloadsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [downloads, setDownloads] = useState<DownloadedEpisode[]>([]);
-  const [loading, setLoading] = useState(true);
+  const downloads = useDownloadStore((s) => s.downloads);
+  const loading = useDownloadStore((s) => s.loading);
+  const loadDownloads = useDownloadStore((s) => s.loadDownloads);
+  const removeDownload = useDownloadStore((s) => s.removeDownload);
+
   const [playingEpisode, setPlayingEpisode] = useState<DownloadedEpisode | null>(null);
   const [selectedAnimeName, setSelectedAnimeName] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'recent' | 'title' | 'size'>('recent');
@@ -592,8 +615,9 @@ export default function DownloadsScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      loadDownloads();
       checkOfflineSub(subStatus.reason !== null);
-    }, [checkOfflineSub, subStatus.reason])
+    }, [loadDownloads, checkOfflineSub, subStatus.reason])
   );
 
   // ── Hardware back button handler ─────────────────────────────────────────
@@ -612,23 +636,11 @@ export default function DownloadsScreen() {
     return () => sub.remove();
   }, [playingEpisode, selectedAnimeName]);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    const all = await getAllDownloads();
-    setDownloads(all);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
   const handleDelete = useCallback(
     async (episodeId: string) => {
-      await deleteDownload(episodeId);
-      await refresh();
+      await removeDownload(episodeId);
     },
-    [refresh],
+    [removeDownload],
   );
 
   // Group downloads by animeName

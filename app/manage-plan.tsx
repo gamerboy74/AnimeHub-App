@@ -11,7 +11,7 @@
  * - All destructive actions are double-confirmed.
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   Alert, ActivityIndicator, Modal, Pressable,
@@ -25,6 +25,7 @@ import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
 import { useAuth } from '../src/context/AuthContext';
 import { supabase, userAPI } from '../src/lib/supabase';
 import { usePlans, formatPrice, formatPeriod } from '../src/hooks/usePlans';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type BillingCycle = 'monthly' | 'yearly' | 'admin_grant';
@@ -91,17 +92,56 @@ export default function ManagePlanScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user, refreshUser } = useAuth();
+  const queryClient = useQueryClient();
   const { data: plansData } = usePlans();
 
-  const [meta, setMeta] = useState<SubscriptionMeta | null>(null);
-  const [stats, setStats] = useState<PremiumStats | null>(null);
-  const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [billingHistoryVisible, setBillingHistoryVisible] = useState(false);
-  const [payments, setPayments] = useState<UserPayment[]>([]);
-  const [loadingPayments, setLoadingPayments] = useState(false);
   const [cancelDialogVisible, setCancelDialogVisible] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+
+  // 1. Subscription preferences (cached with settings.tsx)
+  const { data: prefs, isLoading: loadingPrefs } = useQuery({
+    queryKey: ['user', user?.id, 'preferences'],
+    staleTime: 60 * 1000,
+    gcTime: 5 * 60 * 1000,
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { data } = await userAPI.getPreferences(user!.id);
+      return data;
+    },
+  });
+
+  // 2. User stats (cached with stats.tsx)
+  const { data: statsData, isLoading: loadingStats } = useQuery({
+    queryKey: ['user', user?.id, 'stats-summary'],
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const statsRes = await userAPI.getUserStats(user!.id);
+      return {
+        allProgress: [],
+        watchlist: [],
+        dbStats: statsRes && !statsRes.error && statsRes.data ? statsRes.data : null,
+        dbBadges: [],
+      };
+    },
+  });
+
+  // 3. Billing payments history (lazy-enabled when modal opens)
+  const { data: payments = [], isLoading: loadingPayments } = useQuery<UserPayment[]>({
+    queryKey: ['user', user?.id, 'payments'],
+    staleTime: 60 * 1000,
+    gcTime: 5 * 60 * 1000,
+    enabled: !!user?.id && billingHistoryVisible,
+    queryFn: async () => {
+      const { data } = await userAPI.getUserPayments(user!.id);
+      return (data as UserPayment[]) ?? [];
+    },
+  });
+
+  const loading = loadingPrefs || loadingStats;
 
   const monthlyPlan = plansData?.plans.find(p => p.billing_cycle === 'monthly');
   const yearlyPlan = plansData?.plans.find(p => p.billing_cycle === 'yearly');
@@ -114,6 +154,41 @@ export default function ManagePlanScreen() {
     }
     return monthlyPlan ? `${formatPrice(monthlyPlan)}${formatPeriod(monthlyPlan)}` : '₹99/mo';
   }, [monthlyPlan, yearlyPlan]);
+
+  // Derived subscription metadata from single source of truth + prefs cache
+  const meta: SubscriptionMeta | null = useMemo(() => {
+    if (!user) return null;
+    const legacyMeta = prefs?.subscription_meta as SubscriptionMeta | null | undefined;
+    const cycle = (user.billing_cycle ?? legacyMeta?.billing_cycle) as BillingCycle | undefined;
+    const renewal = user.subscription_expires_at ?? legacyMeta?.next_renewal;
+    const subscribed = user.subscription_started_at ?? legacyMeta?.subscribed_at ?? user.created_at ?? new Date().toISOString();
+    const cancelAtEnd = user.cancel_at_period_end ?? legacyMeta?.cancel_at_period_end ?? false;
+
+    if (cycle) {
+      return {
+        billing_cycle: cycle,
+        subscribed_at: subscribed,
+        next_renewal: renewal ?? new Date(Date.now() + 30 * 86_400_000).toISOString(),
+        cancel_at_period_end: cancelAtEnd,
+        cancelled_at: legacyMeta?.cancelled_at,
+      };
+    }
+    return {
+      billing_cycle: 'admin_grant',
+      subscribed_at: subscribed,
+      next_renewal: new Date('2099-12-31').toISOString(),
+    };
+  }, [user, prefs]);
+
+  const stats: PremiumStats | null = useMemo(() => {
+    const s = statsData?.dbStats;
+    if (!s) return null;
+    return {
+      total_episodes_watched: s.total_episodes_watched ?? 0,
+      premium_episodes_watched: s.premium_episodes_watched ?? 0,
+      total_watch_time_hours: Math.round((s.total_watch_time ?? 0) / 3600),
+    };
+  }, [statsData?.dbStats]);
 
   const switchSubtext = React.useMemo(() => {
     if (meta?.billing_cycle === 'monthly') {
@@ -130,59 +205,6 @@ export default function ManagePlanScreen() {
     return `Billed monthly at ${monthlyFormatted}`;
   }, [meta?.billing_cycle, monthlyPlan, yearlyPlan]);
 
-  // ── Load subscription metadata + usage stats ──────────────────────────────
-  useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-
-    const load = async () => {
-      try {
-        // 1. Load subscription metadata: users table is the single source of truth,
-        // with user_preferences as a fallback for legacy records.
-        const { data: prefs } = await userAPI.getPreferences(user.id);
-        const legacyMeta = prefs?.subscription_meta as SubscriptionMeta | null | undefined;
-
-        const cycle = (user.billing_cycle ?? legacyMeta?.billing_cycle) as BillingCycle | undefined;
-        const renewal = user.subscription_expires_at ?? legacyMeta?.next_renewal;
-        const subscribed = user.subscription_started_at ?? legacyMeta?.subscribed_at ?? user.created_at ?? new Date().toISOString();
-        const cancelAtEnd = user.cancel_at_period_end ?? legacyMeta?.cancel_at_period_end ?? false;
-
-        if (!cancelled && cycle) {
-          setMeta({
-            billing_cycle: cycle,
-            subscribed_at: subscribed,
-            next_renewal: renewal ?? new Date(Date.now() + 30 * 86_400_000).toISOString(),
-            cancel_at_period_end: cancelAtEnd,
-            cancelled_at: legacyMeta?.cancelled_at,
-          });
-        } else if (!cancelled) {
-          // Admin-granted VIP: subscription_type = 'premium' but no specific cycle
-          const defaultMeta: SubscriptionMeta = {
-            billing_cycle: 'admin_grant',
-            subscribed_at: subscribed,
-            next_renewal: new Date('2099-12-31').toISOString(),
-          };
-          setMeta(defaultMeta);
-        }
-
-        // 2. Load usage stats from user_stats view
-        const { data: userStats } = await userAPI.getUserStats(user.id);
-        if (!cancelled && userStats) {
-          setStats({
-            total_episodes_watched: userStats.total_episodes_watched ?? 0,
-            premium_episodes_watched: userStats.premium_episodes_watched ?? 0,
-            total_watch_time_hours: Math.round((userStats.total_watch_time ?? 0) / 3600),
-          });
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    load();
-    return () => { cancelled = true; };
-  }, [user?.id, user?.billing_cycle, user?.subscription_expires_at, user?.cancel_at_period_end]);
-
   // ── Switch billing cycle (monthly ↔ yearly) ───────────────────────────────
   const handleSwitchCycle = useCallback(() => {
     if (!meta) return;
@@ -191,32 +213,18 @@ export default function ManagePlanScreen() {
 
     Alert.alert(
       `Switch to ${PLAN_LABELS[targetCycle]}?`,
-      `You'll be billed ${targetPrice} starting from your next renewal date.\n\nThis change takes effect immediately.`,
+      `To switch to the ${PLAN_LABELS[targetCycle]} plan (${targetPrice}), please proceed to Plans to complete the checkout securely with Razorpay.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: `Switch to ${PLAN_LABELS[targetCycle]}`,
-          onPress: async () => {
-            setActionLoading(true);
-            try {
-              const newMeta: SubscriptionMeta = {
-                ...meta,
-                billing_cycle: targetCycle,
-                next_renewal: targetCycle === 'yearly'
-                  ? addMonths(new Date(), 12).toISOString()
-                  : addMonths(new Date(), 1).toISOString(),
-              };
-              await userAPI.updateSubscriptionMeta(user!.id, newMeta);
-              setMeta(newMeta);
-              Alert.alert('Plan Updated', `You're now on the ${PLAN_LABELS[targetCycle]} plan.`);
-            } finally {
-              setActionLoading(false);
-            }
+          text: `View Plans & Switch`,
+          onPress: () => {
+            router.push('/plans');
           },
         },
       ],
     );
-  }, [meta, user]);
+  }, [meta, getPlanPrice, router]);
 
   // ── Cancel auto-renewal — opens styled dialog ────────────────────────────
   const handleCancel = useCallback(() => {
@@ -239,8 +247,8 @@ export default function ManagePlanScreen() {
         cancelled_at: new Date().toISOString(),
       };
       await userAPI.updateSubscriptionMeta(user.id, updatedMeta);
+      await queryClient.invalidateQueries({ queryKey: ['user', user.id, 'preferences'] });
       await refreshUser();
-      setMeta(updatedMeta);
       setCancelDialogVisible(false);
       Alert.alert('Auto-Renewal Cancelled', `Premium access stays active until ${expiryStr}. No future charges.`);
     } catch (e: any) {
@@ -248,7 +256,7 @@ export default function ManagePlanScreen() {
     } finally {
       setCancelling(false);
     }
-  }, [meta, user, refreshUser]);
+  }, [meta, user, refreshUser, queryClient]);
 
   // ── Reactivate auto-renewal ───────────────────────────────────────────────
   const handleReactivate = useCallback(async () => {
@@ -265,8 +273,8 @@ export default function ManagePlanScreen() {
         cancelled_at: undefined,
       };
       await userAPI.updateSubscriptionMeta(user.id, updatedMeta);
+      await queryClient.invalidateQueries({ queryKey: ['user', user.id, 'preferences'] });
       await refreshUser();
-      setMeta(updatedMeta);
 
       Alert.alert(
         'Subscription Reactivated',
@@ -277,7 +285,7 @@ export default function ManagePlanScreen() {
     } finally {
       setActionLoading(false);
     }
-  }, [meta, user, refreshUser]);
+  }, [meta, user, refreshUser, queryClient]);
 
   // ── Render ────────────────────────────────────────────────────────────────
   const isExpired = Boolean(
@@ -458,18 +466,9 @@ export default function ManagePlanScreen() {
           {/* Billing history */}
           <TouchableOpacity
             style={styles.actionRow}
-            onPress={async () => {
+            onPress={() => {
               if (!user) return;
               setBillingHistoryVisible(true);
-              if (payments.length === 0) {
-                setLoadingPayments(true);
-                try {
-                  const { data } = await userAPI.getUserPayments(user.id);
-                  setPayments((data as UserPayment[]) ?? []);
-                } finally {
-                  setLoadingPayments(false);
-                }
-              }
             }}
           >
             <View style={styles.actionLeft}>

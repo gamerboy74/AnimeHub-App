@@ -74,6 +74,17 @@ serve(async (req) => {
   }
 
   try {
+    const authHeader = req.headers.get('Authorization') || '';
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+    // Verify caller identity from JWT
+    let callerUser: { id: string } | null = null;
+    if (token) {
+      const { data: authData } = await supabase.auth.getUser(token);
+      if (authData?.user) callerUser = authData.user;
+    }
+
     const body = await req.json();
     const { action } = body;
 
@@ -88,16 +99,25 @@ serve(async (req) => {
         );
       }
 
+      // Security check: caller must match the requested userId
+      if (!callerUser || callerUser.id !== userId) {
+        return Response.json(
+          { error: 'Unauthorized: Caller does not match userId' },
+          { status: 401, headers: corsHeaders },
+        );
+      }
+
       // Fetch dynamic plan price from the database table (subscription_plans)
-      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
       let amount: number | undefined = PLAN_AMOUNT[billingCycle];
       let currency = 'INR';
 
       try {
+        const cleanPlanId = String(planId).replace(/[^a-zA-Z0-9_-]/g, '');
+        const cleanCycle = String(billingCycle).replace(/[^a-zA-Z0-9_-]/g, '');
         const { data: planRow, error: planErr } = await supabase
           .from('subscription_plans')
           .select('id, price_paise, currency, billing_cycle, is_active')
-          .or(`id.eq.${planId},billing_cycle.eq.${billingCycle},name.eq.${planId}`)
+          .or(`id.eq.${cleanPlanId},billing_cycle.eq.${cleanCycle},name.eq.${cleanPlanId}`)
           .eq('is_active', true)
           .order('price_paise', { ascending: false })
           .limit(1)
@@ -143,7 +163,15 @@ serve(async (req) => {
         );
       }
 
-      // 1. Verify HMAC-SHA256 — this is the ONLY security gate
+      // Security check 1: caller must match requested userId
+      if (!callerUser || callerUser.id !== userId) {
+        return Response.json(
+          { error: 'Unauthorized: Caller does not match userId' },
+          { status: 401, headers: corsHeaders },
+        );
+      }
+
+      // Security check 2: Verify HMAC-SHA256 signature
       const expected = await hmacSha256(RAZORPAY_KEY_SECRET, `${orderId}|${paymentId}`);
       if (expected !== signature) {
         return Response.json({ error: 'Invalid payment signature' }, {
@@ -151,8 +179,20 @@ serve(async (req) => {
         });
       }
 
+      // Security check 3: Verify the Razorpay order notes belong to this user
+      try {
+        const rzpOrder = await razorpayRequest(`/orders/${orderId}`, undefined, 'GET');
+        const orderUserId = rzpOrder?.notes?.user_id;
+        if (orderUserId && orderUserId !== userId) {
+          return Response.json({ error: 'Security violation: Order was created for a different account' }, {
+            status: 403, headers: corsHeaders,
+          });
+        }
+      } catch (orderCheckErr) {
+        console.warn('[razorpay-payment] Order ownership check warning:', orderCheckErr);
+      }
+
       // 2. Signature is valid — upgrade subscription using service role (bypasses RLS)
-      const supabase   = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
       const renewalMs  = billingCycle === 'yearly' ? 365 * 86_400_000 : 30 * 86_400_000;
       const now        = new Date().toISOString();
       const renewal    = new Date(Date.now() + renewalMs).toISOString();
@@ -194,7 +234,7 @@ serve(async (req) => {
       if (prefErr) throw new Error(`Failed to write subscription meta: ${prefErr.message}`);
 
       // 2b. Write payment record to user_payments for billing history
-      await supabase.from('user_payments').insert({
+      await supabase.from('user_payments').upsert({
         user_id:             userId,
         razorpay_order_id:   orderId,
         razorpay_payment_id: paymentId,
@@ -205,7 +245,7 @@ serve(async (req) => {
         status:              'captured',
         period_start:        now,
         period_end:          renewal,
-      }).onConflict('razorpay_payment_id').ignoreDuplicates(); // idempotent
+      }, { onConflict: 'razorpay_payment_id', ignoreDuplicates: true }); // idempotent
 
       // 3. Send welcome notification to user's inbox
       const formattedDate = new Date(renewal).toLocaleDateString('en-IN', {
@@ -242,7 +282,8 @@ serve(async (req) => {
                 sound: 'default',
                 title: '⭐ Welcome to AnimeHub Premium!',
                 body: `Your ${billingCycle === 'yearly' ? 'Yearly' : 'Monthly'} plan is now active. Enjoy unlimited streaming!`,
-                data: { url: '/manage-plan' },
+                channelId: 'default',
+                data: { action_url: '/manage-plan' },
               })),
             ),
           });
@@ -265,7 +306,13 @@ serve(async (req) => {
         );
       }
 
-      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+      // Security check: caller must match requested userId
+      if (!callerUser || callerUser.id !== userId) {
+        return Response.json(
+          { error: 'Unauthorized: Caller does not match userId' },
+          { status: 401, headers: corsHeaders },
+        );
+      }
 
       // Check if user already got upgraded by webhook or prior verification
       const { data: userRow } = await supabase
@@ -292,6 +339,14 @@ serve(async (req) => {
 
         if (successfulPayment) {
           const notes = successfulPayment.notes || {};
+
+          // Security check: Verify order belongs to this user
+          if (notes.user_id && notes.user_id !== userId) {
+            return Response.json({ error: 'Security violation: Order belongs to another user' }, {
+              status: 403, headers: corsHeaders,
+            });
+          }
+
           const cycle = (billingCycle || notes.billing_cycle as 'monthly' | 'yearly') || 'monthly';
           const resolvedPlanId = planId || notes.plan_id;
           const renewalMs = cycle === 'yearly' ? 365 * 86_400_000 : 30 * 86_400_000;
@@ -300,8 +355,10 @@ serve(async (req) => {
 
           await supabase.from('users').update({
             subscription_type: 'premium',
+            billing_cycle: cycle,
             subscription_started_at: now,
             subscription_expires_at: renewal,
+            cancel_at_period_end: false,
           }).eq('id', userId);
 
           await supabase.from('user_preferences').upsert({
@@ -316,6 +373,20 @@ serve(async (req) => {
               verified_via: 'check_order_status',
             },
           }, { onConflict: 'user_id' });
+
+          // Record in user_payments for billing history
+          await supabase.from('user_payments').upsert({
+            user_id:             userId,
+            razorpay_order_id:   orderId,
+            razorpay_payment_id: successfulPayment.id,
+            plan_name:           cycle === 'yearly' ? 'Yearly' : 'Monthly',
+            billing_cycle:       cycle,
+            amount_paise:        successfulPayment.amount || (cycle === 'yearly' ? 79900 : 9900),
+            currency:            'INR',
+            status:              'captured',
+            period_start:        now,
+            period_end:          renewal,
+          }, { onConflict: 'razorpay_payment_id', ignoreDuplicates: true });
 
           const formattedDate = new Date(renewal).toLocaleDateString('en-IN', {
             day: 'numeric',

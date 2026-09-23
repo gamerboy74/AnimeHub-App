@@ -8,7 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { COLORS, SPACING, RADIUS, TOUCH } from '../../../src/constants/theme';
 import { reviewAPI } from '../../../src/lib/supabase';
-import { useAuth } from '../../../src/context/AuthContext';
+import { useUserId } from '../../../src/context/AuthContext';
 import { haptic } from '../../../src/lib/haptics';
 
 export default function ReviewsScreen() {
@@ -18,7 +18,7 @@ export default function ReviewsScreen() {
   
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const userId = useUserId();
   
   const [reviews, setReviews] = useState<any[]>([]);
   const [rating, setRating] = useState(0);
@@ -38,7 +38,7 @@ export default function ReviewsScreen() {
   }, [animeId]);
 
   const handleSubmit = async () => {
-    if (!user) { 
+    if (!userId) { 
       router.push('/auth/login'); 
       return; 
     }
@@ -54,7 +54,7 @@ export default function ReviewsScreen() {
     setSubmitting(true);
     haptic.medium();
     try {
-      await reviewAPI.upsert(user.id, animeId, rating * 2, text, isSpoiler);
+      await reviewAPI.upsert(userId, animeId, rating * 2, text, isSpoiler);
       const { data } = await reviewAPI.getByAnime(animeId);
       setReviews(data || []);
       setRating(0); 
@@ -106,7 +106,7 @@ export default function ReviewsScreen() {
       </View>
 
       {/* Write review box */}
-      {user && (
+      {userId && (
         <View style={styles.writeBox}>
           <Text style={styles.writeLabel}>YOUR REVIEW</Text>
           <View style={styles.starsRow}>

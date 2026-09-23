@@ -1,19 +1,38 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, StatusBar } from 'react-native';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import {
+  View,
+  Text,
+  FlatList,
+  StyleSheet,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  StatusBar,
+  Platform,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Image } from 'expo-image';
-import Animated, { FadeInDown, FadeOutLeft, Layout } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
+import Animated, { FadeInDown, FadeOutLeft } from 'react-native-reanimated';
 import { COLORS, SPACING, RADIUS, FONTS, TOUCH } from '../src/constants/theme';
 import { userAPI, Notification, supabase } from '../src/lib/supabase';
-import { useAuth } from '../src/context/AuthContext';
+import { useUserId } from '../src/context/AuthContext';
 import { haptic } from '../src/lib/haptics';
+import { useQueryClient } from '@tanstack/react-query';
+
+const PAGE_SIZE = 25;
+const APP_LOGO = require('../assets/icon.png');
+
+// Global in-memory cache for anime posters across component mounts
+const posterCache = new Map<string, string>();
+const inFlightPosterIds = new Set<string>();
 
 function formatRelativeTime(dateString: string): string {
-  const now = new Date();
-  const date = new Date(dateString);
-  const diffMs = now.getTime() - date.getTime();
+  const now = Date.now();
+  const dateMs = new Date(dateString).getTime();
+  const diffMs = now - dateMs;
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMins / 60);
   const diffDays = Math.floor(diffHours / 24);
@@ -23,7 +42,7 @@ function formatRelativeTime(dateString: string): string {
   if (diffHours < 24) return `${diffHours}h ago`;
   if (diffDays === 1) return 'Yesterday';
   if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return new Date(dateString).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 const notifIcon = (type: string) => {
@@ -47,7 +66,7 @@ const notifColor = (type: string) => {
 };
 
 /**
- * Extracts the target anime/episode ID from notification data or action_url.
+ * Extracts target entity ID from notification data or action_url
  */
 function extractNotificationEntityId(notification: any): string | null {
   if (!notification) return null;
@@ -68,151 +87,249 @@ function extractNotificationEntityId(notification: any): string | null {
   return null;
 }
 
+/**
+ * Extracts embedded poster directly from notification payload if available
+ */
+function extractEmbeddedPoster(notification: any): string | null {
+  if (!notification) return null;
+  let dataObj = notification.data;
+  if (typeof dataObj === 'string') {
+    try {
+      dataObj = JSON.parse(dataObj);
+    } catch {
+      dataObj = null;
+    }
+  }
+  if (dataObj?.poster_url && typeof dataObj.poster_url === 'string') {
+    return dataObj.poster_url;
+  }
+  if (dataObj?.thumbnail_url && typeof dataObj.thumbnail_url === 'string') {
+    return dataObj.thumbnail_url;
+  }
+  return null;
+}
+
 const FILTERS = [
   { id: 'all', label: 'All' },
   { id: 'unread', label: 'Unread' },
   { id: 'releases', label: 'Episodes' },
+  { id: 'simulcast', label: 'Simulcast' },
+  { id: 'system', label: 'VIP' },
   { id: 'community', label: 'Social' },
-  { id: 'system', label: 'System' },
 ];
 
 export default function NotificationsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
-  
+  const userId = useUserId();
+  const queryClient = useQueryClient();
+
   const [notifs, setNotifs] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'unread' | 'releases' | 'community' | 'system'>('all');
-  
-  // Real anime covers mapping state
-  const [animePosters, setAnimePosters] = useState<Record<string, string>>({});
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [page, setPage] = useState(0);
+  const [filter, setFilter] = useState<'all' | 'unread' | 'releases' | 'simulcast' | 'community' | 'system'>('all');
 
-  const fetchNotifs = useCallback(async () => {
-    if (!user) { setLoading(false); return; }
+  // Incremented whenever posterCache gets new entries to trigger re-renders of cards
+  const [, setPosterVersion] = useState(0);
+
+  // Tracks IDs already processed to avoid redundant resolution
+  const resolvedIdsRef = useRef(new Set<string>());
+
+  /**
+   * High-performance batch resolver for missing posters
+   */
+  const resolveMissingPosters = useCallback(async (newNotifs: Notification[]) => {
+    const idsToResolve: string[] = [];
+
+    newNotifs.forEach(n => {
+      const entityId = extractNotificationEntityId(n);
+      if (!entityId) return;
+
+      // 1. If notification already includes poster in its payload, cache it immediately
+      const embeddedPoster = extractEmbeddedPoster(n);
+      if (embeddedPoster) {
+        posterCache.set(entityId, embeddedPoster);
+        resolvedIdsRef.current.add(entityId);
+        return;
+      }
+
+      // 2. Check if already cached in memory
+      if (posterCache.has(entityId) || resolvedIdsRef.current.has(entityId)) {
+        return;
+      }
+
+      // 3. Mark for batch lookup
+      if (!inFlightPosterIds.has(entityId)) {
+        inFlightPosterIds.add(entityId);
+        idsToResolve.push(entityId);
+      }
+    });
+
+    if (idsToResolve.length === 0) return;
+
     try {
-      const { data } = await userAPI.getNotifications(user.id);
-      setNotifs(data || []);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
+      // 1. Direct anime table lookup
+      const { data: directAnime, error: directError } = await supabase
+        .from('anime')
+        .select('id, poster_url')
+        .in('id', idsToResolve);
 
-  useEffect(() => {
-    fetchNotifs();
-  }, [fetchNotifs]);
+      const resolvedNow = new Set<string>();
 
-  // Batch query anime poster images dynamically based on anime_id or episode_id keys in notification data or action_url
-  useEffect(() => {
-    if (notifs.length === 0) return;
-
-    const resolvePosters = async () => {
-      try {
-        const candidateIds = new Set<string>();
-
-        notifs.forEach(n => {
-          const id = extractNotificationEntityId(n);
-          if (id) candidateIds.add(id);
+      if (!directError && directAnime) {
+        directAnime.forEach((a: any) => {
+          if (a.poster_url) {
+            posterCache.set(a.id, a.poster_url);
+            resolvedIdsRef.current.add(a.id);
+            resolvedNow.add(a.id);
+          }
         });
+      }
 
-        if (candidateIds.size === 0) return;
+      // 2. Resolve remaining as possible episode IDs
+      const remainingEpisodeIds = idsToResolve.filter(id => !resolvedNow.has(id));
 
-        const candidateArray = Array.from(candidateIds);
+      if (remainingEpisodeIds.length > 0) {
+        const { data: epData, error: epError } = await supabase
+          .from('episodes')
+          .select('id, anime_id')
+          .in('id', remainingEpisodeIds);
 
-        // 1. Try querying the 'anime' table directly first (handles direct anime_ids or watch links using anime_ids)
-        const { data: directAnime, error: directError } = await supabase
-          .from('anime')
-          .select('id, poster_url')
-          .in('id', candidateArray);
+        if (!epError && epData && epData.length > 0) {
+          const epToAnime: Record<string, string> = {};
+          const neededAnimeIds = new Set<string>();
 
-        const posterMap: Record<string, string> = {};
-        const resolvedAnimeIds = new Set<string>();
-
-        if (!directError && directAnime) {
-          directAnime.forEach((a: any) => {
-            if (a.poster_url) {
-              posterMap[a.id] = a.poster_url;
-              resolvedAnimeIds.add(a.id);
-            }
-          });
-        }
-
-        // 2. Any candidate IDs that were NOT resolved as anime IDs could be episode IDs
-        const potentialEpisodeIds = candidateArray.filter(id => !resolvedAnimeIds.has(id));
-
-        if (potentialEpisodeIds.length > 0) {
-          // Resolve episode_ids to their respective anime_ids from database
-          const { data: epData, error: epError } = await supabase
-            .from('episodes')
-            .select('id, anime_id')
-            .in('id', potentialEpisodeIds);
-
-          if (!epError && epData && epData.length > 0) {
-            const epToAnimeMap: Record<string, string> = {};
-            const neededAnimeIds = new Set<string>();
-
-            epData.forEach((ep: any) => {
-              if (ep.anime_id) {
-                epToAnimeMap[ep.id] = ep.anime_id;
+          epData.forEach((ep: any) => {
+            if (ep.anime_id) {
+              epToAnime[ep.id] = ep.anime_id;
+              if (posterCache.has(ep.anime_id)) {
+                posterCache.set(ep.id, posterCache.get(ep.anime_id)!);
+                resolvedIdsRef.current.add(ep.id);
+              } else {
                 neededAnimeIds.add(ep.anime_id);
               }
-            });
+            }
+          });
 
-            if (neededAnimeIds.size > 0) {
-              // Fetch poster URLs for these parent anime IDs
-              const { data: parentAnimeData, error: parentAnimeError } = await supabase
-                .from('anime')
-                .select('id, poster_url')
-                .in('id', Array.from(neededAnimeIds));
+          if (neededAnimeIds.size > 0) {
+            const { data: parentAnime } = await supabase
+              .from('anime')
+              .select('id, poster_url')
+              .in('id', Array.from(neededAnimeIds));
 
-              if (!parentAnimeError && parentAnimeData) {
-                const parentPosterMap: Record<string, string> = {};
-                parentAnimeData.forEach((a: any) => {
-                  if (a.poster_url) {
-                    parentPosterMap[a.id] = a.poster_url;
-                    // Also save under the anime_id key directly
-                    posterMap[a.id] = a.poster_url;
-                  }
-                });
+            if (parentAnime) {
+              parentAnime.forEach((a: any) => {
+                if (a.poster_url) {
+                  posterCache.set(a.id, a.poster_url);
+                  resolvedIdsRef.current.add(a.id);
+                }
+              });
 
-                // Now map each episode ID to its parent anime's poster URL
-                Object.keys(epToAnimeMap).forEach(epId => {
-                  const parentId = epToAnimeMap[epId];
-                  if (parentPosterMap[parentId]) {
-                    posterMap[epId] = parentPosterMap[parentId];
-                  }
-                });
-              }
+              Object.entries(epToAnime).forEach(([epId, animeId]) => {
+                const poster = posterCache.get(animeId);
+                if (poster) {
+                  posterCache.set(epId, poster);
+                  resolvedIdsRef.current.add(epId);
+                }
+              });
             }
           }
         }
-
-        setAnimePosters(prev => ({ ...prev, ...posterMap }));
-      } catch (err) {
-        console.error('Failed resolving notifications anime posters:', err);
       }
-    };
 
-    resolvePosters();
-  }, [notifs]);
+      // Trigger re-render of notification cards with new posters
+      setPosterVersion(v => v + 1);
+    } catch (err) {
+      console.error('[Notifications] Failed resolving posters:', err);
+    } finally {
+      idsToResolve.forEach(id => inFlightPosterIds.delete(id));
+    }
+  }, []);
+
+  /**
+   * Paginated fetcher for notifications
+   */
+  const fetchPage = useCallback(async (pageNum: number, isRefresh = false) => {
+    if (!userId) {
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const offset = pageNum * PAGE_SIZE;
+      const { data, error } = await userAPI.getNotifications(userId, PAGE_SIZE, offset);
+
+      if (error) {
+        console.error('[Notifications] Fetch error:', error);
+        return;
+      }
+
+      const items = data || [];
+
+      if (isRefresh || pageNum === 0) {
+        setNotifs(items);
+        setPage(0);
+        setHasMore(items.length === PAGE_SIZE);
+      } else {
+        setNotifs(prev => {
+          // Avoid duplicate keys on pagination merges
+          const existingIds = new Set(prev.map(p => p.id));
+          const freshItems = items.filter((item: Notification) => !existingIds.has(item.id));
+          return [...prev, ...freshItems];
+        });
+        setPage(pageNum);
+        setHasMore(items.length === PAGE_SIZE);
+      }
+
+      // Resolve posters in background for newly loaded batch
+      if (items.length > 0) {
+        resolveMissingPosters(items);
+      }
+    } catch (e) {
+      console.error('[Notifications] Unexpected fetch error:', e);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+      setLoadingMore(false);
+    }
+  }, [userId, resolveMissingPosters]);
+
+  useEffect(() => {
+    fetchPage(0);
+  }, [fetchPage]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchNotifs();
-    setRefreshing(false);
-  }, [fetchNotifs]);
+    await fetchPage(0, true);
+  }, [fetchPage]);
+
+  const handleLoadMore = useCallback(() => {
+    if (loading || refreshing || loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    fetchPage(page + 1);
+  }, [loading, refreshing, loadingMore, hasMore, page, fetchPage]);
 
   const markRead = useCallback(async (id: string) => {
+    // 1. Optimistic update
     setNotifs(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+
+    // 2. Synchronize TanStack Query unread-count badge for UniversalHeader
+    if (userId) {
+      queryClient.setQueryData(
+        ['notifications', 'unread-count', userId],
+        (old: number | undefined) => Math.max(0, (old ?? 1) - 1)
+      );
+    }
+
     try {
       await userAPI.markNotificationRead(id);
     } catch (e) {
-      console.error(e);
+      console.error('[Notifications] Failed to mark read:', e);
     }
-  }, []);
+  }, [userId, queryClient]);
 
   const handleNotificationPress = useCallback(async (item: Notification) => {
     if (!item.read) {
@@ -224,27 +341,46 @@ export default function NotificationsScreen() {
   }, [markRead, router]);
 
   const handleDelete = useCallback(async (id: string) => {
+    const target = notifs.find(n => n.id === id);
+
+    // 1. Optimistic removal
     setNotifs(prev => prev.filter(n => n.id !== id));
+
+    // 2. Decrement unread count if deleted item was unread
+    if (target && !target.read && userId) {
+      queryClient.setQueryData(
+        ['notifications', 'unread-count', userId],
+        (old: number | undefined) => Math.max(0, (old ?? 1) - 1)
+      );
+    }
+
     try {
       await userAPI.deleteNotification(id);
     } catch (e) {
-      console.error(e);
+      console.error('[Notifications] Failed to delete notification:', e);
     }
-  }, []);
+  }, [notifs, userId, queryClient]);
 
   const handleMarkAllRead = useCallback(async () => {
-    if (!user || notifs.filter(n => !n.read).length === 0) return;
+    if (!userId || notifs.every(n => n.read)) return;
+
+    // 1. Optimistic update
     setNotifs(prev => prev.map(n => ({ ...n, read: true })));
+
+    // 2. Zero-out badge in UniversalHeader immediately
+    queryClient.setQueryData(['notifications', 'unread-count', userId], 0);
+
     try {
-      await userAPI.markAllNotificationsRead(user.id);
+      await userAPI.markAllNotificationsRead(userId);
     } catch (e) {
-      console.error(e);
-      fetchNotifs();
+      console.error('[Notifications] Failed to mark all read:', e);
+      handleRefresh();
     }
-  }, [user, notifs, fetchNotifs]);
+  }, [userId, notifs, queryClient, handleRefresh]);
 
   const handleClearAll = useCallback(async () => {
-    if (!user || notifs.length === 0) return;
+    if (!userId || notifs.length === 0) return;
+
     Alert.alert(
       'Clear All',
       'Are you sure you want to clear your notifications archive?',
@@ -254,52 +390,54 @@ export default function NotificationsScreen() {
           text: 'CLEAR ALL',
           style: 'destructive',
           onPress: async () => {
+            // 1. Optimistic clear
+            setNotifs([]);
+            queryClient.setQueryData(['notifications', 'unread-count', userId], 0);
+
             try {
               setLoading(true);
-              await userAPI.clearAllNotifications(user.id);
-              setNotifs([]);
+              await userAPI.clearAllNotifications(userId);
             } catch (e) {
-              console.error(e);
+              console.error('[Notifications] Failed to clear all:', e);
+              handleRefresh();
             } finally {
               setLoading(false);
             }
-          }
-        }
+          },
+        },
       ]
     );
-  }, [user, notifs]);
+  }, [userId, notifs, queryClient, handleRefresh]);
 
   const filteredNotifs = useMemo(() => {
     return notifs.filter(n => {
       if (filter === 'all') return true;
       if (filter === 'unread') return !n.read;
-      if (filter === 'releases') return n.type === 'episode' || n.type === 'new_anime';
+      if (filter === 'releases') return n.type === 'episode';
+      if (filter === 'simulcast') return n.type === 'new_anime' || n.type === 'episode';
       if (filter === 'community') return n.type === 'review';
       if (filter === 'system') return n.type === 'system';
       return true;
     });
   }, [notifs, filter]);
 
+  // High-performance chronological grouping using numeric epoch comparisons
   const flatGroupedItems = useMemo(() => {
-    const items: ( { type: 'header'; title: string } | { type: 'item'; data: Notification } )[] = [];
+    const items: ({ type: 'header'; title: string } | { type: 'item'; data: Notification })[] = [];
     const today: Notification[] = [];
     const yesterday: Notification[] = [];
     const earlier: Notification[] = [];
 
     const now = new Date();
-    const todayStr = now.toDateString();
-
-    const yest = new Date();
-    yest.setDate(yest.getDate() - 1);
-    const yestStr = yest.toDateString();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const yesterdayStart = todayStart - 86400000;
 
     filteredNotifs.forEach(item => {
-      const itemDate = new Date(item.created_at);
-      const itemDateStr = itemDate.toDateString();
+      const itemTime = new Date(item.created_at).getTime();
 
-      if (itemDateStr === todayStr) {
+      if (itemTime >= todayStart) {
         today.push(item);
-      } else if (itemDateStr === yestStr) {
+      } else if (itemTime >= yesterdayStart) {
         yesterday.push(item);
       } else {
         earlier.push(item);
@@ -322,10 +460,10 @@ export default function NotificationsScreen() {
     return items;
   }, [filteredNotifs]);
 
-  const unreadCount = notifs.filter(n => !n.read).length;
+  const unreadCount = useMemo(() => notifs.filter(n => !n.read).length, [notifs]);
 
   const renderSectionHeader = (title: string) => (
-    <View style={styles.sectionHeader}>
+    <View style={styles.sectionHeader} key={`header-${title}`}>
       <Text style={styles.sectionHeaderText}>{title}</Text>
       <View style={styles.sectionHeaderLine} />
     </View>
@@ -336,8 +474,11 @@ export default function NotificationsScreen() {
       return renderSectionHeader(item.title);
     }
 
-    const posterKey = extractNotificationEntityId(item.data);
-    const animePoster = posterKey ? animePosters[posterKey] : null;
+    const entityId = extractNotificationEntityId(item.data);
+    const animePoster =
+      extractEmbeddedPoster(item.data) ||
+      (entityId ? posterCache.get(entityId) : null) ||
+      null;
 
     return (
       <NotificationItemRow
@@ -347,7 +488,7 @@ export default function NotificationsScreen() {
         animePoster={animePoster}
       />
     );
-  }, [handleNotificationPress, handleDelete, animePosters]);
+  }, [handleNotificationPress, handleDelete]);
 
   const keyExtractor = useCallback((item: any) => {
     if (item.type === 'header') {
@@ -360,7 +501,7 @@ export default function NotificationsScreen() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
 
-      {/* Clean Clean Header */}
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backBtn}
@@ -375,7 +516,7 @@ export default function NotificationsScreen() {
         >
           <Ionicons name="chevron-back" size={20} color={COLORS.text} />
         </TouchableOpacity>
-        
+
         <View style={styles.titleWrap}>
           <Text style={styles.headerTitle}>Notifications</Text>
           <Text style={styles.headerSubtitle}>
@@ -386,7 +527,7 @@ export default function NotificationsScreen() {
         <View style={styles.headerActions}>
           {unreadCount > 0 && (
             <TouchableOpacity
-              style={styles.headerActionBtn}
+              style={styles.markAllPill}
               onPress={() => {
                 haptic.selection();
                 handleMarkAllRead();
@@ -396,7 +537,8 @@ export default function NotificationsScreen() {
               accessibilityRole="button"
               accessibilityLabel="Mark all as read"
             >
-              <Ionicons name="checkmark-done" size={18} color={COLORS.neon} />
+              <Ionicons name="checkmark-done" size={13} color={COLORS.neon} />
+              <Text style={styles.markAllPillText}>Mark all read</Text>
             </TouchableOpacity>
           )}
           {notifs.length > 0 && (
@@ -417,7 +559,7 @@ export default function NotificationsScreen() {
         </View>
       </View>
 
-      {/* Horizontally scrollable minimalist capsules */}
+      {/* Minimal filter capsules */}
       {notifs.length > 0 && (
         <View style={styles.filterContainer}>
           <FlatList
@@ -451,7 +593,11 @@ export default function NotificationsScreen() {
         </View>
       ) : notifs.length === 0 ? (
         <View style={styles.empty}>
-          <Ionicons name="notifications-outline" size={48} color="rgba(255,255,255,0.15)" />
+          <Image
+            source={APP_LOGO}
+            style={styles.emptyLogo}
+            contentFit="cover"
+          />
           <Text style={styles.emptyTitle}>Your inbox is clean</Text>
           <Text style={styles.emptySub}>We will let you know here when new episodes air or updates arrive.</Text>
         </View>
@@ -473,13 +619,26 @@ export default function NotificationsScreen() {
           showsVerticalScrollIndicator={false}
           refreshing={refreshing}
           onRefresh={handleRefresh}
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.4}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          removeClippedSubviews={Platform.OS === 'android'}
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={styles.footerLoader}>
+                <ActivityIndicator size="small" color={COLORS.neon} />
+              </View>
+            ) : null
+          }
         />
       )}
     </View>
   );
 }
 
-// ─── MEMOIZED & ANIMATED NOTIFICATION ITEM ROW ───────────────────────────────────────────
+// ─── MEMOIZED NOTIFICATION ITEM ROW (NO HEAVY LAYOUT SPRINGS) ─────────────────────────
 interface NotificationItemRowProps {
   item: Notification;
   onPress: (item: Notification) => void;
@@ -487,58 +646,191 @@ interface NotificationItemRowProps {
   animePoster: string | null;
 }
 
+const notifBadgeLabel = (item: Notification) => {
+  if (item.type === 'system') {
+    const t = (item.title + ' ' + item.message).toLowerCase();
+    if (t.includes('expire')) return 'VIP EXPIRED';
+    if (t.includes('renew')) return 'VIP RENEWAL';
+    return 'VIP ALERT';
+  }
+  switch (item.type) {
+    case 'episode': return 'NEW [SUB/DUB]';
+    case 'new_anime': return 'SIMULCAST';
+    case 'review': return 'COMMUNITY';
+    default: return 'ANIMEHUB';
+  }
+};
+
 const NotificationItemRow = React.memo(
   ({ item, onPress, onDelete, animePoster }: NotificationItemRowProps) => {
     const tColor = notifColor(item.type);
+    const isVip = item.type === 'system';
 
     return (
       <Animated.View
-        entering={FadeInDown.duration(250)}
-        exiting={FadeOutLeft.duration(180)}
-        layout={Layout.springify().mass(0.6)}
+        entering={FadeInDown.duration(200)}
+        exiting={FadeOutLeft.duration(150)}
         style={[
           styles.notifCard,
-          !item.read && styles.notifCardUnread,
+          isVip && styles.notifCardVip,
+          !item.read && [
+            styles.notifCardUnread,
+            {
+              borderColor: isVip ? 'rgba(255, 184, 0, 0.42)' : tColor + '44',
+              backgroundColor: isVip ? '#14110A' : '#0E111A',
+            },
+          ],
         ]}
       >
+        {/* Subtle VIP golden aura gradient strip for VIP cards */}
+        {isVip && (
+          <LinearGradient
+            colors={['rgba(255, 184, 0, 0.12)', 'rgba(255, 184, 0, 0.02)', 'transparent']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={StyleSheet.absoluteFillObject}
+            pointerEvents="none"
+          />
+        )}
+
         <TouchableOpacity
           style={styles.notifMainContent}
           onPress={() => onPress(item)}
           activeOpacity={0.75}
         >
-          {/* visual cover poster image or fallback circular icon */}
+          {/* Visual cover poster image or official AnimeHub Logo for platform/system/VIP alerts */}
           {animePoster ? (
             <Image
               source={{ uri: animePoster }}
               style={styles.notifPoster}
               contentFit="cover"
-              transition={200}
+              transition={120}
+              recyclingKey={item.id}
+              cachePolicy="memory-disk"
             />
           ) : (
-            <View style={[styles.notifIconWrap, { backgroundColor: 'rgba(255,255,255,0.03)' }]}>
-              <Ionicons name={notifIcon(item.type) as any} size={16} color={tColor} />
+            <View style={[styles.notifPosterWrap, isVip && styles.notifPosterWrapVip]}>
+              <Image
+                source={APP_LOGO}
+                style={styles.notifLogoPoster}
+                contentFit="cover"
+                transition={120}
+              />
+              {isVip && (
+                <View style={styles.vipOverlayBadge}>
+                  <Text style={styles.vipOverlayBadgeText}>VIP</Text>
+                </View>
+              )}
             </View>
           )}
 
           {/* Details */}
           <View style={styles.notifDetails}>
             <View style={styles.notifHeaderRow}>
-              <Text style={styles.notifTime}>{formatRelativeTime(item.created_at)}</Text>
-              {!item.read && <View style={[styles.unreadDot, { backgroundColor: tColor }]} />}
+              <View style={styles.headerLeftMeta}>
+                <View
+                  style={[
+                    styles.badgeTag,
+                    {
+                      backgroundColor: isVip ? 'rgba(255, 184, 0, 0.16)' : tColor + '18',
+                      borderColor: isVip ? 'rgba(255, 184, 0, 0.44)' : tColor + '44',
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.badgeTagText,
+                      { color: isVip ? '#FFB800' : tColor },
+                    ]}
+                  >
+                    {notifBadgeLabel(item)}
+                  </Text>
+                </View>
+                <Text style={styles.notifTime}>{formatRelativeTime(item.created_at)}</Text>
+              </View>
+              {!item.read && (
+                <View
+                  style={[
+                    styles.unreadDot,
+                    { backgroundColor: isVip ? '#FFB800' : tColor },
+                  ]}
+                />
+              )}
             </View>
 
-            <Text style={[styles.notifTitle, !item.read && styles.notifTitleUnread]} numberOfLines={1}>
+            <Text
+              style={[
+                styles.notifTitle,
+                !item.read && styles.notifTitleUnread,
+                isVip && { color: !item.read ? '#FFF4D6' : '#E8DDBF' },
+              ]}
+              numberOfLines={1}
+            >
               {item.title}
             </Text>
 
             <Text style={styles.notifMessage} numberOfLines={2}>
               {item.message}
             </Text>
+
+            {/* Inline Quick Action Buttons */}
+            {item.action_url && (
+              <View style={styles.quickActionRow}>
+                {isVip ? (
+                  <TouchableOpacity
+                    style={styles.quickVipBtn}
+                    onPress={() => onPress(item)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons
+                      name={
+                        item.title.toLowerCase().includes('expire') || item.message.toLowerCase().includes('renew')
+                          ? 'card'
+                          : 'sparkles'
+                      }
+                      size={10}
+                      color="#FFB800"
+                    />
+                    <Text style={styles.quickVipText}>
+                      {item.title.toLowerCase().includes('expire') || item.message.toLowerCase().includes('renew')
+                        ? 'Renew Plan'
+                        : 'Manage VIP'}
+                    </Text>
+                    <Ionicons name="chevron-forward" size={10} color="#FFB800" />
+                  </TouchableOpacity>
+                ) : (item.type === 'episode' || item.type === 'new_anime') ? (
+                  <TouchableOpacity
+                    style={styles.quickWatchBtn}
+                    onPress={() => onPress(item)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="play" size={10} color={COLORS.neon} />
+                    <Text style={styles.quickWatchText}>Watch Now</Text>
+                  </TouchableOpacity>
+                ) : item.type === 'review' ? (
+                  <TouchableOpacity
+                    style={styles.quickReviewBtn}
+                    onPress={() => onPress(item)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="chatbubble" size={10} color={COLORS.neonPink} />
+                    <Text style={styles.quickReviewText}>View Review</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            )}
           </View>
         </TouchableOpacity>
 
         {/* Delete */}
-        <TouchableOpacity style={styles.deleteBtn} onPress={() => onDelete(item.id)} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={styles.deleteBtn}
+          onPress={() => onDelete(item.id)}
+          activeOpacity={0.7}
+          hitSlop={TOUCH.hitSlop}
+          accessibilityRole="button"
+          accessibilityLabel="Delete notification"
+        >
           <Ionicons name="trash-outline" size={14} color={COLORS.textMuted} />
         </TouchableOpacity>
       </Animated.View>
@@ -664,23 +956,83 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.03)',
   },
 
-  // List & Cards (Frosted solid style, clean borders)
+  // List & Cards
   list: {
     paddingHorizontal: SPACING.md,
     gap: 8,
   },
+  markAllPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 245, 212, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 245, 212, 0.28)',
+  },
+  markAllPillText: {
+    fontFamily: FONTS.display || 'SpaceGrotesk',
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.neon,
+  },
+  headerLeftMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  badgeTag: {
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    borderWidth: 0.5,
+  },
+  badgeTagText: {
+    fontFamily: FONTS.display || 'SpaceGrotesk',
+    fontSize: 8,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  quickActionRow: {
+    flexDirection: 'row',
+    marginTop: 4,
+  },
+  quickWatchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0, 245, 212, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 245, 212, 0.3)',
+  },
+  quickWatchText: {
+    fontFamily: FONTS.display || 'SpaceGrotesk',
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLORS.neon,
+  },
   notifCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0C0C16', // Solid elegant frosted container (resolves glassdrop rendering bugs)
+    backgroundColor: '#0C0C16',
     borderRadius: RADIUS.md,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.04)',
     overflow: 'hidden',
+    position: 'relative',
+  },
+  notifCardVip: {
+    backgroundColor: '#100E14',
+    borderColor: 'rgba(255, 184, 0, 0.22)',
   },
   notifCardUnread: {
-    borderColor: 'rgba(255,43,60,0.22)',
-    backgroundColor: '#12111A',
+    borderColor: 'rgba(255, 43, 60, 0.35)',
+    backgroundColor: '#0E111A',
   },
   notifMainContent: {
     flex: 1,
@@ -691,13 +1043,20 @@ const styles = StyleSheet.create({
     paddingLeft: 12,
   },
   notifIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 38,
+    height: 52,
+    borderRadius: RADIUS.sm,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.05)',
+  },
+  emptyLogo: {
+    width: 68,
+    height: 68,
+    borderRadius: 18,
+    opacity: 0.35,
+    marginBottom: 14,
   },
   notifPoster: {
     width: 38,
@@ -706,6 +1065,75 @@ const styles = StyleSheet.create({
     backgroundColor: '#090910',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
+  },
+  notifPosterWrap: {
+    width: 38,
+    height: 52,
+    borderRadius: RADIUS.sm,
+    overflow: 'hidden',
+    position: 'relative',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: '#090910',
+  },
+  notifPosterWrapVip: {
+    borderColor: 'rgba(255, 184, 0, 0.45)',
+  },
+  notifLogoPoster: {
+    width: '100%',
+    height: '100%',
+  },
+  vipOverlayBadge: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(255, 184, 0, 0.95)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 1,
+  },
+  vipOverlayBadgeText: {
+    fontFamily: FONTS.display || 'SpaceGrotesk',
+    fontSize: 7.5,
+    fontWeight: '900',
+    color: '#000',
+    letterSpacing: 0.5,
+  },
+  quickVipBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255, 184, 0, 0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 184, 0, 0.38)',
+  },
+  quickVipText: {
+    fontFamily: FONTS.display || 'SpaceGrotesk',
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#FFB800',
+    letterSpacing: 0.2,
+  },
+  quickReviewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255, 71, 87, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 71, 87, 0.3)',
+  },
+  quickReviewText: {
+    fontFamily: FONTS.display || 'SpaceGrotesk',
+    fontSize: 10,
+    fontWeight: '700',
+    color: COLORS.neonPink,
   },
   notifDetails: {
     flex: 1,
@@ -762,7 +1190,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Minimal placeholder empty states
+  footerLoader: {
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
   empty: {
     flex: 1,
     alignItems: 'center',

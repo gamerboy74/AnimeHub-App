@@ -1,9 +1,7 @@
 import React, { useState, useRef } from 'react'
 import {
   Play,
-  Pause,
   Sliders,
-  Download,
   Wifi,
   Battery,
   Home,
@@ -20,7 +18,6 @@ import {
   MessageSquare,
   RotateCcw,
   RotateCw,
-  CheckCircle2,
   Maximize2,
   Minimize2,
   Sparkles,
@@ -62,31 +59,31 @@ export function PhoneMockup() {
   return (
     <div className="flex flex-col items-center gap-5 w-full">
       {/* View Mode & Orientation Controls */}
-      <div className="flex flex-wrap items-center justify-center gap-2 p-1.5 rounded-2xl bg-[#10121A] border border-white/10 shadow-lg shadow-black/40 backdrop-blur-md">
+      <div className="flex flex-col xs:flex-row items-center justify-center gap-1.5 p-1 rounded-2xl bg-[#10121A] border border-white/10 shadow-lg shadow-black/40 backdrop-blur-md w-full max-w-[340px] xs:max-w-md">
         {/* Interactive vs Real Android Capture */}
-        <div className="flex items-center gap-1 p-0.5 rounded-xl bg-black/40 border border-white/5">
+        <div className="flex items-center gap-1 p-0.5 rounded-xl bg-black/40 border border-white/5 w-full xs:w-auto justify-center">
           <button
             type="button"
             onClick={() => setDisplayMode('interactive')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+            className={`flex-1 xs:flex-initial px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
               displayMode === 'interactive'
                 ? 'bg-[#FF2B3C] text-white shadow-md shadow-[#FF2B3C]/40'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
-            <Sparkles className="size-3.5" />
-            <span>Interactive UI</span>
+            <Sparkles className="size-3 sm:size-3.5 shrink-0" />
+            <span>Interactive</span>
           </button>
           <button
             type="button"
             onClick={() => setDisplayMode('screenshot')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+            className={`flex-1 xs:flex-initial px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
               displayMode === 'screenshot'
                 ? 'bg-[#FF2B3C] text-white shadow-md shadow-[#FF2B3C]/40'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
-            <span>📱 Real Android Capture</span>
+            <span>📱 Real App</span>
           </button>
         </div>
 
@@ -94,18 +91,18 @@ export function PhoneMockup() {
         <button
           type="button"
           onClick={() => setOrientation(isLandscape ? 'portrait' : 'landscape')}
-          className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all text-slate-300 hover:text-white flex items-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 shadow-sm"
+          className="w-full xs:w-auto px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-bold transition-all text-slate-300 hover:text-white flex items-center justify-center gap-1.5 bg-white/5 hover:bg-white/10 border border-white/10 shadow-sm shrink-0"
           title="Toggle phone orientation"
         >
           {isLandscape ? (
             <>
-              <Minimize2 className="size-3.5 text-[#38BDF8]" />
-              <span>Portrait Mode</span>
+              <Minimize2 className="size-3 sm:size-3.5 text-[#38BDF8]" />
+              <span>Portrait</span>
             </>
           ) : (
             <>
-              <Maximize2 className="size-3.5 text-[#38BDF8]" />
-              <span>Cinema Landscape</span>
+              <Maximize2 className="size-3 sm:size-3.5 text-[#38BDF8]" />
+              <span>Landscape</span>
             </>
           )}
         </button>
@@ -134,10 +131,10 @@ export function PhoneMockup() {
             transform: `rotateY(${tilt.x}deg) rotateX(${tilt.y}deg)`,
             transformStyle: 'preserve-3d',
           }}
-          className={`relative transition-all duration-500 ease-out bg-[#10121A] rounded-[48px] p-3 shadow-2xl border-4 border-slate-700/60 select-none ring-1 ring-white/10 ${
+          className={`relative transition-all duration-500 ease-out bg-[#10121A] rounded-[42px] sm:rounded-[48px] p-2.5 sm:p-3 shadow-2xl border-4 border-slate-700/60 select-none ring-1 ring-white/10 ${
             isLandscape
-              ? 'w-[330px] sm:w-[640px] md:w-[680px] max-w-[95vw] h-[340px] sm:h-[360px]'
-              : 'w-[320px] sm:w-[350px] h-[700px]'
+              ? 'w-full max-w-[94vw] sm:max-w-[640px] md:max-w-[680px] h-[260px] xs:h-[300px] sm:h-[360px]'
+              : 'w-full max-w-[305px] xs:max-w-[335px] sm:max-w-[350px] h-[620px] xs:h-[660px] sm:h-[700px]'
           }`}
         >
           {/* Glass Specular Reflection Overlay */}
@@ -189,42 +186,37 @@ export function PhoneMockup() {
                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-black/80 pointer-events-none" />
 
                 {/* Top HUD Controls */}
-                <div className="relative z-20 flex items-center justify-between px-5 pt-4">
+                <div className="relative z-20 flex items-center justify-between px-3 sm:px-5 pt-3 sm:pt-4">
                   {/* Left: Back & Title */}
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex items-center gap-2">
                     <button
                       onClick={() => {
                         setActiveTab('details')
                         setOrientation('portrait')
                       }}
-                      className="size-8 rounded-full bg-black/70 backdrop-blur-md border border-white/15 flex items-center justify-center text-white hover:bg-white/20 transition-colors shadow-md"
+                      className="size-7 sm:size-8 rounded-full bg-black/70 backdrop-blur-md border border-white/15 flex items-center justify-center text-white hover:bg-white/20 transition-colors shadow-md shrink-0"
                     >
-                      <ChevronLeft className="size-4" />
+                      <ChevronLeft className="size-3.5 sm:size-4" />
                     </button>
-                    <div>
-                      <div className="text-[9px] font-bold text-[#38BDF8] uppercase tracking-wider leading-none mb-1">
-                        LORD MARKSMAN AND VANADIS
+                    <div className="min-w-0">
+                      <div className="text-[8px] sm:text-[9px] font-bold text-[#38BDF8] uppercase tracking-wider leading-none mb-0.5 truncate">
+                        LORD MARKSMAN
                       </div>
-                      <div className="text-xs sm:text-sm font-black text-white leading-none">
-                        S1:E2 • The Return Home
+                      <div className="text-[11px] sm:text-sm font-black text-white leading-none truncate">
+                        S1:E2 • Return Home
                       </div>
                     </div>
                   </div>
 
                   {/* Right: Time Pill & Quick Badges */}
-                  <div className="flex items-center gap-2">
-                    <div className="bg-black/80 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/15 font-mono text-[10px] text-slate-300 shadow-md">
+                  <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+                    <div className="bg-black/80 backdrop-blur-md px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full border border-white/15 font-mono text-[9px] sm:text-[10px] text-slate-300 shadow-md">
                       <span className="text-[#FF2B3C] font-bold">6:46</span> / 24:10
                     </div>
-                    <button className="bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-md border border-white/15 text-[10px] text-slate-300 flex items-center gap-1 hover:text-white transition-colors">
-                      <Download className="size-3" />
-                      <span>Download</span>
+                    <button className="bg-black/70 backdrop-blur-md px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md border border-[#38BDF8]/50 text-[9px] sm:text-[10px] text-[#38BDF8] font-bold flex items-center gap-0.5">
+                      <span>SUB 1</span>
                     </button>
-                    <button className="bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-md border border-[#38BDF8]/50 text-[10px] text-[#38BDF8] font-bold flex items-center gap-1">
-                      <span>SUB 1 • SUB</span>
-                      <span className="text-[8px]">▼</span>
-                    </button>
-                    <button className="bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-md border border-white/15 text-[10px] text-slate-300 flex items-center gap-1 hover:text-white">
+                    <button className="hidden xs:flex bg-black/70 backdrop-blur-md px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md border border-white/15 text-[9px] sm:text-[10px] text-slate-300 items-center gap-1 hover:text-white">
                       <span>EPISODES</span>
                     </button>
                   </div>
@@ -1101,19 +1093,19 @@ export function PhoneMockup() {
       </div>
 
       {/* Screen Switcher Pills */}
-      <div className="flex flex-wrap items-center justify-center gap-2 p-1.5 rounded-2xl bg-[#10121A] border border-white/10 backdrop-blur-md shadow-lg">
+      <div className="grid grid-cols-2 xs:grid-cols-4 gap-1.5 p-1.5 rounded-2xl bg-[#10121A] border border-white/10 backdrop-blur-md shadow-lg w-full max-w-[340px] xs:max-w-lg">
         <button
           onClick={() => {
             setActiveTab('home')
             setOrientation('portrait')
           }}
-          className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
+          className={`px-2.5 sm:px-3.5 py-1.5 rounded-xl text-[11px] sm:text-xs font-semibold transition-all flex items-center justify-center gap-1 ${
             activeTab === 'home'
               ? 'bg-[#FF2B3C] text-white shadow-[0_0_15px_rgba(255,43,60,0.4)]'
               : 'text-slate-400 hover:text-white'
           }`}
         >
-          <span>🏠 Home Feed</span>
+          <span>🏠 Home</span>
         </button>
 
         <button
@@ -1121,13 +1113,13 @@ export function PhoneMockup() {
             setActiveTab('details')
             setOrientation('portrait')
           }}
-          className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
+          className={`px-2.5 sm:px-3.5 py-1.5 rounded-xl text-[11px] sm:text-xs font-semibold transition-all flex items-center justify-center gap-1 ${
             activeTab === 'details'
               ? 'bg-[#FF2B3C] text-white shadow-[0_0_15px_rgba(255,43,60,0.4)]'
               : 'text-slate-400 hover:text-white'
           }`}
         >
-          <span>📜 Anime Details</span>
+          <span>📜 Details</span>
         </button>
 
         <button
@@ -1135,13 +1127,13 @@ export function PhoneMockup() {
             setActiveTab('player')
             setOrientation('landscape')
           }}
-          className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
+          className={`px-2.5 sm:px-3.5 py-1.5 rounded-xl text-[11px] sm:text-xs font-semibold transition-all flex items-center justify-center gap-1 ${
             activeTab === 'player'
               ? 'bg-[#FF2B3C] text-white shadow-[0_0_15px_rgba(255,43,60,0.4)]'
               : 'text-slate-400 hover:text-white'
           }`}
         >
-          <span>🎬 Cinema Player</span>
+          <span>🎬 Player</span>
         </button>
 
         <button
@@ -1149,13 +1141,13 @@ export function PhoneMockup() {
             setActiveTab('offline')
             setOrientation('portrait')
           }}
-          className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
+          className={`px-2.5 sm:px-3.5 py-1.5 rounded-xl text-[11px] sm:text-xs font-semibold transition-all flex items-center justify-center gap-1 ${
             activeTab === 'offline'
               ? 'bg-[#FF2B3C] text-white shadow-[0_0_15px_rgba(255,43,60,0.4)]'
               : 'text-slate-400 hover:text-white'
           }`}
         >
-          <span>💾 Offline Library</span>
+          <span>💾 Library</span>
         </button>
       </div>
     </div>

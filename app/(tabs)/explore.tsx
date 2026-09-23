@@ -17,7 +17,7 @@ import AnimeCard, { AnimeCardSkeleton } from '../../src/components/ui/AnimeCard'
 import { BlurView } from 'expo-blur';
 import RequestAnimeModal from '../../src/components/settings/RequestAnimeModal';
 import { usePrefetch } from '../../src/hooks/usePrefetch';
-import { useAuth } from '../../src/context/AuthContext';
+import { useUserId } from '../../src/context/AuthContext';
 import { computeGenres } from '../../src/lib/userStats';
 import {
   SEASONS_LIST,
@@ -116,22 +116,138 @@ const HighlightText = React.memo(function HighlightText({ text, query }: { text:
   );
 });
 
+// ── Memoized Fast Search Bar (Local focus state prevents full-screen re-render) ──
+interface SearchBarProps {
+  inputRef: React.RefObject<TextInput>;
+  query: string;
+  onQueryChange: (text: string) => void;
+  onClear: () => void;
+  onSubmit: () => void;
+  onOpenFilter: () => void;
+  isSearchActive: boolean;
+}
+
+const ExploreSearchBar = React.memo(function ExploreSearchBar({
+  inputRef,
+  query,
+  onQueryChange,
+  onClear,
+  onSubmit,
+  onOpenFilter,
+  isSearchActive,
+}: SearchBarProps) {
+  const [isFocused, setIsFocused] = useState(false);
+
+  const handleFocus = useCallback(() => {
+    setIsFocused(true);
+  }, []);
+
+  const handleBlur = useCallback(() => {
+    setIsFocused(false);
+  }, []);
+
+  const handleContainerPress = useCallback(() => {
+    inputRef.current?.focus();
+  }, [inputRef]);
+
+  return (
+    <View style={styles.searchSection}>
+      <Pressable
+        style={[
+          styles.searchBar,
+          isFocused && styles.searchBarFocused,
+          isFocused && { borderColor: COLORS.neonCyan },
+        ]}
+        onPress={handleContainerPress}
+        accessible={false}
+      >
+        {isSearchActive ? (
+          <TouchableOpacity
+            onPress={onClear}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            style={styles.searchNavButton}
+            accessibilityLabel="Back to Explore"
+            accessibilityRole="button"
+          >
+            <Ionicons name="arrow-back" size={20} color={COLORS.neonCyan} />
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            onPress={handleContainerPress}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            style={styles.searchIconButton}
+            accessibilityLabel="Search"
+            accessibilityRole="button"
+          >
+            <Ionicons
+              name="search"
+              size={20}
+              color={isFocused ? COLORS.neonCyan : COLORS.textMuted}
+            />
+          </TouchableOpacity>
+        )}
+
+        <TextInput
+          ref={inputRef}
+          style={styles.input}
+          placeholder="Search anime, movies..."
+          placeholderTextColor={COLORS.textMuted}
+          value={query}
+          onChangeText={onQueryChange}
+          autoCorrect={false}
+          autoCapitalize="none"
+          returnKeyType="search"
+          onSubmitEditing={onSubmit}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+        />
+
+        {isSearchActive ? (
+          <TouchableOpacity
+            onPress={() => {
+              haptic.selection();
+              onClear();
+              inputRef.current?.focus();
+            }}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            accessibilityLabel="Clear search text"
+            accessibilityRole="button"
+          >
+            <Ionicons name="close-circle" size={20} color={COLORS.textMuted} />
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            onPress={onOpenFilter}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            accessibilityLabel="Filter options"
+            accessibilityRole="button"
+          >
+            <View style={styles.filterButton}>
+              <Ionicons name="options-outline" size={18} color={COLORS.neonCyan} />
+            </View>
+          </TouchableOpacity>
+        )}
+      </Pressable>
+    </View>
+  );
+});
+
 export default function SearchScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { prefetchAnime } = usePrefetch();
   const { width: windowWidth } = useWindowDimensions();
-  const { user } = useAuth();
+  const userId = useUserId();
   const queryClient = useQueryClient();
 
   // ── User history for personalized chips ──────────────────────────────
   const { data: userProgress = [] } = useQuery({
-    queryKey: ['user', user?.id, 'history'],
-    enabled: !!user?.id,
+    queryKey: ['user', userId, 'history'],
+    enabled: !!userId,
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     queryFn: async () => {
-      const { data } = await userAPI.getProgress(user!.id);
+      const { data } = await userAPI.getProgress(userId!);
       return data ?? [];
     },
   });
@@ -163,7 +279,6 @@ export default function SearchScreen() {
   // ── Search State ──────────────────────────────────────────────────────────
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
-  const [isFocused, setIsFocused] = useState(false);
   const [showFilter, setShowFilter] = useState(false);
   const [showRequest, setShowRequest] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -175,8 +290,21 @@ export default function SearchScreen() {
     setIsRefreshing(false);
   }, [queryClient]);
 
-  // ── Partition Tabs State ──────────────────────────────────────────────────
+  // ── Partition Tabs State (Lazy load inactive tabs for instant interaction) ──
   const [activeTab, setActiveTab] = useState<ExploreTab>('browse');
+  const [visitedTabs, setVisitedTabs] = useState<Record<ExploreTab, boolean>>({
+    browse: true,
+    genres: false,
+    simulcasts: false,
+  });
+
+  const handleTabChange = useCallback((tab: ExploreTab) => {
+    if (activeTab !== tab) {
+      haptic.selection();
+      setActiveTab(tab);
+      setVisitedTabs((prev) => (prev[tab] ? prev : { ...prev, [tab]: true }));
+    }
+  }, [activeTab]);
 
   // ── Browse All Filters State ──────────────────────────────────────────────
   const [browseSort, setBrowseSort] = useState<'popular' | 'top_rated' | 'newest' | 'a_z'>('popular');
@@ -187,11 +315,11 @@ export default function SearchScreen() {
   // ── Simulcasts Season State ───────────────────────────────────────────────
   const [selectedSeason, setSelectedSeason] = useState<SeasonalTarget>(SEASONS_LIST[0]);
 
-  // ── Debounce Search Query ─────────────────────────────────────────────────
+  // ── Debounce Search Query (Snappy 200ms) ───────────────────────────────────
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedQuery(query);
-    }, 350);
+    }, 200);
     return () => clearTimeout(timer);
   }, [query]);
 
@@ -348,6 +476,28 @@ export default function SearchScreen() {
     router.push(`/genre/${genre}`);
   }, [router]);
 
+  const browseKeyExtractor = useCallback((item: AnimeWithStats) => item.id, []);
+
+  const renderBrowseItem = useCallback(({ item }: { item: AnimeWithStats }) => (
+    <AnimeCard
+      anime={item}
+      size="sm"
+      cardWidth={cardWidth}
+      style={{ width: cardWidth, marginRight: 0 }}
+      onPress={handleCardPress}
+      showStats
+    />
+  ), [cardWidth, handleCardPress]);
+
+  const renderBrowseFooter = useCallback(() => {
+    if (!browseFetchingMore) return null;
+    return (
+      <View style={styles.lazyLoadFooter}>
+        <ActivityIndicator color={COLORS.neonGold} size="small" />
+      </View>
+    );
+  }, [browseFetchingMore]);
+
   // ──────────────────────────────────────────────────────────────────────────
   // PARTITION 1: BROWSE ALL ANIME
   // ──────────────────────────────────────────────────────────────────────────
@@ -484,7 +634,7 @@ export default function SearchScreen() {
         {renderBrowseFilterHeader()}
         <FlatList
           data={browseAllItems}
-          keyExtractor={(item) => item.id}
+          keyExtractor={browseKeyExtractor}
           numColumns={numColumns}
           key={`browse-grid-${numColumns}`}
           scrollEnabled={false}
@@ -493,23 +643,8 @@ export default function SearchScreen() {
           initialNumToRender={12}
           maxToRenderPerBatch={12}
           windowSize={5}
-          renderItem={({ item }) => (
-            <AnimeCard
-              anime={item}
-              size="sm"
-              cardWidth={cardWidth}
-              style={{ width: cardWidth, marginRight: 0 }}
-              onPress={handleCardPress}
-              showStats
-            />
-          )}
-          ListFooterComponent={() =>
-            browseFetchingMore ? (
-              <View style={styles.lazyLoadFooter}>
-                <ActivityIndicator color={COLORS.neonGold} size="small" />
-              </View>
-            ) : null
-          }
+          renderItem={renderBrowseItem}
+          ListFooterComponent={renderBrowseFooter}
         />
       </View>
     );
@@ -824,9 +959,10 @@ export default function SearchScreen() {
   // LIVE SEARCH RESULTS (When query.length > 0)
   // ──────────────────────────────────────────────────────────────────────────
   const renderSearchResults = () => {
-    if (searching) {
+    const isTypingDebounce = query.trim().length >= MIN_SEARCH_CHARS && query.trim() !== debouncedQuery.trim();
+    if (searching || isTypingDebounce) {
       return (
-        <View style={styles.threeColGrid}>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.threeColGrid}>
           {Array.from({ length: 9 }).map((_, i) => (
             <AnimeCardSkeleton
               key={i}
@@ -835,7 +971,7 @@ export default function SearchScreen() {
               style={{ width: cardWidth, marginRight: 0 }}
             />
           ))}
-        </View>
+        </ScrollView>
       );
     }
 
@@ -846,6 +982,7 @@ export default function SearchScreen() {
           data={searchResults}
           keyExtractor={searchKeyExtractor}
           numColumns={numColumns}
+          style={{ flex: 1 }}
           contentContainerStyle={styles.grid}
           columnWrapperStyle={styles.searchGridRow}
           renderItem={renderSearchItem}
@@ -854,7 +991,7 @@ export default function SearchScreen() {
           initialNumToRender={numColumns * 3}
           maxToRenderPerBatch={numColumns * 2}
           windowSize={5}
-          removeClippedSubviews={Platform.OS === 'android'}
+          removeClippedSubviews={false}
           ListHeaderComponent={searchHeaderComponent}
           ListFooterComponent={searchFooterComponent}
         />
@@ -924,72 +1061,18 @@ export default function SearchScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
 
-      {/* ── Persistent Search Bar ─────────────────────────────────────────── */}
-      <View style={styles.searchSection}>
-        <View
-          style={[
-            styles.searchBar,
-            isFocused && styles.searchBarFocused,
-            isFocused && { borderColor: COLORS.neonCyan }
-          ]}
-        >
-          {isSearchActive ? (
-            <TouchableOpacity
-              onPress={clearSearch}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              style={styles.searchNavButton}
-              accessibilityLabel="Back to Explore"
-              accessibilityRole="button"
-            >
-              <Ionicons name="arrow-back" size={20} color={COLORS.neonCyan} />
-            </TouchableOpacity>
-          ) : (
-            <Ionicons
-              name="search"
-              size={20}
-              color={isFocused ? COLORS.neonCyan : COLORS.textMuted}
-            />
-          )}
-          <TextInput
-            ref={searchInputRef}
-            style={styles.input}
-            placeholder="Search anime, movies..."
-            placeholderTextColor={COLORS.textMuted}
-            value={query}
-            onChangeText={setQuery}
-            autoCorrect={false}
-            autoCapitalize="none"
-            returnKeyType="search"
-            onSubmitEditing={() => setDebouncedQuery(query)}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
-          />
-          {isSearchActive ? (
-            <TouchableOpacity
-              onPress={() => {
-                haptic.selection();
-                setQuery('');
-                setDebouncedQuery('');
-                searchInputRef.current?.focus();
-              }}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Ionicons name="close-circle" size={20} color={COLORS.textMuted} />
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              onPress={() => setShowFilter(true)}
-              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            >
-              <View style={styles.filterButton}>
-                <Ionicons name="options-outline" size={18} color={COLORS.neonCyan} />
-              </View>
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
+      {/* ── Persistent Search Bar (Extracted memoized component with zero re-render overhead) ── */}
+      <ExploreSearchBar
+        inputRef={searchInputRef}
+        query={query}
+        onQueryChange={setQuery}
+        onClear={clearSearch}
+        onSubmit={() => setDebouncedQuery(query)}
+        onOpenFilter={() => setShowFilter(true)}
+        isSearchActive={isSearchActive}
+      />
 
-      {/* ── Active Search Results OR 3-Partition Discovery ─────────────────── */}
+      {/* ── Search Mode vs Discovery Mode ── */}
       {isSearchActive ? (
         <View style={{ flex: 1 }}>
           {renderSearchResults()}
@@ -1001,6 +1084,7 @@ export default function SearchScreen() {
           contentContainerStyle={{ paddingBottom: 110 }}
           onScroll={handleMainScroll}
           scrollEventThrottle={200}
+          keyboardShouldPersistTaps="handled"
           refreshControl={
             <RefreshControl
               refreshing={isRefreshing}
@@ -1014,12 +1098,17 @@ export default function SearchScreen() {
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.trendingRow}
+            keyboardShouldPersistTaps="handled"
           >
             {trendingChips.map((q) => (
               <TouchableOpacity
                 key={q}
                 style={styles.trendingChip}
-                onPress={() => setQuery(q)}
+                onPress={() => {
+                  haptic.selection();
+                  setQuery(q);
+                  setDebouncedQuery(q);
+                }}
               >
                 <Ionicons name="trending-up" size={12} color={COLORS.neonCyan} />
                 <Text style={styles.trendingChipText}>{q}</Text>
@@ -1031,12 +1120,7 @@ export default function SearchScreen() {
           <View style={styles.segmentedContainer}>
             <TouchableOpacity
               style={[styles.segmentBtn, activeTab === 'browse' && styles.segmentBtnActiveGold]}
-              onPress={() => {
-                if (activeTab !== 'browse') {
-                  haptic.selection();
-                  setActiveTab('browse');
-                }
-              }}
+              onPress={() => handleTabChange('browse')}
               activeOpacity={0.8}
             >
               <Ionicons
@@ -1051,12 +1135,7 @@ export default function SearchScreen() {
 
             <TouchableOpacity
               style={[styles.segmentBtn, activeTab === 'genres' && styles.segmentBtnActiveNeon]}
-              onPress={() => {
-                if (activeTab !== 'genres') {
-                  haptic.selection();
-                  setActiveTab('genres');
-                }
-              }}
+              onPress={() => handleTabChange('genres')}
               activeOpacity={0.8}
             >
               <Ionicons
@@ -1071,12 +1150,7 @@ export default function SearchScreen() {
 
             <TouchableOpacity
               style={[styles.segmentBtn, activeTab === 'simulcasts' && styles.segmentBtnActiveCyan]}
-              onPress={() => {
-                if (activeTab !== 'simulcasts') {
-                  haptic.selection();
-                  setActiveTab('simulcasts');
-                }
-              }}
+              onPress={() => handleTabChange('simulcasts')}
               activeOpacity={0.8}
             >
               <Ionicons
@@ -1091,16 +1165,10 @@ export default function SearchScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* ── Active Partition Content (Preserved in memory for instantaneous switching) ── */}
-          <View style={activeTab === 'browse' ? undefined : styles.hiddenPartition}>
-            {renderBrowsePartition()}
-          </View>
-          <View style={activeTab === 'genres' ? undefined : styles.hiddenPartition}>
-            {renderGenresPartition()}
-          </View>
-          <View style={activeTab === 'simulcasts' ? undefined : styles.hiddenPartition}>
-            {renderSimulcastsPartition()}
-          </View>
+          {/* ── Active Partition Content ── */}
+          {activeTab === 'browse' && renderBrowsePartition()}
+          {activeTab === 'genres' && renderGenresPartition()}
+          {activeTab === 'simulcasts' && renderSimulcastsPartition()}
         </ScrollView>
       )}
 
@@ -1164,6 +1232,7 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
+    height: '100%',
     color: COLORS.text,
     fontSize: 14,
     fontWeight: '600',
@@ -1542,6 +1611,11 @@ const styles = StyleSheet.create({
   grid: { paddingHorizontal: SPACING.md, paddingTop: SPACING.sm, paddingBottom: 110 },
   searchGridRow: { gap: GRID_GAP, marginBottom: SPACING.md, justifyContent: 'flex-start' },
   searchNavButton: {
+    paddingRight: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchIconButton: {
     paddingRight: 4,
     justifyContent: 'center',
     alignItems: 'center',

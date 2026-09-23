@@ -120,66 +120,69 @@ export function DownloadModal({ open, onOpenChange, initialTab = 'download' }: D
       </DialogHeader>
 
       {/* Tabs */}
-      <div className="flex rounded-xl bg-white/5 p-1 border border-white/10 mb-6">
+      <div className="grid grid-cols-3 rounded-xl bg-white/5 p-1 border border-white/10 mb-5 gap-1">
         <button
           onClick={() => setTab('download')}
-          className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${
+          className={`py-2 px-1 text-center text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1 ${
             tab === 'download'
               ? 'bg-[#FF2B3C] text-white shadow-sm'
               : 'text-slate-400 hover:text-white'
           }`}
         >
-          Direct Download
+          <Download className="size-3.5 hidden xs:inline" />
+          <span><span className="hidden sm:inline">Direct </span>Download</span>
         </button>
         <button
           onClick={() => setTab('qr')}
-          className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${
+          className={`py-2 px-1 text-center text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1 ${
             tab === 'qr'
               ? 'bg-[#FF2B3C] text-white shadow-sm'
               : 'text-slate-400 hover:text-white'
           }`}
         >
-          Scan QR Code
+          <FileCheck className="size-3.5 hidden xs:inline" />
+          <span>QR Code</span>
         </button>
         <button
           onClick={() => setTab('guide')}
-          className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${
+          className={`py-2 px-1 text-center text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1 ${
             tab === 'guide'
               ? 'bg-[#FF2B3C] text-white shadow-sm'
               : 'text-slate-400 hover:text-white'
           }`}
         >
-          Install Guide
+          <FolderOpen className="size-3.5 hidden xs:inline" />
+          <span>Guide</span>
         </button>
       </div>
 
       {/* Tab 1: Direct Download */}
       {tab === 'download' && (
         <div className="space-y-4">
-          <div className="rounded-2xl bg-[#10121A] p-4 border border-white/10 flex items-center justify-between">
+          <div className="rounded-2xl bg-[#10121A] p-3.5 sm:p-4 border border-white/10 flex flex-col xs:flex-row xs:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <img
                 src="/icon.png"
                 alt="AnimeHub App Icon"
-                className="size-12 rounded-xl object-cover border border-[#FF2B3C]/30 shadow-md shadow-[#FF2B3C]/30"
+                className="size-11 sm:size-12 rounded-xl object-cover border border-[#FF2B3C]/30 shadow-md shadow-[#FF2B3C]/30 shrink-0"
               />
-              <div>
-                <div className="font-bold text-white text-sm">{APP_CONFIG.apkFilename}</div>
+              <div className="min-w-0">
+                <div className="font-bold text-white text-sm truncate">{APP_CONFIG.apkFilename}</div>
                 <div className="text-xs text-slate-400">
                   {APP_CONFIG.minAndroid} · {APP_CONFIG.apkSize}
                 </div>
               </div>
             </div>
-            <Badge variant="success">Verified Clean</Badge>
+            <Badge variant="success" className="self-start xs:self-auto shrink-0">Verified Clean</Badge>
           </div>
 
           <Button
             size="lg"
             variant="glow"
             onClick={triggerDownload}
-            className="w-full gap-2 text-base font-bold shadow-lg shadow-[#FF2B3C]/30"
+            className="w-full gap-2 text-sm sm:text-base font-bold shadow-lg shadow-[#FF2B3C]/30 py-3 sm:py-4 h-auto min-h-[48px] whitespace-normal text-center"
           >
-            <Download className="size-5" />
+            <Download className="size-5 shrink-0" />
             <span>Download APK Now ({APP_CONFIG.apkSize})</span>
           </Button>
 
@@ -187,24 +190,24 @@ export function DownloadModal({ open, onOpenChange, initialTab = 'download' }: D
           <div className="rounded-xl bg-black/40 p-3 border border-white/5 space-y-1.5">
             <div className="flex items-center justify-between text-xs text-slate-400">
               <span className="flex items-center gap-1">
-                <FileCheck className="size-3.5 text-slate-400" />
-                SHA-256 Checksum:
+                <FileCheck className="size-3.5 text-slate-400 shrink-0" />
+                <span>SHA-256 Checksum:</span>
               </span>
               <button
                 onClick={handleCopyHash}
-                className="text-[11px] text-[#FF2B3C] hover:text-[#FF4252] flex items-center gap-1 font-semibold"
+                className="text-[11px] text-[#FF2B3C] hover:text-[#FF4252] flex items-center gap-1 font-semibold shrink-0"
               >
                 {copied ? <Check className="size-3 text-[#00E676]" /> : <Copy className="size-3" />}
-                <span>{copied ? 'Copied!' : 'Copy Hash'}</span>
+                <span>{copied ? 'Copied!' : 'Copy'}</span>
               </button>
             </div>
-            <div className="font-mono text-[10px] text-slate-400 break-all bg-white/5 p-2 rounded-lg border border-white/5">
+            <div className="font-mono text-[9px] sm:text-[10px] text-slate-400 break-all bg-white/5 p-2 rounded-lg border border-white/5 leading-relaxed">
               {APP_CONFIG.sha256}
             </div>
           </div>
 
-          <div className="flex items-center justify-center gap-2 text-xs text-slate-400 pt-1">
-            <ShieldCheck className="size-4 text-[#00E676]" />
+          <div className="flex items-center justify-center gap-2 text-xs text-slate-400 pt-1 text-center">
+            <ShieldCheck className="size-4 text-[#00E676] shrink-0" />
             <span>0 Malware, 0 Trackers, Signed by AnimeHub</span>
           </div>
         </div>
@@ -212,21 +215,21 @@ export function DownloadModal({ open, onOpenChange, initialTab = 'download' }: D
 
       {/* Tab 2: Scan QR Code */}
       {tab === 'qr' && (
-        <div className="flex flex-col items-center justify-center p-2 space-y-4 animate-in fade-in duration-200">
+        <div className="flex flex-col items-center justify-center p-1 sm:p-2 space-y-4 animate-in fade-in duration-200">
           {/* Target URL Selector */}
           <div className="w-full space-y-2">
             <div className="flex items-center justify-between text-xs text-slate-400">
               <span>Select Download Mirror for QR:</span>
               <button
                 onClick={handleCopyUrl}
-                className="text-[11px] text-[#FF2B3C] hover:text-[#FF4757] flex items-center gap-1 font-semibold"
+                className="text-[11px] text-[#FF2B3C] hover:text-[#FF4757] flex items-center gap-1 font-semibold shrink-0"
               >
                 {urlCopied ? <Check className="size-3 text-[#00E676]" /> : <Copy className="size-3" />}
                 <span>{urlCopied ? 'Copied!' : 'Copy URL'}</span>
               </button>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 text-xs">
+            <div className="grid grid-cols-1 xs:grid-cols-3 gap-1.5 sm:gap-2 text-xs">
               <button
                 type="button"
                 onClick={() => setQrTarget('expo')}
@@ -284,21 +287,21 @@ export function DownloadModal({ open, onOpenChange, initialTab = 'download' }: D
           </div>
 
           {/* Genuine Scannable QR Code Canvas */}
-          <div className="relative p-3 rounded-2xl bg-white text-black shadow-2xl shadow-black/80 border-4 border-[#FF2B3C]/40 group">
+          <div className="relative p-2.5 sm:p-3 rounded-2xl bg-white text-black shadow-2xl shadow-black/80 border-4 border-[#FF2B3C]/40 group">
             {qrDataUrl ? (
               <img
                 src={qrDataUrl}
                 alt="AnimeHub APK Download QR Code"
-                className="size-52 rounded-lg object-contain"
+                className="size-44 sm:size-52 rounded-lg object-contain"
               />
             ) : (
-              <div className="size-52 flex items-center justify-center text-xs text-slate-500 font-mono">
+              <div className="size-44 sm:size-52 flex items-center justify-center text-xs text-slate-500 font-mono">
                 Generating QR...
               </div>
             )}
 
             {/* Centered App Icon Badge */}
-            <div className="absolute inset-0 m-auto size-12 rounded-xl bg-white p-1 shadow-lg border-2 border-[#FF2B3C] flex items-center justify-center pointer-events-none">
+            <div className="absolute inset-0 m-auto size-11 sm:size-12 rounded-xl bg-white p-1 shadow-lg border-2 border-[#FF2B3C] flex items-center justify-center pointer-events-none">
               <img
                 src="/icon.png"
                 alt="AnimeHub Icon"
@@ -308,11 +311,11 @@ export function DownloadModal({ open, onOpenChange, initialTab = 'download' }: D
           </div>
 
           {/* Helper details */}
-          <div className="text-center space-y-1.5">
-            <h4 className="text-sm font-bold text-white flex items-center justify-center gap-1.5">
+          <div className="text-center space-y-1.5 w-full">
+            <h4 className="text-xs sm:text-sm font-bold text-white flex items-center justify-center gap-1.5">
               <span>Scan with your Phone Camera or Google Lens</span>
             </h4>
-            <p className="text-xs text-slate-400 max-w-xs font-mono break-all bg-black/40 px-3 py-1 rounded-lg border border-white/5">
+            <p className="text-[10px] sm:text-xs text-slate-400 max-w-xs mx-auto font-mono break-all bg-black/40 px-2.5 py-1 rounded-lg border border-white/5">
               {activeDownloadUrl}
             </p>
             <p className="text-[11px] text-slate-400">
@@ -321,11 +324,11 @@ export function DownloadModal({ open, onOpenChange, initialTab = 'download' }: D
           </div>
 
           {/* Actions */}
-          <div className="flex items-center gap-2 w-full pt-1">
+          <div className="flex flex-col xs:flex-row items-center gap-2 w-full pt-1">
             <a
               href={qrDataUrl}
               download="animehub-apk-qr.png"
-              className="flex-1 py-2 px-3 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-white flex items-center justify-center gap-1.5 border border-white/10 transition-colors"
+              className="w-full xs:flex-1 py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-white flex items-center justify-center gap-1.5 border border-white/10 transition-colors"
             >
               <Download className="size-3.5" />
               <span>Save QR Image</span>
@@ -334,7 +337,7 @@ export function DownloadModal({ open, onOpenChange, initialTab = 'download' }: D
               href={activeDownloadUrl}
               target="_blank"
               rel="noreferrer"
-              className="flex-1 py-2 px-3 rounded-xl bg-[#FF2B3C] hover:bg-[#FF4757] text-xs font-bold text-white flex items-center justify-center gap-1.5 shadow-md shadow-[#FF2B3C]/30 transition-colors"
+              className="w-full xs:flex-1 py-2.5 px-3 rounded-xl bg-[#FF2B3C] hover:bg-[#FF4757] text-xs font-bold text-white flex items-center justify-center gap-1.5 shadow-md shadow-[#FF2B3C]/30 transition-colors"
             >
               <FileCheck className="size-3.5" />
               <span>Open in Browser</span>

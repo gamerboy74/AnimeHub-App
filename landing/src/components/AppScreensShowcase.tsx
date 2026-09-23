@@ -7,7 +7,6 @@ import {
   Download,
   ShieldCheck,
   Zap,
-  Sparkles,
   ChevronRight,
   ChevronLeft,
   Heart,
@@ -15,10 +14,8 @@ import {
   Film,
   MessageSquare,
   Bookmark,
-  CheckCircle2,
   Tv,
   Headphones,
-  Maximize2,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -32,7 +29,7 @@ export function AppScreensShowcase({ onOpenDownload }: AppScreensShowcaseProps) 
   const [isPlaying, setIsPlaying] = useState(true)
 
   return (
-    <section id="screens" className="py-24 relative overflow-hidden bg-[#06070B] border-t border-b border-white/5">
+    <section id="desktop-screens" className="hidden md:block py-20 lg:py-24 relative overflow-hidden bg-[#06070B] border-t border-b border-white/5">
       {/* Background Lighting Elements */}
       <div className="absolute top-1/3 left-1/4 w-[500px] h-[500px] bg-[#FF2B3C]/10 rounded-full blur-[120px] pointer-events-none" />
       <div className="absolute bottom-10 right-1/4 w-[500px] h-[500px] bg-[#38BDF8]/10 rounded-full blur-[120px] pointer-events-none" />
@@ -52,43 +49,43 @@ export function AppScreensShowcase({ onOpenDownload }: AppScreensShowcaseProps) 
           </p>
 
           {/* Screen Tab Switcher */}
-          <div className="flex items-center justify-center pt-4">
-            <div className="flex flex-wrap items-center justify-center gap-1.5 p-1.5 rounded-2xl bg-[#10121A] border border-white/10 shadow-xl shadow-black/60">
+          <div className="flex items-center justify-center pt-2 sm:pt-4">
+            <div className="grid grid-cols-1 xs:grid-cols-3 sm:flex sm:flex-row items-center justify-center gap-1.5 p-1.5 rounded-2xl bg-[#10121A] border border-white/10 shadow-xl shadow-black/60 w-full max-w-md sm:max-w-none">
               <button
                 type="button"
                 onClick={() => setActiveScreen('player')}
-                className={`px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${
+                className={`px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 sm:gap-2 ${
                   activeScreen === 'player'
                     ? 'bg-[#FF2B3C] text-white shadow-lg shadow-[#FF2B3C]/40'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Play className="size-4 fill-current" />
-                <span>Cinema Player (1080p)</span>
+                <Play className="size-3.5 sm:size-4 fill-current shrink-0" />
+                <span>Cinema Player <span className="text-[10px] sm:text-xs opacity-90">(1080p)</span></span>
               </button>
               <button
                 type="button"
                 onClick={() => setActiveScreen('details')}
-                className={`px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${
+                className={`px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 sm:gap-2 ${
                   activeScreen === 'details'
                     ? 'bg-[#FF2B3C] text-white shadow-lg shadow-[#FF2B3C]/40'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Film className="size-4" />
-                <span>Anime Details &amp; Cast</span>
+                <Film className="size-3.5 sm:size-4 shrink-0" />
+                <span>Details &amp; Cast</span>
               </button>
               <button
                 type="button"
                 onClick={() => setActiveScreen('offline')}
-                className={`px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${
+                className={`px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-1.5 sm:gap-2 ${
                   activeScreen === 'offline'
                     ? 'bg-[#FF2B3C] text-white shadow-lg shadow-[#FF2B3C]/40'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Download className="size-4" />
-                <span>Offline Downloads</span>
+                <Download className="size-3.5 sm:size-4 shrink-0" />
+                <span>Offline Vault</span>
               </button>
             </div>
           </div>
@@ -98,9 +95,9 @@ export function AppScreensShowcase({ onOpenDownload }: AppScreensShowcaseProps) 
         {activeScreen === 'player' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center animate-in fade-in duration-300">
             {/* Left: Interactive Landscape Player Visual */}
-            <div className="lg:col-span-7 flex justify-center">
-              <div className="w-full max-w-[620px] rounded-[36px] bg-[#10121A] p-3 border-4 border-slate-700/60 shadow-2xl shadow-black/80 ring-1 ring-white/10">
-                <div className="relative w-full aspect-[20/9] rounded-[28px] overflow-hidden bg-black flex flex-col justify-between p-3.5 sm:p-4 select-none">
+            <div className="lg:col-span-7 flex justify-center w-full">
+              <div className="w-full max-w-[620px] rounded-[28px] sm:rounded-[36px] bg-[#10121A] p-2.5 sm:p-3 border-4 border-slate-700/60 shadow-2xl shadow-black/80 ring-1 ring-white/10">
+                <div className="relative w-full aspect-[16/10] sm:aspect-[20/9] min-h-[220px] sm:min-h-[260px] rounded-[22px] sm:rounded-[28px] overflow-hidden bg-black flex flex-col justify-between p-3 sm:p-4 select-none">
                   <img
                     src="https://s4.anilist.co/file/anilistcdn/media/anime/banner/20809-Cjon1rP2AnD2.png"
                     alt="Lord Marksman and Vanadis scene"
@@ -112,84 +109,84 @@ export function AppScreensShowcase({ onOpenDownload }: AppScreensShowcaseProps) 
                   <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/25 to-black/80 pointer-events-none" />
 
                   {/* Top HUD */}
-                  <div className="relative z-20 flex items-center justify-between">
-                    <div>
-                      <div className="text-[9px] sm:text-[10px] font-bold text-[#38BDF8] uppercase tracking-wider leading-none mb-1">
+                  <div className="relative z-20 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[8px] sm:text-[10px] font-bold text-[#38BDF8] uppercase tracking-wider leading-none mb-1 truncate">
                         LORD MARKSMAN AND VANADIS
                       </div>
-                      <div className="text-xs sm:text-sm font-black text-white leading-none">
+                      <div className="text-xs sm:text-sm font-black text-white leading-none truncate">
                         S1:E2 • The Return Home
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1.5 sm:gap-2">
-                      <div className="bg-black/80 backdrop-blur-md px-2.5 py-0.5 sm:py-1 rounded-full border border-white/15 font-mono text-[9px] sm:text-[10px] text-slate-300">
+                    <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+                      <div className="bg-black/80 backdrop-blur-md px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full border border-white/15 font-mono text-[8px] sm:text-[10px] text-slate-300">
                         <span className="text-[#FF2B3C] font-bold">6:46</span> / 24:10
                       </div>
-                      <span className="bg-black/70 px-2 py-0.5 rounded-md border border-[#38BDF8]/60 text-[9px] sm:text-[10px] text-[#38BDF8] font-bold">
-                        SUB 1 • SUB ⌄
+                      <span className="bg-black/70 px-1.5 sm:px-2 py-0.5 rounded-md border border-[#38BDF8]/60 text-[8px] sm:text-[10px] text-[#38BDF8] font-bold">
+                        SUB 1
                       </span>
-                      <span className="bg-black/70 px-2 py-0.5 rounded-md border border-white/15 text-[9px] sm:text-[10px] text-slate-300">
+                      <span className="hidden xs:inline bg-black/70 px-2 py-0.5 rounded-md border border-white/15 text-[9px] sm:text-[10px] text-slate-300">
                         EPISODES
                       </span>
                     </div>
                   </div>
 
                   {/* Center Controls */}
-                  <div className="relative z-20 flex items-center justify-center gap-6 sm:gap-8">
+                  <div className="relative z-20 flex items-center justify-center gap-5 sm:gap-8 my-auto">
                     <button
                       type="button"
-                      className="size-9 sm:size-10 rounded-full bg-black/60 backdrop-blur-md border border-white/15 text-white flex flex-col items-center justify-center hover:scale-105 transition-transform"
+                      className="size-8 sm:size-10 rounded-full bg-black/60 backdrop-blur-md border border-white/15 text-white flex flex-col items-center justify-center hover:scale-105 transition-transform"
                     >
-                      <RotateCcw className="size-3.5 sm:size-4" />
-                      <span className="text-[8px] font-bold font-mono">10</span>
+                      <RotateCcw className="size-3 sm:size-4" />
+                      <span className="text-[7px] sm:text-[8px] font-bold font-mono">10</span>
                     </button>
 
                     {/* Signature Neon Green Glowing Pause Ring */}
                     <button
                       type="button"
                       onClick={() => setIsPlaying(!isPlaying)}
-                      className="size-13 sm:size-14 rounded-full bg-[#10121A] text-white flex items-center justify-center shadow-[0_0_35px_rgba(0,230,118,0.7)] ring-4 ring-[#00E676] hover:scale-110 active:scale-95 transition-all p-3"
+                      className="size-11 sm:size-14 rounded-full bg-[#10121A] text-white flex items-center justify-center shadow-[0_0_35px_rgba(0,230,118,0.7)] ring-2 sm:ring-4 ring-[#00E676] hover:scale-110 active:scale-95 transition-all p-2.5 sm:p-3"
                     >
                       {isPlaying ? (
-                        <div className="flex items-center gap-1.5">
-                          <div className="w-1.5 h-5 bg-[#FF2B3C] rounded-sm" />
-                          <div className="w-1.5 h-5 bg-[#FF2B3C] rounded-sm" />
+                        <div className="flex items-center gap-1 sm:gap-1.5">
+                          <div className="w-1 sm:w-1.5 h-4 sm:h-5 bg-[#FF2B3C] rounded-sm" />
+                          <div className="w-1 sm:w-1.5 h-4 sm:h-5 bg-[#FF2B3C] rounded-sm" />
                         </div>
                       ) : (
-                        <Play className="size-6 fill-[#FF2B3C] text-[#FF2B3C] ml-0.5" />
+                        <Play className="size-5 sm:size-6 fill-[#FF2B3C] text-[#FF2B3C] ml-0.5" />
                       )}
                     </button>
 
                     <button
                       type="button"
-                      className="size-9 sm:size-10 rounded-full bg-black/60 backdrop-blur-md border border-white/15 text-white flex flex-col items-center justify-center hover:scale-105 transition-transform"
+                      className="size-8 sm:size-10 rounded-full bg-black/60 backdrop-blur-md border border-white/15 text-white flex flex-col items-center justify-center hover:scale-105 transition-transform"
                     >
-                      <RotateCw className="size-3.5 sm:size-4" />
-                      <span className="text-[8px] font-bold font-mono">10</span>
+                      <RotateCw className="size-3 sm:size-4" />
+                      <span className="text-[7px] sm:text-[8px] font-bold font-mono">10</span>
                     </button>
                   </div>
 
                   {/* Bottom Scrubber & Strip */}
-                  <div className="relative z-20 space-y-1.5">
-                    <div className="flex items-center gap-2.5">
-                      <span className="text-[9px] sm:text-[10px] font-mono text-white font-bold">6:46</span>
+                  <div className="relative z-20 space-y-1 sm:space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[8px] sm:text-[10px] font-mono text-white font-bold">6:46</span>
                       <div className="flex-1 h-1.5 bg-white/20 rounded-full overflow-hidden">
                         <div className="h-full bg-[#FF2B3C] rounded-full w-[28%]" />
                       </div>
-                      <span className="text-[9px] sm:text-[10px] font-mono text-slate-400">24:10</span>
+                      <span className="text-[8px] sm:text-[10px] font-mono text-slate-400">24:10</span>
                     </div>
 
-                    <div className="flex items-center justify-end gap-1.5 sm:gap-2 pt-0.5">
-                      <span className="px-2.5 py-0.5 rounded-md bg-black/70 border border-[#38BDF8]/60 text-[#38BDF8] text-[9px] sm:text-[10px] font-bold flex items-center gap-1">
-                        <Sliders className="size-3" />
+                    <div className="flex items-center justify-end gap-1 sm:gap-2 pt-0.5 flex-wrap xs:flex-nowrap">
+                      <span className="px-2 py-0.5 rounded-md bg-black/70 border border-[#38BDF8]/60 text-[#38BDF8] text-[8px] sm:text-[10px] font-bold flex items-center gap-1">
+                        <Sliders className="size-2.5 sm:size-3" />
                         <span>1080p FHD</span>
                       </span>
-                      <span className="px-2.5 py-0.5 rounded-md bg-black/70 border border-[#38BDF8]/60 text-[#38BDF8] text-[9px] sm:text-[10px] font-bold flex items-center gap-1">
-                        <Headphones className="size-3" />
+                      <span className="px-2 py-0.5 rounded-md bg-black/70 border border-[#38BDF8]/60 text-[#38BDF8] text-[8px] sm:text-[10px] font-bold flex items-center gap-1">
+                        <Headphones className="size-2.5 sm:size-3" />
                         <span>English Dub</span>
                       </span>
-                      <span className="px-2.5 py-0.5 rounded-md bg-black/70 border border-[#38BDF8]/60 text-[#38BDF8] text-[9px] sm:text-[10px] font-black uppercase tracking-wider">
+                      <span className="hidden xs:inline px-2 py-0.5 rounded-md bg-black/70 border border-[#38BDF8]/60 text-[#38BDF8] text-[8px] sm:text-[10px] font-black uppercase tracking-wider">
                         SETTINGS
                       </span>
                     </div>
@@ -263,8 +260,8 @@ export function AppScreensShowcase({ onOpenDownload }: AppScreensShowcaseProps) 
         {activeScreen === 'details' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center animate-in fade-in duration-300">
             {/* Left: Authentic Details Card Visual */}
-            <div className="lg:col-span-7 flex justify-center">
-              <div className="w-full max-w-[460px] rounded-[36px] bg-[#10121A] p-4 border-4 border-slate-700/60 shadow-2xl shadow-black/80 ring-1 ring-white/10 text-left space-y-4">
+            <div className="lg:col-span-7 flex justify-center w-full">
+              <div className="w-full max-w-[460px] rounded-[28px] sm:rounded-[36px] bg-[#10121A] p-3.5 sm:p-4 border-4 border-slate-700/60 shadow-2xl shadow-black/80 ring-1 ring-white/10 text-left space-y-3.5 sm:space-y-4">
                 {/* Header with Back and Trailer */}
                 <div className="flex items-center justify-between">
                   <div className="text-xs font-mono text-slate-400">ANIME DETAILS</div>
@@ -275,8 +272,8 @@ export function AppScreensShowcase({ onOpenDownload }: AppScreensShowcaseProps) 
                 </div>
 
                 {/* Hero Banner with Poster */}
-                <div className="flex gap-3.5 items-start">
-                  <div className="relative w-24 h-36 rounded-2xl overflow-hidden shrink-0 border-2 border-[#FF2B3C] shadow-xl shadow-[#FF2B3C]/25 bg-[#161924]">
+                <div className="flex gap-3 sm:gap-3.5 items-start">
+                  <div className="relative w-20 h-28 sm:w-24 sm:h-36 rounded-xl sm:rounded-2xl overflow-hidden shrink-0 border-2 border-[#FF2B3C] shadow-xl shadow-[#FF2B3C]/25 bg-[#161924]">
                     <img
                       src="https://s4.anilist.co/file/anilistcdn/media/anime/cover/medium/bx178789-hNXjKFzUq7mk.jpg"
                       alt="Mushoku Tensei Season 3"
@@ -475,18 +472,18 @@ export function AppScreensShowcase({ onOpenDownload }: AppScreensShowcaseProps) 
         {activeScreen === 'offline' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center animate-in fade-in duration-300">
             {/* Left: Authentic Offline Screen Card Visual */}
-            <div className="lg:col-span-7 flex justify-center">
-              <div className="w-full max-w-[460px] rounded-[36px] bg-[#10121A] p-5 border-4 border-slate-700/60 shadow-2xl shadow-black/80 ring-1 ring-white/10 text-left space-y-4">
+            <div className="lg:col-span-7 flex justify-center w-full">
+              <div className="w-full max-w-[460px] rounded-[28px] sm:rounded-[36px] bg-[#10121A] p-3.5 sm:p-5 border-4 border-slate-700/60 shadow-2xl shadow-black/80 ring-1 ring-white/10 text-left space-y-3.5 sm:space-y-4">
                 {/* Header: Back & Title */}
-                <div className="flex items-center gap-3">
-                  <div className="size-9 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white">
-                    <ChevronLeft className="size-5" />
+                <div className="flex items-center gap-2.5 sm:gap-3">
+                  <div className="size-8 sm:size-9 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white shrink-0">
+                    <ChevronLeft className="size-4 sm:size-5" />
                   </div>
                   <div>
-                    <h3 className="font-display font-black text-xl text-white leading-tight">
+                    <h3 className="font-display font-black text-lg sm:text-xl text-white leading-tight">
                       Offline Library
                     </h3>
-                    <p className="text-xs text-slate-400 font-sans">
+                    <p className="text-[11px] sm:text-xs text-slate-400 font-sans">
                       2 titles available offline
                     </p>
                   </div>

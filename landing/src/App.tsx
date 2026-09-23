@@ -26,7 +26,7 @@ export function App() {
       <Navbar onOpenDownload={() => handleOpenDownload('download')} />
 
       {/* Main Page Content */}
-      <main className="flex-1">
+      <main className="flex-1 pb-16 sm:pb-8">
         <Hero onOpenDownload={handleOpenDownload} />
         <AppScreensShowcase onOpenDownload={() => handleOpenDownload('download')} />
         <FeaturesSection />

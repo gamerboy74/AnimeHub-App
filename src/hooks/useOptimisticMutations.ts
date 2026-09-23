@@ -18,14 +18,16 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { haptic } from '../lib/haptics';
+import { AnimeWithStats } from '../types/database';
 
-interface UseOptimisticFavParams {
+export interface UseOptimisticFavParams {
   userId: string;
   animeId: string;
+  animeSummary?: Partial<AnimeWithStats> | null;
 }
 
 // ─── FAVORITES ────────────────────────────────────────────────────────────────
-export function useToggleFavorite({ userId, animeId }: UseOptimisticFavParams) {
+export function useToggleFavorite({ userId, animeId, animeSummary }: UseOptimisticFavParams) {
   const queryClient = useQueryClient();
   const favQueryKey = ['user', userId, 'favorites'];
 
@@ -38,10 +40,24 @@ export function useToggleFavorite({ userId, animeId }: UseOptimisticFavParams) {
 
       queryClient.setQueryData(favQueryKey, (old: any[] = []) => {
         if (willBeFavorite) {
-          // Optimistically add a placeholder entry
-          return [...old, { anime: { id: animeId } }];
+          const optimisticItem = {
+            id: `temp-${Date.now()}`,
+            user_id: userId,
+            anime_id: animeId,
+            created_at: new Date().toISOString(),
+            anime: {
+              id: animeId,
+              title: animeSummary?.title || '',
+              poster_url: animeSummary?.poster_url || '',
+              banner_url: animeSummary?.banner_url || '',
+              rating: animeSummary?.rating || 0,
+              type: animeSummary?.type || 'TV',
+              genres: animeSummary?.genres || [],
+            },
+          };
+          return [optimisticItem, ...old.filter((item: any) => (item.anime_id || item?.anime?.id) !== animeId)];
         } else {
-          return old.filter((item: any) => item?.anime?.id !== animeId);
+          return old.filter((item: any) => (item.anime_id || item?.anime?.id) !== animeId);
         }
       });
 
@@ -80,7 +96,7 @@ export function useToggleFavorite({ userId, animeId }: UseOptimisticFavParams) {
 }
 
 // ─── WATCHLIST ────────────────────────────────────────────────────────────────
-export function useToggleWatchlist({ userId, animeId }: UseOptimisticFavParams) {
+export function useToggleWatchlist({ userId, animeId, animeSummary }: UseOptimisticFavParams) {
   const queryClient = useQueryClient();
   const wlQueryKey = ['user', userId, 'watchlist'];
 
@@ -92,9 +108,25 @@ export function useToggleWatchlist({ userId, animeId }: UseOptimisticFavParams) 
 
       queryClient.setQueryData(wlQueryKey, (old: any[] = []) => {
         if (willBeInWatchlist) {
-          return [...old, { anime: { id: animeId } }];
+          const optimisticItem = {
+            id: `temp-${Date.now()}`,
+            user_id: userId,
+            anime_id: animeId,
+            status: 'plan_to_watch',
+            created_at: new Date().toISOString(),
+            anime: {
+              id: animeId,
+              title: animeSummary?.title || '',
+              poster_url: animeSummary?.poster_url || '',
+              banner_url: animeSummary?.banner_url || '',
+              rating: animeSummary?.rating || 0,
+              type: animeSummary?.type || 'TV',
+              genres: animeSummary?.genres || [],
+            },
+          };
+          return [optimisticItem, ...old.filter((item: any) => (item.anime_id || item?.anime?.id) !== animeId)];
         } else {
-          return old.filter((item: any) => item?.anime?.id !== animeId);
+          return old.filter((item: any) => (item.anime_id || item?.anime?.id) !== animeId);
         }
       });
 

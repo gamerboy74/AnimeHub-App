@@ -59,8 +59,8 @@ interface Props {
 function buildCheckoutHtml(props: Props): string {
   const { orderId, amount, currency, keyId, userName, userEmail, description } = props;
 
-  const safe = (s: string) =>
-    (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const safeJson = (val: any) =>
+    JSON.stringify(val ?? '').replace(/<\/script/gi, '<\\/script');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -120,15 +120,15 @@ function buildCheckoutHtml(props: Props): string {
 
     window.addEventListener('load', function() {
       var options = {
-        key:         "${safe(keyId)}",
-        amount:      ${amount},
-        currency:    "${safe(currency)}",
+        key:         ${safeJson(keyId)},
+        amount:      ${Number(amount) || 0},
+        currency:    ${safeJson(currency || 'INR')},
         name:        "AnimeHub",
-        description: "${safe(description)}",
-        order_id:    "${safe(orderId)}",
+        description: ${safeJson(description)},
+        order_id:    ${safeJson(orderId)},
         prefill: {
-          name:  "${safe(userName)}",
-          email: "${safe(userEmail)}"
+          name:  ${safeJson(userName)},
+          email: ${safeJson(userEmail)}
         },
         theme: {
           color: "#FF2B3C",

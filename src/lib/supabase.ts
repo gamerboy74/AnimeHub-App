@@ -472,8 +472,26 @@ export const userAPI = {
   getUserBadges: (userId: string) =>
     supabase.from('user_badges').select('badge_code').eq('user_id', userId),
 
-  getNotifications: (userId: string) =>
-    supabase.from('notifications').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+  getNotifications: (userId: string, limit?: number, offset?: number) => {
+    let query = supabase
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (typeof limit === 'number') {
+      const start = offset ?? 0;
+      query = query.range(start, start + limit - 1);
+    }
+    return query;
+  },
+
+  getUnreadNotificationCount: (userId: string) =>
+    supabase
+      .from('notifications')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('read', false),
 
   markNotificationRead: (id: string) =>
     supabase.from('notifications').update({ read: true }).eq('id', id),

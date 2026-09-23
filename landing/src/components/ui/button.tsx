@@ -3,7 +3,7 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center whitespace-nowrap rounded-xl text-sm font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98]',
+  'inline-flex items-center justify-center rounded-xl text-sm font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98]',
   {
     variants: {
       variant: {
@@ -21,10 +21,10 @@ const buttonVariants = cva(
           'bg-gradient-to-r from-[#FF2B3C] via-[#9D4EDD] to-[#00F0FF] text-white p-[1px] rounded-xl hover:shadow-[0_0_30px_rgba(255,43,60,0.4)]',
       },
       size: {
-        default: 'h-11 px-5 py-2',
-        sm: 'h-9 rounded-lg px-3.5 text-xs',
-        lg: 'h-14 rounded-2xl px-8 text-base tracking-wide',
-        icon: 'size-11 rounded-xl',
+        default: 'h-11 px-4 sm:px-5 py-2',
+        sm: 'h-9 rounded-lg px-3 text-xs',
+        lg: 'h-auto min-h-[50px] sm:min-h-[56px] rounded-2xl px-5 sm:px-8 text-sm sm:text-base tracking-wide py-3 sm:py-3.5',
+        icon: 'size-10 sm:size-11 rounded-xl',
       },
     },
     defaultVariants: {

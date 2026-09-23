@@ -8,15 +8,14 @@ import { BlurView } from 'expo-blur';
 import { COLORS, SPACING, RADIUS } from '../../constants/theme';
 import { useAuth } from '../../context/AuthContext';
 import { userAPI } from '../../lib/supabase';
-import SideDrawer from './SideDrawer';
+import { useUIStore } from '../../store/uiStore';
 import { useQuery } from '@tanstack/react-query';
 
 export default function UniversalHeader({ title }: { title?: string }) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useAuth();
-
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const setDrawerOpen = useUIStore((s) => s.setDrawerOpen);
 
   // useQuery with refetchInterval replaces the manual setInterval pattern.
   // Benefits: deduplication across mounts, auto-refetch on app-focus,
@@ -27,8 +26,8 @@ export default function UniversalHeader({ title }: { title?: string }) {
     staleTime: 30_000,
     refetchInterval: 60_000,
     queryFn: async () => {
-      const { data } = await userAPI.getNotifications(user!.id);
-      return (data ?? []).filter((n: any) => !n.read).length;
+      const { count } = await userAPI.getUnreadNotificationCount(user!.id);
+      return count ?? 0;
     },
   });
 
@@ -126,9 +125,6 @@ export default function UniversalHeader({ title }: { title?: string }) {
         </View>
         <View style={styles.bottomBorder} />
       </BlurView>
-
-      {/* Slide-out drawer — renders above everything */}
-      <SideDrawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
     </>
   );
 }

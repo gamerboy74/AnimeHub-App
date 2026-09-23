@@ -10,7 +10,6 @@ interface AnimeShowcaseProps {
 
 export function AnimeShowcase({ onOpenDownload }: AnimeShowcaseProps) {
   const [animeList, setAnimeList] = useState<DBAnime[]>(FALLBACK_NEWEST_ANIME)
-  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let isMounted = true
@@ -23,9 +22,6 @@ export function AnimeShowcase({ onOpenDownload }: AnimeShowcaseProps) {
       .catch((err) => {
         console.warn('[Showcase] Fetch error:', err)
       })
-      .finally(() => {
-        if (isMounted) setLoading(false)
-      })
 
     return () => {
       isMounted = false
@@ -33,12 +29,12 @@ export function AnimeShowcase({ onOpenDownload }: AnimeShowcaseProps) {
   }, [])
 
   return (
-    <section id="showcase" className="py-24 relative overflow-hidden bg-[#0A0D13]">
+    <section id="showcase" className="py-10 sm:py-16 lg:py-20 relative overflow-hidden bg-[#0A0D13]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
-        <div className="flex flex-col md:flex-row md:items-end justify-between mb-12 gap-6">
+        <div className="flex flex-col md:flex-row md:items-end justify-between mb-6 sm:mb-12 gap-4 sm:gap-6">
           <div>
-            <div className="flex items-center gap-2 mb-3">
-              <Badge variant="neon" className="text-xs">
+            <div className="flex items-center gap-2 mb-2 sm:mb-3">
+              <Badge variant="neon" className="text-[11px] sm:text-xs">
                 Real-Time Database Sync
               </Badge>
               <span className="text-xs font-mono text-emerald-400 flex items-center gap-1">
@@ -46,11 +42,11 @@ export function AnimeShowcase({ onOpenDownload }: AnimeShowcaseProps) {
                 Live Catalog
               </span>
             </div>
-            <h2 className="font-display text-3xl sm:text-5xl font-black text-white tracking-tight">
+            <h2 className="font-display text-2xl xs:text-3xl sm:text-5xl font-black text-white tracking-tight leading-tight">
               Fresh Releases{' '}
               <span className="text-gradient-crimson">Newly Added to AnimeHub</span>
             </h2>
-            <p className="text-sm sm:text-base text-slate-400 mt-2 max-w-xl">
+            <p className="text-xs sm:text-base text-slate-400 mt-1.5 sm:mt-2 max-w-xl leading-relaxed">
               Synced directly with our production database. Stream latest episodes and completed sagas in 1080p at the highest quality possible.
             </p>
           </div>
@@ -58,22 +54,31 @@ export function AnimeShowcase({ onOpenDownload }: AnimeShowcaseProps) {
           <Button
             variant="outline"
             onClick={onOpenDownload}
-            className="self-start md:self-auto gap-2 border-[#FF2B3C]/30 text-[#FF6B7A] hover:bg-[#FF2B3C]/10"
+            className="w-full sm:w-auto justify-center gap-2 border-[#FF2B3C]/30 text-[#FF6B7A] hover:bg-[#FF2B3C]/10 h-auto min-h-[44px] py-2.5 px-4 text-xs sm:text-sm shrink-0"
           >
             <span>Explore Entire Catalog on App</span>
             <Flame className="size-4 text-[#FF2B3C]" />
           </Button>
         </div>
 
-        {/* Anime Cards Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        {/* Mobile Horizontal Swipe Cue */}
+        <div className="flex sm:hidden items-center justify-between text-[11px] text-slate-400 mb-3 px-0.5">
+          <span className="flex items-center gap-1.5 font-medium text-slate-300">
+            <Sparkles className="size-3.5 text-[#FF2B3C]" />
+            Swipe horizontally to browse releases
+          </span>
+          <span className="font-mono text-[10px] text-slate-500">6 titles &rarr;</span>
+        </div>
+
+        {/* Anime Cards: Mobile Swipe Carousel | Desktop Grid */}
+        <div className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 -mx-4 px-4 sm:mx-0 sm:px-0 scrollbar-none sm:grid sm:grid-cols-2 lg:grid-cols-3 sm:gap-6 sm:overflow-visible sm:pb-0">
           {animeList.map((anime) => (
             <div
               key={anime.id}
-              className="group relative rounded-3xl overflow-hidden bg-[#10121A] border border-white/10 hover:border-[#FF2B3C]/50 transition-all duration-300 hover:shadow-2xl hover:shadow-[#FF2B3C]/20 flex flex-col justify-between"
+              className="w-[76vw] max-w-[270px] shrink-0 snap-start sm:w-auto sm:max-w-none group relative rounded-3xl overflow-hidden bg-[#10121A] border border-white/10 hover:border-[#FF2B3C]/50 transition-all duration-300 hover:shadow-2xl hover:shadow-[#FF2B3C]/20 flex flex-col justify-between"
             >
               {/* Poster Container */}
-              <div className="relative h-72 overflow-hidden bg-[#161924]">
+              <div className="relative h-56 sm:h-72 overflow-hidden bg-[#161924]">
                 <img
                   src={anime.poster_url}
                   alt={anime.title}

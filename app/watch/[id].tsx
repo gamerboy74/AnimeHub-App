@@ -41,6 +41,7 @@ import { buildCombinedJS } from "../../src/lib/injectedJS";
 import { buildRawPlayerHTML } from "../../src/lib/htmlPlayer";
 import { Episode } from "../../src/types/database";
 import { styles } from "../../src/screens/watch.styles";
+import { usePlayerStore } from "../../src/store/playerStore";
 
 // Extracted Player Components
 import EpisodeSelectorSheet from "../../src/components/player/EpisodeSelectorSheet";
@@ -100,8 +101,28 @@ export default function WatchScreen() {
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
 
-  // UI state
-  const [showSelector, setShowSelector] = useState(false);
+  // UI state driven by player store & local refs
+  const showSelector = usePlayerStore((s) => s.showSelector);
+  const setShowSelector = usePlayerStore((s) => s.setShowSelector);
+  const showServerPicker = usePlayerStore((s) => s.showServerPicker);
+  const setShowServerPicker = usePlayerStore((s) => s.setShowServerPicker);
+  const showQualityPicker = usePlayerStore((s) => s.showQualityPicker);
+  const setShowQualityPicker = usePlayerStore((s) => s.setShowQualityPicker);
+  const showSubtitlePicker = usePlayerStore((s) => s.showSubtitlePicker);
+  const setShowSubtitlePicker = usePlayerStore((s) => s.setShowSubtitlePicker);
+  const showSettingsPicker = usePlayerStore((s) => s.showSettingsPicker);
+  const setShowSettingsPicker = usePlayerStore((s) => s.setShowSettingsPicker);
+  const qualityLevels = usePlayerStore((s) => s.qualityLevels);
+  const setQualityLevels = usePlayerStore((s) => s.setQualityLevels);
+  const subtitleTracks = usePlayerStore((s) => s.subtitleTracks);
+  const setSubtitleTracks = usePlayerStore((s) => s.setSubtitleTracks);
+  const activeQualityIndex = usePlayerStore((s) => s.activeQualityIndex);
+  const setActiveQualityIndex = usePlayerStore((s) => s.setActiveQualityIndex);
+  const activeSubtitleIndex = usePlayerStore((s) => s.activeSubtitleIndex);
+  const setActiveSubtitleIndex = usePlayerStore((s) => s.setActiveSubtitleIndex);
+  const autoPlayCountdown = usePlayerStore((s) => s.autoPlayCountdown);
+  const setAutoPlayCountdown = usePlayerStore((s) => s.setAutoPlayCountdown);
+
   const [showNextUp, setShowNextUp] = useState(false);
   const [resumeToast, setResumeToast] = useState(false);
   const [skipToast, setSkipToast] = useState(false);
@@ -121,17 +142,6 @@ export default function WatchScreen() {
       return next;
     });
   }, []);
-  const [autoPlayCountdown, setAutoPlayCountdown] = useState<number | null>(null);
-  const [showServerPicker, setShowServerPicker] = useState(false);
-
-  // Quality / subtitle picker state (for embedded players)
-  const [qualityLevels, setQualityLevels] = useState<{ label: string; height?: number; originalIndex?: number; isLocked?: boolean }[]>([]);
-  const [subtitleTracks, setSubtitleTracks] = useState<{ id: number; label: string }[]>([]);
-  const [activeQualityIndex, setActiveQualityIndex] = useState<number>(-1);
-  const [activeSubtitleIndex, setActiveSubtitleIndex] = useState<number>(0);
-  const [showQualityPicker, setShowQualityPicker] = useState(false);
-  const [showSubtitlePicker, setShowSubtitlePicker] = useState(false);
-  const [showSettingsPicker, setShowSettingsPicker] = useState(false);
 
   // ── Download state ────────────────────────────────────────────────────────
   const [sniffedMediaUrl, setSniffedMediaUrl] = useState<string | null>(null);
@@ -168,6 +178,7 @@ export default function WatchScreen() {
 
   // HUD visibility — driven by WebView click events (injected JS fires player_tap)
   const [showHud, setShowHud] = useState(false);
+  const showHudRef = useRef(false);
   const HUD_AUTO_HIDE_MS = 4000;
 
   // Smooth HUD fade animation (replaces jarring boolean snap)
@@ -191,31 +202,39 @@ export default function WatchScreen() {
 
   const toggleHud = useCallback(() => {
     setShowHud((prev) => {
-      if (prev) {
+      const next = !prev;
+      showHudRef.current = next;
+      if (next) {
+        // Sync playerState to UI state immediately when HUD is revealed
+        setPlayerState(playerStateRef.current);
+        if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
+        animateHudIn();
+        hudTimerRef.current = setTimeout(() => {
+          showHudRef.current = false;
+          unstable_batchedUpdates(() => {
+            setShowHud(false);
+            setShowQualityPicker(false);
+            setShowSubtitlePicker(false);
+            setShowSettingsPicker(false);
+          });
+          animateHudOut();
+        }, HUD_AUTO_HIDE_MS);
+      } else {
         if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
         animateHudOut();
-        return false;
       }
-      if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
-      animateHudIn();
-      hudTimerRef.current = setTimeout(() => {
-        unstable_batchedUpdates(() => {
-          setShowHud(false);
-          setShowQualityPicker(false);
-          setShowSubtitlePicker(false);
-          setShowSettingsPicker(false);
-        });
-        animateHudOut();
-      }, HUD_AUTO_HIDE_MS);
-      return true;
+      return next;
     });
-  }, [animateHudIn, animateHudOut]);
+  }, [animateHudIn, animateHudOut, setPlayerState]);
 
   const resetHudTimer = useCallback(() => {
+    showHudRef.current = true;
     setShowHud(true);
+    setPlayerState(playerStateRef.current);
     animateHudIn();
     if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
     hudTimerRef.current = setTimeout(() => {
+      showHudRef.current = false;
       unstable_batchedUpdates(() => {
         setShowHud(false);
         setShowQualityPicker(false);
@@ -492,6 +511,7 @@ export default function WatchScreen() {
         queryClient.invalidateQueries({ queryKey: ['user', uid, 'history'] });
         queryClient.invalidateQueries({ queryKey: ['user', uid, 'anime-progress'] });
       }
+      usePlayerStore.getState().resetPlayer();
     };
   }, [queryClient]);
 
@@ -879,10 +899,20 @@ export default function WatchScreen() {
           const isUserSeeking = Date.now() - lastSeekTimeRef.current < 1000;
           if (!isUserSeeking) {
             seekTargetRef.current = null;
-            setPlayerState({ isPlaying: playing, current, duration });
+            const wasPlaying = playerStateRef.current.isPlaying;
+            playerStateRef.current = { isPlaying: playing, current, duration };
+
+            // Only trigger a React re-render of WatchScreen if HUD is visible or playing state flipped
+            if (showHudRef.current || wasPlaying !== playing) {
+              setPlayerState({ isPlaying: playing, current, duration });
+            }
             handleProgress(current, duration);
           } else {
-            setPlayerState((prev) => ({ ...prev, isPlaying: playing, duration }));
+            playerStateRef.current.isPlaying = playing;
+            playerStateRef.current.duration = duration;
+            if (showHudRef.current) {
+              setPlayerState((prev) => ({ ...prev, isPlaying: playing, duration }));
+            }
           }
 
           if (duration > 0 && nextEpisode) {
@@ -1123,10 +1153,12 @@ export default function WatchScreen() {
     currentHostRef.current = "";
 
     setShowHud(false);
+    usePlayerStore.getState().resetPlayer();
     startSpinnerTimeout();
 
     return () => {
       if (spinnerTimeoutRef.current) clearTimeout(spinnerTimeoutRef.current);
+      usePlayerStore.getState().resetPlayer();
     };
   }, [id, cancelAutoPlay, startSpinnerTimeout]);
 

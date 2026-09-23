@@ -11,7 +11,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS } from '../../src/constants/theme';
 import { AnimeWithStats, userAPI } from '../../src/lib/supabase';
-import { useAuth } from '../../src/context/AuthContext';
+import { useUserId } from '../../src/context/AuthContext';
 import { useTrendingAnime, useTopRatedAnime, useRecentAnime, useGenreAnime, fetchGenreAnime } from '../../src/hooks/useQueries';
 import { usePrefetch } from '../../src/hooks/usePrefetch';
 import HeroCarousel from '../../src/components/ui/HeroCarousel';
@@ -31,12 +31,12 @@ const POPULAR_GENRES = [
 ];
 
 // ── HERO CAROUSEL INTERVAL (ms) ───────────────────────────────────────────────
-const HERO_SLIDE_COUNT = 5;
+const HERO_SLIDE_COUNT = 10;
 
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const userId = useUserId();
   const queryClient = useQueryClient();
   const { prefetchAnimeList } = usePrefetch();
   const [refreshing, setRefreshing] = useState(false);
@@ -49,34 +49,41 @@ export default function HomeScreen() {
 
   // ── User Watch History (Continue Watching) ─────────────────────────────────────────
   const { data: progressData = [] } = useQuery<any[]>({
-    queryKey: ['user', user?.id, 'history'],
-    enabled: !!user?.id,
+    queryKey: ['user', userId, 'history'],
+    enabled: !!userId,
     staleTime: 30 * 1000,
     gcTime: 5 * 60 * 1000,
     queryFn: async () => {
-      if (!user?.id) return [];
-      const { data, error } = await userAPI.getProgress(user.id);
+      if (!userId) return [];
+      const { data, error } = await userAPI.getProgress(userId);
       if (error) throw error;
       return data ?? [];
     },
   });
 
   const continueWatching = useMemo(() => {
-    if (!user?.id || !progressData.length) return [];
-    const unique = progressData.filter((p: any, index: number, self: any[]) =>
-      index === self.findIndex((t: any) => t.anime_id === p.anime_id)
-    );
-    return unique
-      .filter((p: any) => {
-        const isCompleted = p.is_completed && p.total_episodes && p.episode_number === p.total_episodes;
-        if (isCompleted) return false;
-        if (!p.last_watched) return false;
-        const lastWatchedDate = new Date(p.last_watched).getTime();
-        const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
-        return lastWatchedDate >= fourteenDaysAgo;
-      })
-      .slice(0, 10);
-  }, [user?.id, progressData]);
+    if (!userId || !progressData.length) return [];
+    const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    const seenAnime = new Set<string>();
+    const result: any[] = [];
+
+    for (const p of progressData) {
+      if (!p?.anime_id || seenAnime.has(p.anime_id)) continue;
+      seenAnime.add(p.anime_id);
+
+      const isCompleted = p.is_completed && p.total_episodes && p.episode_number === p.total_episodes;
+      if (isCompleted) continue;
+      if (!p.last_watched) continue;
+
+      const lastWatchedDate = new Date(p.last_watched).getTime();
+      if (lastWatchedDate < fourteenDaysAgo) continue;
+
+      result.push(p);
+      if (result.length >= 10) break;
+    }
+
+    return result;
+  }, [userId, progressData]);
 
   // ── Hero carousel — top N trending anime that have a banner or poster ──────────────
   const heroSlides = useMemo(
@@ -84,11 +91,11 @@ export default function HomeScreen() {
     [trending],
   );
 
-  // Silently warm the cache for the top 5 visible cards while the user
+  // Silently warm the cache for the top 10 visible cards while the user
   // looks at the hero section — navigation feels instant afterward
   useEffect(() => {
     if (trending.length > 0) {
-      prefetchAnimeList(trending.map(a => a.id), 5);
+      prefetchAnimeList(trending.map(a => a.id), 10);
     }
   }, [trending, prefetchAnimeList]);
 
@@ -99,10 +106,10 @@ export default function HomeScreen() {
       queryClient.invalidateQueries({ queryKey: ['anime', 'top-rated'] }),
       queryClient.invalidateQueries({ queryKey: ['anime', 'new-arrivals'] }),
       queryClient.invalidateQueries({ queryKey: ['anime', 'genre-popular'] }),
-      user?.id ? queryClient.invalidateQueries({ queryKey: ['user', user.id, 'history'] }) : Promise.resolve(),
+      userId ? queryClient.invalidateQueries({ queryKey: ['user', userId, 'history'] }) : Promise.resolve(),
     ]);
     setRefreshing(false);
-  }, [queryClient, user?.id]);
+  }, [queryClient, userId]);
 
   // Only block full render on trending (needed for hero section).
   // Top-rated and recent render progressively via AnimeRow (shows skeleton if loading).

@@ -1,17 +1,18 @@
 /**
  * app/auth/callback.tsx
  *
- * Handles the OAuth deep-link redirect on Android when expo-web-browser
- * forwards the callback URL through Expo Router instead of returning it
- * directly to openAuthSessionAsync.
+ * Handles the OAuth deep-link redirect on Android and iOS when the app
+ * is opened via the custom scheme deep link:
  *
  * URL pattern: animehubmobile://auth/callback?code=<pkce_code>
  */
 import { useEffect, useState, useRef } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Linking from 'expo-linking';
+import * as WebBrowser from 'expo-web-browser';
 import { supabase } from '../../src/lib/supabase';
+import { extractOAuthParams } from '../../src/lib/authUtils';
 import { COLORS, SPACING } from '../../src/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -21,90 +22,118 @@ export default function AuthCallback() {
   const [status, setStatus] = useState<'loading' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState('');
   const incomingUrl = Linking.useURL();
-  // Guard: only handle the callback once even if incomingUrl fires multiple times
   const hasHandled = useRef(false);
 
   useEffect(() => {
     if (hasHandled.current) return;
-    // Wait until code or error is actually available in params/URL
-    if (!params.code && !params.error) return;
+
+    // Check if user is ALREADY signed in
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        hasHandled.current = true;
+        if (Platform.OS === 'android') WebBrowser.dismissBrowser();
+        router.replace('/(tabs)');
+      }
+    });
+
+    // Extract params from incoming URL or Expo Router search params
+    const candidateUrl = incomingUrl || (params.code ? `animehubmobile://auth/callback?code=${params.code}&state=${params.state || ''}` : '');
+    const authParams = extractOAuthParams(candidateUrl);
+
+    const code = authParams.code || params.code;
+    const error = authParams.error || params.error;
+    const errorDesc = authParams.errorDescription || params.error_description;
+
+    if (!code && !error && !authParams.accessToken) {
+      return;
+    }
+
     hasHandled.current = true;
 
     async function handleCallback() {
-      // If Supabase sent back an error (e.g. user denied access)
-      if (params.error) {
-        setErrorMsg(params.error_description ?? params.error);
-        setStatus('error');
-        setTimeout(() => router.replace('/auth/login'), 3000);
-        return;
+      if (Platform.OS === 'android') {
+        WebBrowser.dismissBrowser();
       }
 
-      const code = params.code;
-      if (!code) {
-        router.replace('/auth/login');
+      if (error) {
+        setErrorMsg(errorDesc || error);
+        setStatus('error');
+        setTimeout(() => router.replace('/auth/login'), 2500);
         return;
       }
 
       try {
-        // Add a minor delay to allow any parallel/competing signInWithGoogle flow to complete and save its session
-        await new Promise((resolve) => setTimeout(resolve, 350));
-
-        // Prevent double exchange if session is already active (avoids code-reuse errors)
-        const { data: { session: currentSession } } = await supabase.auth.getSession();
-        if (currentSession) {
-          console.log('[AuthCallback] Session already active, redirecting to home.');
+        // Double-check active session before exchanging (prevents verifier race)
+        const { data: { session: existingSession } } = await supabase.auth.getSession();
+        if (existingSession) {
           router.replace('/(tabs)');
           return;
         }
 
-        // Reconstruct the deep link URL with 'code' and 'state' so the Supabase client can match the PKCE verifier
-        let exchangeUrl = incomingUrl;
-        if (!exchangeUrl || !exchangeUrl.includes('code=')) {
-          exchangeUrl = `animehubmobile://auth/callback?code=${code}`;
-          if (params.state) {
-            exchangeUrl += `&state=${params.state}`;
-          }
+        // Implicit token flow (#access_token=)
+        if (authParams.type === 'hash' && authParams.accessToken && authParams.refreshToken) {
+          const { error: setErr } = await supabase.auth.setSession({
+            access_token: authParams.accessToken,
+            refresh_token: authParams.refreshToken,
+          });
+          if (setErr) throw setErr;
+          router.replace('/(tabs)');
+          return;
         }
 
-        console.log('[AuthCallback] Exchanging PKCE code using URL:', exchangeUrl);
-        const { error } = await supabase.auth.exchangeCodeForSession(exchangeUrl);
-        if (error) {
-          // If the error is about the verifier being empty, it almost certainly means
-          // AuthContext.tsx's openAuthSessionAsync already consumed the code successfully!
-          if (
-            error.message.includes('verifier should be non empty') ||
-            error.message.includes('code verifier should be non-empty') ||
-            error.message.includes('both auth code') ||
-            error.message.includes('verifier')
-          ) {
-            console.log('[AuthCallback] Code already exchanged by AuthContext, ignoring error.');
-            router.replace('/(tabs)');
-            return;
-          }
+        // PKCE code exchange (?code=)
+        if (code) {
+          console.log('[AuthCallback] Exchanging PKCE code for session...');
+          // Pass the pure authorization code, NOT the full URL
+          const { error: exchangeErr } = await supabase.auth.exchangeCodeForSession(code);
 
-          // Double check if a session was actually created anyway
-          const { data: { session: activeSession } } = await supabase.auth.getSession();
-          if (activeSession) {
-            console.log('[AuthCallback] Exchange failed but active session found. Redirecting to home.');
-            router.replace('/(tabs)');
-          } else {
-            setErrorMsg(error.message);
+          if (exchangeErr) {
+            console.log('[AuthCallback] Exchange note:', exchangeErr.message);
+            // If code was already exchanged by AuthContext or verifier was removed:
+            const { data: { session: activeSession } } = await supabase.auth.getSession();
+            if (activeSession || exchangeErr.message.includes('verifier') || exchangeErr.message.includes('both auth code')) {
+              router.replace('/(tabs)');
+              return;
+            }
+
+            setErrorMsg(exchangeErr.message);
             setStatus('error');
             setTimeout(() => router.replace('/auth/login'), 3000);
+            return;
           }
-        } else {
-          // onAuthStateChange in AuthContext will pick up the new session
-          router.replace('/(tabs)');
         }
+
+        // Successfully exchanged
+        router.replace('/(tabs)');
       } catch (e: any) {
-        setErrorMsg(e.message ?? 'Unexpected error during sign-in');
-        setStatus('error');
-        setTimeout(() => router.replace('/auth/login'), 3000);
+        const { data: { session: fallbackSession } } = await supabase.auth.getSession();
+        if (fallbackSession) {
+          router.replace('/(tabs)');
+        } else {
+          setErrorMsg(e.message ?? 'Unexpected error during sign-in');
+          setStatus('error');
+          setTimeout(() => router.replace('/auth/login'), 3000);
+        }
       }
     }
 
     handleCallback();
-  }, [incomingUrl, params.code, params.state, params.error, params.error_description]);
+  }, [incomingUrl, params.code, params.state, params.error, params.error_description, router]);
+
+  // Safety net: never spin longer than 4.5 seconds
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        router.replace('/(tabs)');
+      } else if (status === 'loading') {
+        setStatus('error');
+        setErrorMsg('Sign-in timed out. Please try again.');
+        setTimeout(() => router.replace('/auth/login'), 2000);
+      }
+    }, 4500);
+    return () => clearTimeout(timer);
+  }, [status, router]);
 
   return (
     <View style={styles.container}>

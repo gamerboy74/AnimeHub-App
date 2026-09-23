@@ -14,7 +14,7 @@ import { haptic } from '../../src/lib/haptics';
 export default function LoginScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { signIn, signInWithGoogle, resetPassword } = useAuth();
+  const { signIn, signInWithGoogle, resetPassword, session } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -23,6 +23,14 @@ export default function LoginScreen() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [passwordNotSet, setPasswordNotSet] = useState(false);
+
+  // Automatically navigate away as soon as an active session is detected
+  useEffect(() => {
+    if (session) {
+      setGoogleLoading(false);
+      router.replace('/(tabs)');
+    }
+  }, [session, router]);
 
   useEffect(() => {
     setError(null);
@@ -90,6 +98,12 @@ export default function LoginScreen() {
     setError(null);
     try {
       const { error: googleError } = await signInWithGoogle();
+      const { data: { session: activeSession } } = await supabase.auth.getSession();
+      if (activeSession) {
+        setGoogleLoading(false);
+        router.replace('/(tabs)');
+        return;
+      }
       if (googleError) {
         // User just cancelled — don't show an error banner
         if (googleError.message !== 'Google sign-in was cancelled') {

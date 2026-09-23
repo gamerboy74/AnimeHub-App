@@ -38,27 +38,56 @@ async function sendPush(db: SupabaseClient, userId: string, title: string, body:
       .select('token')
       .eq('user_id', userId);
 
-    if (tokens && tokens.length > 0) {
-      const messages = tokens.map((t: { token: string }) => ({
-        to: t.token,
-        sound: 'default',
-        title,
-        body,
-        data: { url: '/manage-plan' },
-      }));
-      await fetch('https://exp.host/--/api/v2/push/send', {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(messages),
-      });
+    if (!tokens || tokens.length === 0) return;
+
+    // Build messages — channelId is REQUIRED for Android 8+ banners
+    const messages = tokens.map((t: { token: string }) => ({
+      to: t.token,
+      sound: 'default',
+      title,
+      body,
+      channelId: 'default',                   // ← REQUIRED for Android 8+ banners
+      data: { action_url: '/manage-plan' },    // ← must be action_url (matches usePushNotifications tap handler)
+    }));
+
+    const res = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip, deflate',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(messages),
+    });
+
+    if (!res.ok) {
+      console.warn('[Push] Expo push API returned non-OK:', res.status);
+      return;
+    }
+
+    // Prune stale/invalid tokens to keep the table clean
+    const result = await res.json();
+    const tickets: Array<{ status: string; details?: { error?: string } }> = result?.data ?? [];
+    const staleTokens: string[] = [];
+    tickets.forEach((ticket, i) => {
+      if (
+        ticket.status === 'error' &&
+        ticket.details?.error === 'DeviceNotRegistered'
+      ) {
+        staleTokens.push(tokens[i].token);
+      }
+    });
+    if (staleTokens.length > 0) {
+      await db
+        .from('user_push_tokens')
+        .delete()
+        .in('token', staleTokens);
     }
   } catch (err) {
     console.warn('[Webhook] Push notification error:', err);
   }
 }
+
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -167,6 +196,24 @@ serve(async (req) => {
 
       if (prefErr) {
         console.error(`[Webhook] Failed writing subscription_meta:`, prefErr.message);
+      }
+
+      // 2b. Record transaction in user_payments for billing history
+      if (paymentId) {
+        const amountPaise = paymentEntity?.amount || (billingCycle === 'yearly' ? 79900 : 9900);
+        const currency = paymentEntity?.currency || 'INR';
+        await db.from('user_payments').upsert({
+          user_id:             userId,
+          razorpay_order_id:   orderId ?? null,
+          razorpay_payment_id: paymentId,
+          plan_name:           billingCycle === 'yearly' ? 'Yearly' : 'Monthly',
+          billing_cycle:       billingCycle,
+          amount_paise:        amountPaise,
+          currency:            currency,
+          status:              'captured',
+          period_start:        now,
+          period_end:          renewal,
+        }, { onConflict: 'razorpay_payment_id', ignoreDuplicates: true });
       }
 
       // 3. Send in-app notification

@@ -76,61 +76,70 @@ export function FeaturesSection() {
   ]
 
   return (
-    <section id="features" className="py-24 relative overflow-hidden bg-[#08090D]">
+    <section id="features" className="py-10 sm:py-16 lg:py-20 relative overflow-hidden bg-[#08090D]">
       {/* Background Ambience */}
       <div className="absolute top-1/2 left-0 w-80 h-80 bg-[#FF2B3C]/5 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 right-0 w-96 h-96 bg-[#38BDF8]/5 rounded-full blur-3xl pointer-events-none" />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
         {/* Section Header */}
-        <div className="text-center max-w-3xl mx-auto space-y-4 mb-16">
+        <div className="text-center max-w-3xl mx-auto space-y-2.5 sm:space-y-4 mb-6 sm:mb-12">
           <Badge variant="default" className="text-xs">
             Engineered Beyond Ordinary
           </Badge>
-          <h2 className="font-display text-3xl sm:text-5xl font-black text-white tracking-tight">
+          <h2 className="font-display text-2xl xs:text-3xl sm:text-5xl font-black text-white tracking-tight leading-tight">
             Built from Scratch for the{' '}
             <span className="text-gradient-crimson">Ultimate Anime Experience</span>
           </h2>
-          <p className="text-base text-slate-400 leading-relaxed">
+          <p className="text-xs sm:text-base text-slate-400 leading-relaxed">
             Most streaming apps are clunky web views wrapped in bloatware. AnimeHub is crafted as a high-performance native Android application delivering streams in the highest quality possible.
           </p>
         </div>
 
-        {/* Feature Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
+        {/* Mobile Horizontal Swipe Indicator */}
+        <div className="flex md:hidden items-center justify-between text-[11px] text-slate-400 mb-3 px-0.5">
+          <span className="flex items-center gap-1.5 font-medium text-slate-300">
+            <Sparkles className="size-3.5 text-[#FF2B3C]" />
+            Swipe horizontally for features
+          </span>
+          <span className="font-mono text-[10px] text-slate-500">6 features &rarr;</span>
+        </div>
+
+        {/* Feature Grid: Mobile Horizontal Carousel | Desktop 3-Col Grid */}
+        <div className="flex overflow-x-auto snap-x snap-mandatory gap-4 pb-4 -mx-4 px-4 sm:mx-0 sm:px-0 scrollbar-none md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-6 lg:gap-8 md:overflow-visible md:pb-0">
           {features.map((feature, idx) => {
             const Icon = feature.icon
             return (
               <Card
                 key={idx}
-                className="group relative overflow-hidden bg-[#10121A]/80 border border-white/10 hover:border-[#FF2B3C]/40 transition-all duration-300 hover:shadow-2xl hover:shadow-[#FF2B3C]/10 flex flex-col justify-between"
+                className="w-[80vw] max-w-[310px] shrink-0 snap-center md:w-auto group relative overflow-hidden bg-[#10121A]/80 border border-white/10 hover:border-[#FF2B3C]/40 transition-all duration-300 hover:shadow-2xl hover:shadow-[#FF2B3C]/10 flex flex-col justify-between"
               >
                 {/* Neon Accent Stripe on Top */}
                 <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-[#FF2B3C]/0 to-transparent group-hover:via-[#FF2B3C] transition-all duration-500" />
 
-                <CardHeader>
+                <CardHeader className="p-5 sm:p-6">
                   <div className="flex items-center justify-between mb-3">
                     <div
-                      className={`size-12 rounded-2xl flex items-center justify-center border ${feature.iconBg} ${feature.iconColor} group-hover:scale-110 transition-transform duration-300`}
+                      className={`size-11 sm:size-12 rounded-2xl flex items-center justify-center border ${feature.iconBg} ${feature.iconColor} group-hover:scale-110 transition-transform duration-300 shrink-0`}
                     >
-                      <Icon className="size-6" />
+                      <Icon className="size-5 sm:size-6" />
                     </div>
-                    <span className="text-[11px] font-mono text-slate-400 bg-white/5 px-2.5 py-1 rounded-full border border-white/5">
+                    <span className="text-[10px] sm:text-[11px] font-mono text-slate-400 bg-white/5 px-2.5 py-1 rounded-full border border-white/5">
                       {feature.badge}
                     </span>
                   </div>
 
-                  <CardTitle className="group-hover:text-[#FF4252] transition-colors">
+                  <CardTitle className="group-hover:text-[#FF4252] transition-colors text-lg sm:text-xl">
                     {feature.title}
                   </CardTitle>
-                  <CardDescription className="text-sm">
+                  <CardDescription className="text-xs sm:text-sm leading-relaxed">
                     {feature.description}
                   </CardDescription>
                 </CardHeader>
 
-                <CardContent className="pt-2">
+                <CardContent className="px-5 sm:px-6 pb-5 sm:pb-6 pt-0">
                   <div className="flex items-center gap-2 text-xs font-semibold text-slate-300 pt-2 border-t border-white/5">
-                    <Sparkles className="size-3.5 text-[#FF2B3C]" />
+                    <Sparkles className="size-3.5 text-[#FF2B3C] shrink-0" />
                     <span>{feature.highlight}</span>
                   </div>
                 </CardContent>

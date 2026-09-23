@@ -1,7 +1,7 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback } from 'react';
 import {
   View, Text, FlatList, StyleSheet, TouchableOpacity,
-  RefreshControl, ActivityIndicator, Alert,
+  RefreshControl, ActivityIndicator, Alert, Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,17 +10,16 @@ import { useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { COLORS, SPACING, RADIUS } from '../src/constants/theme';
 import { userAPI } from '../src/lib/supabase';
-import { useAuth } from '../src/context/AuthContext';
+import { useUserId, useIsAuthenticated } from '../src/context/AuthContext';
 
 export default function WatchlistScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
-  const userId = user?.id;
+  const userId = useUserId();
+  const isAuthenticated = useIsAuthenticated();
   const queryClient = useQueryClient();
-  const [refreshing, setRefreshing] = useState(false);
 
-  const { data: watchlist = [], isLoading: loading } = useQuery({
+  const { data: watchlist = [], isLoading: loading, isRefetching } = useQuery({
     queryKey: ['user', userId, 'watchlist'],
     staleTime: 60 * 1000,
     gcTime: 5 * 60 * 1000,
@@ -36,9 +35,7 @@ export default function WatchlistScreen() {
   });
 
   const onRefresh = useCallback(async () => {
-    setRefreshing(true);
     await queryClient.invalidateQueries({ queryKey: ['user', userId, 'watchlist'] });
-    setRefreshing(false);
   }, [queryClient, userId]);
 
   // Optimistic remove — instant UI update, reverts on failure
@@ -74,7 +71,13 @@ export default function WatchlistScreen() {
 
   const ItemSeparator = useCallback(() => <View style={styles.separator} />, []);
 
-  if (!user) {
+  const getItemLayout = useCallback((_: any, index: number) => ({
+    length: 143,
+    offset: 143 * index,
+    index,
+  }), []);
+
+  if (!isAuthenticated) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <Ionicons name="bookmark-outline" size={48} color={COLORS.textMuted} />
@@ -114,9 +117,14 @@ export default function WatchlistScreen() {
           data={watchlist}
           keyExtractor={keyExtractor}
           contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.neon} />}
+          getItemLayout={getItemLayout}
+          refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={onRefresh} tintColor={COLORS.neon} />}
           renderItem={renderItem}
           ItemSeparatorComponent={ItemSeparator}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          removeClippedSubviews={Platform.OS === 'android'}
         />
       )}
     </View>
@@ -143,7 +151,9 @@ const WatchlistItemRow = React.memo(
           source={{ uri: anime.poster_url || '' }}
           style={styles.poster}
           contentFit="cover"
-          transition={200}
+          transition={150}
+          recyclingKey={anime.id}
+          cachePolicy="memory-disk"
         />
         <View style={styles.animeInfo}>
           <Text style={styles.animeTitle} numberOfLines={2}>{anime.title}</Text>

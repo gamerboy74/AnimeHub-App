@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, SPACING, RADIUS, TOUCH } from '../../src/constants/theme';
 import { useAuth } from '../../src/context/AuthContext';
-import { userAPI } from '../../src/lib/supabase';
+import { userAPI, supabase } from '../../src/lib/supabase';
 import { haptic } from '../../src/lib/haptics';
 
 type UsernameStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
@@ -16,7 +16,14 @@ type UsernameStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 export default function SignupScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { signUp, signInWithGoogle } = useAuth();
+  const { signUp, signInWithGoogle, session } = useAuth();
+
+  useEffect(() => {
+    if (session) {
+      setGoogleLoading(false);
+      router.replace('/(tabs)');
+    }
+  }, [session, router]);
   
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -112,6 +119,12 @@ export default function SignupScreen() {
     setError(null);
     try {
       const { error: googleError } = await signInWithGoogle();
+      const { data: { session: activeSession } } = await supabase.auth.getSession();
+      if (activeSession) {
+        setGoogleLoading(false);
+        router.replace('/(tabs)');
+        return;
+      }
       if (googleError) {
         if (googleError.message !== 'Google sign-in was cancelled') {
           setError(googleError.message);

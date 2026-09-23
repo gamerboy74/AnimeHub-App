@@ -5,12 +5,12 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { COLORS, SPACING, RADIUS, TOUCH } from '../../../src/constants/theme';
 import { Episode } from '../../../src/lib/supabase';
 import { useAuth } from '../../../src/context/AuthContext';
 import { useEpisodes, useAnimeWatchProgress } from '../../../src/hooks/useQueries';
-import { getAllDownloads } from '../../../src/hooks/useHlsDownloader';
+import { useDownloadStore } from '../../../src/store/downloadStore';
 import { haptic } from '../../../src/lib/haptics';
 
 // How many episodes per range chunk (e.g. 1-50, 51-100)
@@ -36,30 +36,19 @@ export default function EpisodesListScreen() {
   const listRef = useRef<FlatList<Episode>>(null);
 
   const [filter, setFilter] = useState<'all' | 'free' | 'premium'>('all');
-  const [downloadedIds, setDownloadedIds] = useState<Set<string>>(new Set());
   const [activeRangeIndex, setActiveRangeIndex] = useState(0);
+
+  // Centralized download state — updates automatically on global store changes
+  const downloads = useDownloadStore(s => s.downloads);
+  const loadDownloads = useDownloadStore(s => s.loadDownloads);
+  const downloadedIds = useMemo(() => new Set(downloads.map(d => d.episodeId)), [downloads]);
+
+  useEffect(() => {
+    loadDownloads();
+  }, [loadDownloads]);
 
   // Watch progress — fetched once for the whole anime, keyed by episodeId
   const { data: watchProgressMap = new Map() } = useAnimeWatchProgress(animeId);
-
-  const checkDownloads = useCallback(async () => {
-    try {
-      const list = await getAllDownloads();
-      setDownloadedIds(new Set(list.map(d => d.episodeId)));
-    } catch (e) {
-      console.error('[EpisodesList] checkDownloads error:', e);
-    }
-  }, []);
-
-  const navigation = useNavigation();
-
-  useEffect(() => {
-    checkDownloads();
-    const unsubscribe = navigation.addListener('focus', () => {
-      checkDownloads();
-    });
-    return unsubscribe;
-  }, [navigation, checkDownloads]);
 
   // Cached — navigating back and re-entering won't re-fetch within staleTime
   const { data: allEpisodes = [], isLoading: loading, isError } = useEpisodes(animeId);

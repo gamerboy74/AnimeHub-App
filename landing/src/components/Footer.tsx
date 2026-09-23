@@ -1,5 +1,5 @@
 import React from 'react'
-import { ArrowUp, ExternalLink } from 'lucide-react'
+import { ArrowUp } from 'lucide-react'
 import { APP_CONFIG } from '@/config/download'
 
 export function Footer() {
@@ -8,28 +8,28 @@ export function Footer() {
   }
 
   return (
-    <footer className="border-t border-white/10 bg-[#06070A] py-16 text-slate-400 text-xs sm:text-sm">
+    <footer className="border-t border-white/10 bg-[#06070A] py-8 sm:py-14 text-slate-400 text-xs sm:text-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-10 mb-12">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6 sm:gap-10 mb-8 sm:mb-12">
           {/* Brand Col with Real App Icon */}
-          <div className="md:col-span-2 space-y-4">
-            <div className="flex items-center gap-3">
+          <div className="sm:col-span-2 space-y-3.5 sm:space-y-4">
+            <div className="flex items-center gap-2.5 sm:gap-3">
               <img
                 src="/icon.png"
                 alt="AnimeHub Icon"
-                className="size-10 rounded-xl object-cover shadow-md shadow-[#FF2B3C]/30 border border-[#FF2B3C]/30"
+                className="size-9 sm:size-10 rounded-xl object-cover shadow-md shadow-[#FF2B3C]/30 border border-[#FF2B3C]/30 shrink-0"
               />
-              <span className="font-display text-xl font-black text-white tracking-tight">
+              <span className="font-display text-lg sm:text-xl font-black text-white tracking-tight">
                 Anime<span className="text-[#FF2B3C]">Hub</span>
               </span>
-              <span className="text-[11px] font-mono text-slate-400 bg-white/5 px-2 py-0.5 rounded-full border border-white/5">
+              <span className="text-[10px] sm:text-[11px] font-mono text-slate-400 bg-white/5 px-2 py-0.5 rounded-full border border-white/5">
                 {APP_CONFIG.version} Mobile
               </span>
             </div>
             <p className="text-xs text-slate-400 max-w-md leading-relaxed">
               The premier ad-free anime streaming experience on Android. Engineered with native Hermes bytecode, hardware-accelerated video decoding, and streams delivered at the highest quality possible.
             </p>
-            <div className="text-[11px] text-slate-500">
+            <div className="text-[11px] text-slate-500 leading-normal">
               Disclaimer: AnimeHub does not host media files on its servers. All streams are retrieved via third-party APIs.
             </div>
           </div>
@@ -40,6 +40,11 @@ export function Footer() {
               Navigation
             </h4>
             <ul className="space-y-2 text-xs">
+              <li>
+                <a href="#screens" className="hover:text-white transition-colors">
+                  App Views
+                </a>
+              </li>
               <li>
                 <a href="#features" className="hover:text-white transition-colors">
                   App Features
@@ -85,7 +90,7 @@ export function Footer() {
         </div>
 
         {/* Bottom Bar */}
-        <div className="border-t border-white/5 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
+        <div className="border-t border-white/5 pt-6 sm:pt-8 flex flex-col-reverse sm:flex-row items-center justify-between gap-4 text-xs text-slate-500 text-center sm:text-left">
           <div>
             &copy; {new Date().getFullYear()} AnimeHub Team. Crafted for anime lovers worldwide.
           </div>

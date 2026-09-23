@@ -1,60 +1,123 @@
 import { useEffect, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
-import * as Device from 'expo-device';
-import { Platform } from 'react-native';
 import { useRouter } from 'expo-router';
-import Constants from 'expo-constants';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { useUIStore } from '../store/uiStore';
+import { haptic } from '../lib/haptics';
+import {
+  setupNotificationChannelsAsync,
+  setupNotificationCategoriesAsync,
+  registerForPushNotificationsAsync,
+  unregisterDevicePushToken,
+} from '../lib/pushNotifications';
 
-// Set up how the OS should handle notifications that arrive when the app is in the foreground
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
+export { unregisterDevicePushToken };
+
+// Lifecycle initialization guards to prevent redundant native bridge IPC calls
+let channelsInitialized = false;
+let categoriesInitialized = false;
 
 export function usePushNotifications() {
   const { user } = useAuth();
   const router = useRouter();
-  
+  const showToast = useUIStore((s) => s.showNotificationToast);
+
   const notificationListener = useRef<Notifications.Subscription>();
   const responseListener = useRef<Notifications.Subscription>();
 
-  // Register device and sync token to Supabase
   useEffect(() => {
-    if (!user?.id) return;
+    // Setup Android channels & Action Categories once per app lifecycle
+    if (!channelsInitialized) {
+      channelsInitialized = true;
+      setupNotificationChannelsAsync();
+    }
+    if (!categoriesInitialized) {
+      categoriesInitialized = true;
+      setupNotificationCategoriesAsync();
+    }
 
-    registerForPushNotificationsAsync(user.id).then(token => {
+    // Register device push token (for member or guest)
+    registerForPushNotificationsAsync(user?.id ?? null).then((token) => {
       if (token && __DEV__) {
-        console.log('[Push] Device registered. Token:', token);
+        console.log('[Push] Device registered successfully. Token:', token);
       }
     });
 
-    // Listen for notifications that arrive when the app is in the foreground
-    notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
+    // 1. Foreground listener: Displays custom in-app floating Dynamic Island toast
+    notificationListener.current = Notifications.addNotificationReceivedListener((notification) => {
+      const content = notification.request.content;
+      const data = content.data || {};
+
       if (__DEV__) {
-        console.log('[Push] Notification received in foreground:', notification);
+        console.log('[Push] Foreground notification arrived:', content.title);
       }
+
+      showToast({
+        title: content.title || 'New Notification',
+        message: content.body || '',
+        posterUrl: (data.poster_url || data.image_url || data.thumbnail_url) as string | undefined,
+        actionUrl: (data.action_url || (data.episode_id ? `/watch/${data.episode_id}` : undefined)) as string | undefined,
+        type: (data.type || (data.action_url?.includes('plan') ? 'system' : undefined)) as string | undefined,
+      });
     });
 
-    // Listen for taps on push notifications (handles lock screen and tray deep linking)
-    responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
+    // 2. Background/Lockscreen tap listener (Handles button clicks & tray taps)
+    responseListener.current = Notifications.addNotificationResponseReceivedListener(async (response) => {
+      const { actionIdentifier, notification } = response;
+      const data = notification.request.content.data || {};
+      const actionUrl = data.action_url;
+
       if (__DEV__) {
-        console.log('[Push] User tapped notification response:', response);
+        console.log('[Push] Action clicked:', actionIdentifier, 'Data:', data);
       }
-      
-      const actionUrl = response.notification.request.content.data?.action_url;
+
+      // Handle lock screen action buttons:
+      if (actionIdentifier === 'WATCH_NOW' || actionIdentifier === 'STREAM_FREE') {
+        haptic.selection();
+        const dest = actionUrl || (data.episode_id ? `/watch/${data.episode_id}` : '/');
+        router.push(dest as any);
+        return;
+      }
+
+      if (actionIdentifier === 'ADD_WATCHLIST') {
+        const animeId = data.anime_id;
+        if (user?.id && animeId) {
+          try {
+            await supabase.from('user_watchlist').upsert(
+              { user_id: user.id, anime_id: animeId },
+              { onConflict: 'user_id,anime_id' }
+            );
+            haptic.success();
+            if (__DEV__) console.log('[Push] Added to watchlist in background for user:', user.id);
+          } catch (e) {
+            console.error('[Push] Failed background watchlist insert:', e);
+          }
+        }
+        return;
+      }
+
+      if (actionIdentifier === 'VIEW_ANIME') {
+        haptic.selection();
+        const dest = data.anime_id ? `/anime/${data.anime_id}` : (actionUrl || '/(tabs)/explore');
+        router.push(dest as any);
+        return;
+      }
+
+      if (actionIdentifier === 'RENEW_NOW') {
+        haptic.selection();
+        router.push('/plans' as any);
+        return;
+      }
+
+      // Default: User tapped the notification banner body itself
       if (typeof actionUrl === 'string' && actionUrl.startsWith('/')) {
-        const SAFE_PREFIXES = ['/anime/', '/watch/', '/notifications', '/(tabs)', '/genre', '/studio', '/plans'];
-        const isSafe = SAFE_PREFIXES.some(prefix => actionUrl.startsWith(prefix));
+        const SAFE_PREFIXES = ['/anime/', '/watch/', '/notifications', '/(tabs)', '/genre', '/studio', '/plans', '/manage-plan'];
+        const isSafe = SAFE_PREFIXES.some((prefix) => actionUrl.startsWith(prefix));
         if (isSafe) {
-          if (__DEV__) console.log('[Push] Directing user to action URL:', actionUrl);
           router.push(actionUrl as any);
         } else {
-          console.warn('[Push] Blocked unsafe or unmapped action URL:', actionUrl);
+          console.warn('[Push] Blocked unsafe action URL:', actionUrl);
         }
       }
     });
@@ -68,80 +131,4 @@ export function usePushNotifications() {
       }
     };
   }, [user?.id]);
-}
-
-async function registerForPushNotificationsAsync(userId: string): Promise<string | null> {
-  let token: string | null = null;
-
-  // 1. Android Specific Config: Set up notification channel (required for sound/banners on Android 8.0+)
-  if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('default', {
-      name: 'default',
-      importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#FF2B3C', // Crimson brand accent
-    });
-  }
-
-  // 2. Physical Device Check: Push notifications do not work on standard iOS/Android simulators
-  if (!Device.isDevice) {
-    console.warn('[Push] Must use physical device for Push Notifications');
-    return null;
-  }
-
-  // 3. Request Permissions
-  const { status: existingStatus } = await Notifications.getPermissionsAsync();
-  let finalStatus = existingStatus;
-  
-  if (existingStatus !== 'granted') {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
-  }
-
-  if (finalStatus !== 'granted') {
-    console.warn('[Push] Failed to get push token for push notification! Permissions rejected.');
-    return null;
-  }
-
-  // 4. Retrieve Expo Push Token
-  try {
-    const projectId = 
-      Constants.expoConfig?.extra?.eas?.projectId ?? 
-      Constants.easConfig?.projectId;
-
-    if (!projectId) {
-      console.warn('[Push] Project ID not found in app.json. Cannot generate push token.');
-      return null;
-    }
-
-    token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
-
-    // 5. Sync the token with the Supabase database
-    if (token) {
-      const deviceModel = Device.modelName || 'Generic Mobile';
-      const deviceOS = `${Platform.OS} ${Platform.Version}`;
-
-      const { error } = await supabase
-        .from('user_push_tokens')
-        .upsert(
-          {
-            user_id: userId,
-            token: token,
-            device_name: `${deviceModel} (${deviceOS})`,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'user_id,token' }
-        );
-
-      if (error) {
-        console.error('[Push] Failed to sync push token with database:', error.message);
-      } else if (__DEV__) {
-        console.log('[Push] Token successfully synced to database table public.user_push_tokens');
-      }
-    }
-  } catch (error) {
-    console.error('[Push] Error getting push token:', error);
-  }
-
-  return token;
 }

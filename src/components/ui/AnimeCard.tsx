@@ -84,8 +84,8 @@ const AnimeCard = React.memo(function AnimeCard({ anime, onPress, onLongPress, s
 
         {/* Seamless Cinematic Gradient overlay */}
         <LinearGradient
-          colors={['transparent', 'rgba(8,9,13,0.45)', 'rgba(8,9,13,0.96)']}
-          locations={[0.15, 0.55, 1]}
+          colors={['transparent', 'rgba(8,9,13,0.3)', 'rgba(8,9,13,0.92)']}
+          locations={[0, 0.5, 1]}
           style={styles.gradientOverlay}
         />
 
@@ -160,7 +160,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: '75%',
+    height: '50%',
     borderBottomLeftRadius: RADIUS.md,
     borderBottomRightRadius: RADIUS.md,
   },

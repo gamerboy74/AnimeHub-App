@@ -18,6 +18,7 @@ import { useToggleFavorite, useToggleWatchlist } from '../../src/hooks/useOptimi
 import { getAllDownloads } from '../../src/hooks/useHlsDownloader';
 import { HeroBannerSkeleton, SkeletonBox } from '../../src/components/ui/Skeleton';
 import { haptic } from '../../src/lib/haptics';
+import { useQuery } from '@tanstack/react-query';
 
 const { width, height } = Dimensions.get('window');
 
@@ -44,10 +45,39 @@ export default function AnimeDetailScreen() {
   const { data: relations = [] } = useAnimeRelations(animeId);
   const { data: watchProgressMap = new Map() } = useAnimeWatchProgress(animeId);
 
+  // ── Derive favorite and watchlist status directly from TanStack Query's cache ──
+  const { data: userFavorites = [] } = useQuery({
+    queryKey: ['user', user?.id, 'favorites'],
+    staleTime: 60 * 1000,
+    gcTime: 5 * 60 * 1000,
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { data } = await userAPI.getFavorites(user!.id);
+      return data || [];
+    },
+  });
+
+  const { data: userWatchlist = [] } = useQuery({
+    queryKey: ['user', user?.id, 'watchlist'],
+    staleTime: 60 * 1000,
+    gcTime: 5 * 60 * 1000,
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { data } = await userAPI.getWatchlist(user!.id);
+      return data || [];
+    },
+  });
+
+  const isFav = useMemo(() => {
+    return userFavorites.some((item: any) => (item.anime_id || item?.anime?.id) === animeId);
+  }, [userFavorites, animeId]);
+
+  const inWatchlist = useMemo(() => {
+    return userWatchlist.some((item: any) => (item.anime_id || item?.anime?.id) === animeId);
+  }, [userWatchlist, animeId]);
+
   // ── User-specific state (not cached globally — per-user) ──────────────────
   const [reviews, setReviews] = useState<Review[]>([]);
-  const [isFav, setIsFav] = useState(false);
-  const [inWatchlist, setInWatchlist] = useState(false);
   const [activeTab, setActiveTab] = useState<'episodes' | 'reviews' | 'info'>('episodes');
   const [resumeEpisodeId, setResumeEpisodeId] = useState<string | null>(null);
   const [resumeProgress, setResumeProgress] = useState<{ epNum: number; seconds: number } | null>(null);
@@ -77,7 +107,7 @@ export default function AnimeDetailScreen() {
     return unsubscribe;
   }, [navigation, checkDownloads]);
 
-  // Fetch user-specific data (reviews + fav/watchlist/progress) separately
+  // Fetch reviews and resume progress separately
   useEffect(() => {
     if (!animeId) return;
     let cancelled = false;
@@ -93,14 +123,8 @@ export default function AnimeDetailScreen() {
         if (!cancelled && revData) setReviews(revData as any);
 
         if (user) {
-          const [favRes, wlRes, progressRes] = await Promise.all([
-            supabase.from('user_favorites').select('id').eq('user_id', user.id).eq('anime_id', animeId).maybeSingle(),
-            supabase.from('user_watchlist').select('id').eq('user_id', user.id).eq('anime_id', animeId).maybeSingle(),
-            userAPI.getAnimeProgress(user.id, animeId),
-          ]);
+          const progressRes = await userAPI.getAnimeProgress(user.id, animeId);
           if (cancelled) return;
-          setIsFav(!!favRes.data);
-          setInWatchlist(!!wlRes.data);
           if (progressRes.data) {
             const prog = progressRes.data as any;
             setResumeEpisodeId(prog.episode_id);
@@ -125,26 +149,24 @@ export default function AnimeDetailScreen() {
   const favMutation = useToggleFavorite({
     userId: user?.id ?? '',
     animeId,
+    animeSummary: anime,
   });
   const wlMutation = useToggleWatchlist({
     userId: user?.id ?? '',
     animeId,
+    animeSummary: anime,
   });
 
   const toggleFav = () => {
     if (!user) { router.push('/auth/login'); return; }
     haptic.medium();
-    const next = !isFav;
-    setIsFav(next);
-    favMutation.mutate(next);
+    favMutation.mutate(!isFav);
   };
 
   const toggleWatchlist = () => {
     if (!user) { router.push('/auth/login'); return; }
     haptic.selection();
-    const next = !inWatchlist;
-    setInWatchlist(next);
-    wlMutation.mutate(next);
+    wlMutation.mutate(!inWatchlist);
   };
 
   if (loading) {

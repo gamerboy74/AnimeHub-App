@@ -7,11 +7,37 @@ import { AuthProvider, useAuth } from '../src/context/AuthContext';
 import { LocalizationProvider } from '../src/context/LocalizationContext';
 import { supabase } from '../src/lib/supabase';
 import CustomAlertModal from '../src/components/ui/CustomAlertModal';
+import NotificationToast from '../src/components/ui/NotificationToast';
+import SideDrawer from '../src/components/ui/SideDrawer';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { usePushNotifications } from '../src/hooks/usePushNotifications';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { QueryClient, QueryClientProvider, useQueryClient, focusManager, onlineManager } from '@tanstack/react-query';
+import { View, Text, TouchableOpacity, StyleSheet, AppState, Platform } from 'react-native';
+import type { AppStateStatus } from 'react-native';
+import * as Network from 'expo-network';
+import * as WebBrowser from 'expo-web-browser';
+
+// Complete any pending auth sessions on web or custom tab redirects
+WebBrowser.maybeCompleteAuthSession();
+
+// Hook TanStack Query to React Native native network events
+onlineManager.setEventListener((setOnline) => {
+  if (Platform.OS !== 'web') {
+    const sub = Network.addNetworkStateListener((event) => {
+      setOnline(Boolean(event.isConnected && event.isInternetReachable));
+    });
+    return () => sub.remove();
+  }
+  return () => {};
+});
+
+// Hook TanStack Query to React Native foreground/background events
+function onAppStateChange(status: AppStateStatus) {
+  if (Platform.OS !== 'web') {
+    focusManager.setFocused(status === 'active');
+  }
+}
 
 // Singleton — must live outside the component so the cache is never wiped on re-renders
 const queryClient = new QueryClient({
@@ -32,6 +58,12 @@ export default function RootLayout() {
     'SpaceGrotesk': require('../assets/fonts/SpaceGrotesk-Bold.ttf'),
     'BeVietnamPro': require('../assets/fonts/BeVietnamPro-Medium.ttf'),
   });
+
+  // Subscribe to AppState changes so stale queries refresh on foregrounding
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', onAppStateChange);
+    return () => subscription.remove();
+  }, []);
 
   // Don't hide the splash until fonts are ready — auth readiness is handled
   // inside AuthGuard (which has access to the AuthContext).
@@ -55,7 +87,9 @@ export default function RootLayout() {
               <LocalizationProvider>
                 <StatusBar style="light" />
                 <AuthGuard />
+                <SideDrawer />
                 <CustomAlertModal />
+                <NotificationToast />
               </LocalizationProvider>
             </AuthProvider>
           </QueryClientProvider>
@@ -142,6 +176,33 @@ function AuthGuard() {
   const router = useRouter();
   const pathname = usePathname();
   const { session, loading, isAuthReady } = useAuth();
+  const queryClient = useQueryClient();
+  const userId = session?.user?.id;
+
+  // Realtime Supabase channel for user notifications & badge synchronization
+  useEffect(() => {
+    if (!userId) return;
+
+    const channel = supabase
+      .channel(`realtime-notifications:${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['notifications'] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userId, queryClient]);
 
   // Tracks whether MFA upgrade is required for the current session.
   // Populated once per session change; read on every navigation.
@@ -155,9 +216,21 @@ function AuthGuard() {
   // but the Supabase AsyncStorage session hydration hasn't finished yet.
   useEffect(() => {
     if (isAuthReady) {
-      SplashScreen.hideAsync();
+      SplashScreen.hideAsync().catch(() => {});
     }
   }, [isAuthReady]);
+
+  // ── Safety net: force-hide splash after 5 s ───────────────────────────────
+  // Guards against black screen on cold launch when:
+  //   • Supabase is unreachable and the auth state never resolves
+  //   • AsyncStorage read is unusually slow on first install
+  //   • Any unhandled edge-case in the auth flow prevents isAuthReady from firing
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      SplashScreen.hideAsync().catch(() => {});
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, []);
 
   // ── MFA level check ──────────────────────────────────────────────────────
   // Only runs when the session itself changes (sign-in / sign-out / token refresh).
@@ -204,6 +277,8 @@ function AuthGuard() {
       hadSessionRef.current = true;
       if (needsMfaRef.current && pathname !== '/auth/mfa') {
         router.replace('/auth/mfa');
+      } else if (pathname === '/auth/login' || pathname === '/auth/signup' || pathname === '/auth/callback') {
+        router.replace('/(tabs)');
       }
     }
   }, [session, isAuthReady, pathname]);

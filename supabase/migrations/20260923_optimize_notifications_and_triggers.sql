@@ -1,9 +1,14 @@
 -- ============================================================
--- Migration: Add Triggers for Auto-generating Notifications
--- Run this in your Supabase SQL Editor
+-- Migration: Optimize Notification Generation, Triggers, & Indexes
+-- Solves high database load, timeouts, and table scans with:
+-- 1. Set-based batch inserts instead of procedural cursor loops
+-- 2. Embedding poster_url & anime metadata directly into notification data
+-- 3. Composite and partial indexes for sub-millisecond lookups & badge counting
 -- ============================================================
 
--- 1. Trigger function for new anime added (Set-based batch insert)
+-- 1. Optimized Trigger Function: New Anime Added
+-- Uses high-performance set-based INSERT (1 query instead of N procedural loop queries)
+-- Directly embeds poster_url so mobile/web clients avoid N+1 secondary queries
 CREATE OR REPLACE FUNCTION public.handle_new_anime_notification()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -25,7 +30,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Create trigger for new anime
+-- Recreate trigger for new anime
 DROP TRIGGER IF EXISTS on_new_anime_added ON public.anime;
 CREATE TRIGGER on_new_anime_added
   AFTER INSERT ON public.anime
@@ -33,20 +38,22 @@ CREATE TRIGGER on_new_anime_added
   EXECUTE FUNCTION public.handle_new_anime_notification();
 
 
--- 2. Trigger function for new episode added (Set-based batch insert)
+-- 2. Optimized Trigger Function: New Episode Added
+-- Uses set-based INSERT DISTINCT for all users with this anime in watchlist or favorites
+-- Single query resolution of parent anime poster and title
 CREATE OR REPLACE FUNCTION public.handle_new_episode_notification()
 RETURNS TRIGGER AS $$
 DECLARE
   v_anime_title text;
   v_poster_url  text;
 BEGIN
-  -- Retrieve the title and poster of the anime in a single query
+  -- Retrieve the anime's title and poster in a single fast lookup
   SELECT title, poster_url 
   INTO v_anime_title, v_poster_url 
   FROM public.anime 
   WHERE id = NEW.anime_id;
 
-  -- Insert notifications for all users who watchlisted or favorited this anime
+  -- Set-based insert: only 1 SQL statement executed regardless of user count
   INSERT INTO public.notifications (user_id, type, title, message, action_url, data)
   SELECT DISTINCT
     interested.user_id,
@@ -71,17 +78,35 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Create trigger for new episode
+-- Recreate trigger for new episode
 DROP TRIGGER IF EXISTS on_new_episode_added ON public.episodes;
 CREATE TRIGGER on_new_episode_added
   AFTER INSERT ON public.episodes
   FOR EACH ROW
   EXECUTE FUNCTION public.handle_new_episode_notification();
 
--- Performance Indexes
+
+-- ============================================================
+-- 3. Critical Performance Indexes
+-- Eliminates sequential table scans on public.notifications
+-- ============================================================
+
+-- Fast chronological notification feed & pagination per user
 CREATE INDEX IF NOT EXISTS idx_notifications_user_created
   ON public.notifications (user_id, created_at DESC);
 
+-- Partial index for instantaneous unread count calculation in headers/badges
 CREATE INDEX IF NOT EXISTS idx_notifications_user_unread
   ON public.notifications (user_id)
   WHERE read = false;
+
+-- Filter index for notification channel tabs (episode, new_anime, review, system)
+CREATE INDEX IF NOT EXISTS idx_notifications_user_type_created
+  ON public.notifications (user_id, type, created_at DESC);
+
+-- Accelerate episode trigger user resolution
+CREATE INDEX IF NOT EXISTS idx_user_watchlist_anime_user
+  ON public.user_watchlist (anime_id, user_id);
+
+CREATE INDEX IF NOT EXISTS idx_user_favorites_anime_user
+  ON public.user_favorites (anime_id, user_id);

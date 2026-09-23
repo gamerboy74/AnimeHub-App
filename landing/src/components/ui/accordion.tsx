@@ -76,14 +76,14 @@ export function AccordionTrigger({
       type="button"
       onClick={() => id && context?.toggleItem(id)}
       className={cn(
-        'flex w-full items-center justify-between p-5 text-left font-semibold text-white transition-all hover:text-[#FF4252]',
+        'flex w-full items-center justify-between p-4 sm:p-5 text-left text-sm sm:text-base font-semibold text-white transition-all hover:text-[#FF4252] gap-3',
         className
       )}
     >
-      <span>{children}</span>
+      <span className="leading-snug">{children}</span>
       <ChevronDown
         className={cn(
-          'size-5 text-slate-400 transition-transform duration-300',
+          'size-4 sm:size-5 text-slate-400 transition-transform duration-300 shrink-0',
           isOpen && 'rotate-180 text-[#FF2B3C]'
         )}
       />
@@ -108,7 +108,7 @@ export function AccordionContent({
   return (
     <div
       className={cn(
-        'px-5 pb-5 pt-0 text-sm text-slate-300 leading-relaxed border-t border-white/5 pt-4 animate-in fade-in-50 duration-200',
+        'px-4 pb-4 sm:px-5 sm:pb-5 text-xs sm:text-sm text-slate-300 leading-relaxed border-t border-white/5 pt-3 sm:pt-4 animate-in fade-in-50 duration-200',
         className
       )}
     >
