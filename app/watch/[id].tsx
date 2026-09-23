@@ -297,8 +297,6 @@ export default function WatchScreen() {
   const { data: episodes } = useEpisodes(episode?.anime_id);
   const { data: savedProgress, isLoading: loadingProgress } = useWatchProgress(id as string);
 
-  const resumeSeconds = savedProgress?.progress_seconds ?? 0;
-
   // Stable resume position capture to prevent rebuilding injectedJS mid-playback
   const initialResumeSecondsRef = useRef(0);
   const hasCapturedInitialResumeRef = useRef(false);
@@ -318,9 +316,19 @@ export default function WatchScreen() {
   }
 
   if (!hasCapturedInitialResumeRef.current && savedProgress !== undefined) {
-    initialResumeSecondsRef.current = savedProgress?.progress_seconds ?? 0;
+    const isCompleted =
+      Boolean(savedProgress?.is_completed) ||
+      (Boolean(episode?.duration && episode.duration > 0) &&
+        (savedProgress?.progress_seconds ?? 0) > (episode?.duration ?? 0) * 0.9);
+
+    initialResumeSecondsRef.current =
+      savedProgress && !isCompleted && (savedProgress.progress_seconds ?? 0) > 5
+        ? savedProgress.progress_seconds
+        : 0;
     hasCapturedInitialResumeRef.current = true;
   }
+
+  const resumeSeconds = initialResumeSecondsRef.current;
 
   // ── Server selection hook & User Preferences ───────────────────────────────
   const { data: prefs } = useQuery({

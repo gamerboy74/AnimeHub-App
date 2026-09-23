@@ -10,13 +10,13 @@ export const APP_CONFIG = {
 
   /**
    * Official EAS Cloud Build:
-   * Dashboard: https://expo.dev/accounts/omkayuja/projects/Animehub-Mobile/builds/4972be70-4ff1-48b8-a189-981dce6c8f7c
-   * Direct CDN Download: https://expo.dev/artifacts/eas/1kn6dxumbIM6mphYRl9zvXgSRvGqYDuLr08M27TjS8g.apk
+   * Dashboard: https://expo.dev/accounts/omkayuja/projects/Animehub-Mobile/builds/a931ac86-50a5-47ca-8ad5-7b90001af148
+   * Direct CDN Download: https://expo.dev/artifacts/eas/V16YBLF9n2NrtxMZ4t1FezQSFLKFYkwaycdy7vVNYfs.apk
    */
   expoBuildDashboardUrl:
-    'https://expo.dev/accounts/omkayuja/projects/Animehub-Mobile/builds/4972be70-4ff1-48b8-a189-981dce6c8f7c',
+    'https://expo.dev/accounts/omkayuja/projects/Animehub-Mobile/builds/a931ac86-50a5-47ca-8ad5-7b90001af148',
   expoDirectCdnUrl:
-    'https://expo.dev/artifacts/eas/1kn6dxumbIM6mphYRl9zvXgSRvGqYDuLr08M27TjS8g.apk',
+    'https://expo.dev/artifacts/eas/V16YBLF9n2NrtxMZ4t1FezQSFLKFYkwaycdy7vVNYfs.apk',
 
   /**
    * APK Download URL:
@@ -24,7 +24,7 @@ export const APP_CONFIG = {
    */
   apkDownloadUrl:
     import.meta.env.VITE_APK_DOWNLOAD_URL ||
-    'https://expo.dev/artifacts/eas/1kn6dxumbIM6mphYRl9zvXgSRvGqYDuLr08M27TjS8g.apk',
+    'https://expo.dev/artifacts/eas/V16YBLF9n2NrtxMZ4t1FezQSFLKFYkwaycdy7vVNYfs.apk',
 
   // Computed SHA-256 Checksum of the actual production AnimeHub.apk (106,816,886 bytes)
   sha256: '9e5f2f824d7bca9603cd477ee2e6465a5af3792b7a3572737bc1c0e095926e79',
